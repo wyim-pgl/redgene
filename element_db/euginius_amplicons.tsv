@@ -1,0 +1,289 @@
+method_code	target_scope	target_name	amplicon_size	actual_length	source	status	accession
+QL-BAC-16S-FW/16S-Rev	taxon-specific	bacteria	1041	0		SKIPPED	EUginius
+QL-BAC-27f/926R	taxon-specific	bacteria	899	0		SKIPPED	EUginius
+QL-CON-00-001	construct-specific	GTS 40-3-2	172	0		SKIPPED	EUginius
+QL-CON-00-002	construct-specific	Nema282F	350	0		SKIPPED	EUginius
+QL-CON-00-003	construct-specific	Bt10 maize, Bt11	189	0		SKIPPED	EUginius
+QL-CON-00-004	construct-specific	Bt176	211	0		SKIPPED	EUginius
+QL-CON-00-005	construct-specific	40416, 4114, 43A47, 676, 678, 680, A2704-12, A2704-21, A5547-127, A5547-35, DAS1507, DAS59122, DAS59132, DBN9004, DP32316, DP62151, DP910521, Falcon GS 40/90, GU262, HCN10, HCR-1, Liberator, T120-7, T14, T25, T45, Topas 19/2	209	0		SKIPPED	EUginius
+QL-CON-00-006	construct-specific	GTS 40-3-2	172	0		SKIPPED	EUginius
+QL-CON-00-007	construct-specific	Huahui No.1	83	0		SKIPPED	EUginius
+QL-CON-00-008	construct-specific	2904/1 kgs, ASR368, DBN9004, DBN9936, GT200, GT73, GTSB77, H7-1, J101, J163, KWS20-1, MON1445, MON1698, MON71200, MON71700, MON71800, MON80100, MON802, MON809, MON832, MON87411, MON87427, MON87429, MON87705, MON88017, MON88302, MON88913, MON89788, NK603, RBMT22-082, RBMT22-186, RBMT22-238, RBMT22-262, ZSR500, ZSR502, ZSR503	88	88	euginius_amplicon	OK_CLEAN	EUginius
+QL-CON-00-010	construct-specific	FP967	105	0		SKIPPED	EUginius
+QL-CON-00-011	construct-specific	40416, 4114, 43A47, 676, 678, 680, A2704-12, A2704-21, A5547-127, A5547-35, B0050-027, Bt10 maize, Bt11, DAS1507, DAS59122, DAS59132, DBN9004, DP32316, Falcon GS 40/90, GU262, HCN10, HCR-1, Liberator, MZHG0JG, MZIR098, SYHT0H2, T120-7, T14, T25, T45, Topas 19/2	102	0		SKIPPED	EUginius
+QL-CON-00-012	construct-specific	55-1, 63-1	220	220	euginius_amplicon	OK_CLEAN	EUginius
+QL-CON-00-013	construct-specific	3006-210-23, 4114, DAS1507, DAS59122, DAS59132, KMD1, Kefeng6	90	90	euginius_amplicon	OK_CLEAN	EUginius
+QL-CON-00-014	construct-specific	1345-4, 16-0-1, 18-2-4, 35 1 N, 55-1, 5B, 63-1, A1-DFR Petunias, B tomato, C5, Cantaloupe A, Cantaloupe B, Da tomato, EH92-527-1, F tomato, F3'5'H GM petunia, FP967, GD743, GFM Cry1A, GK19, GS784, H421, HCN10, HLMT15-15, HLMT15-3, HLMT15-46, Huafan No 1, Huanong No. 1, INI-FMAPDF, KMD1, MLS 9124, MPS965, Ms1, NF872, NXI-1T, NXI-4T, NXI-6T, PG451, RBMT15-101, RBMT21-129, RBMT21-152, RBMT21-350, RL01-15, RL01-17, RM3-3, RM3-4, RM3-6, Rf1, Rf2, SEMT15-02, SEMT15-15, SGK321, SY233, T120-7, TAM66274, Topas 19/2, X17-2	151	151	euginius_amplicon	OK_CLEAN	EUginius
+QL-CON-00-015	construct-specific	CBH351, CM8101, DBT418, DLL25, EH-2 modbs 2.99, IE034, Iksan515, Iksan526, LLCotton25, LLRICE06, LLRICE601, LLRICE604, LLRICE62, MON88701, Ms3, Ms6, ND207, SYHT04R, T1c-19, T2A-1, T303-3, T304-40, TC6275, Varuna bn 3.6, Verdeca HB4, W62, W98	103	103	euginius_amplicon	OK_CLEAN	EUginius
+QL-CON-307-F/652-R	construct-specific	KMD1, Kefeng6	175	175	euginius_amplicon	OK_CLEAN	EUginius
+QL-CON-35S-5' primer A/A1-3' primer B	construct-specific	A1-DFR Petunias, RL01-15, RL01-17	414	0		SKIPPED	EUginius
+QL-CON-35S-F/nptII-R	construct-specific	23-18-17, 23-198, 31807, 31808, 5345, 8338, ATBT04-06, ATBT04-27, ATBT04-30, ATBT04-31, ATBT04-36, BT10 potato, BT12 potato, BT16 potato, BT17 potato, BT18 potato, BT23 potato, BT6 potato, BXN10211, CZW-3, EE-1, Event 1, FLAVR SAVR, MON1076, MON1445, MON15985, MON1698, MON531, MON757, MON80100, MON863, MON87460, SP951, SPBT02-7, pap1 GM Gypsophila	205	205	euginius_amplicon	OK_CLEAN	EUginius
+QL-CON-CP1/pFMV2	construct-specific	GT200, GT73, GTSB77, H7-1, J101, J163, MON1445, MON1698, MON87705, MON88302, MON88913, MON89788, RBMT22-082, RBMT22-186, RBMT22-238, RBMT22-262, ZSR500, ZSR502, ZSR503	488	488	euginius_amplicon	OK_CLEAN	EUginius
+QL-CON-CsVMV F/patsyn R	construct-specific	DAS44406, DAS68416, DAS81419	107	0		SKIPPED	EUginius
+QL-CON-GH-tFreeze-F/GH-tFreeze-R	construct-specific	AquAdvantage Salmon	75	0		SKIPPED	EUginius
+QL-CON-PGS-bar-A2/PGS-bar-B2	construct-specific	Ms1, Ms11, Ms8, RM3-3, RM3-4, RM3-6, Rf1, Rf2, Rf3, Rf3 (Brassica juncea)		0		SKIPPED	EUginius
+QL-CON-cptiF2/tNOS-uni-R	construct-specific	Kefeng6, SGK321		0		SKIPPED	EUginius
+QL-CON-gat/T-pinII-F/gat/T-pinII-R	construct-specific	61061, 73496, 98140, DP356043	112	112	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-00-001	element-specific	P-Cauliflower mosaic virus	195	195	local_match:promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_relative_to_TSS|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-002	element-specific	CS-nptII-ECOLX, V-nptII-ECOLX	215	215	local_match:cds|nptII|Escherichia_coli_Tn5|V00618.1|full_CDS,_neomycin_phosphotransferase_II|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-003	element-specific	CS-nptII-ECOLX, V-nptII-ECOLX	173	173	local_match:cds|nptII|Escherichia_coli_Tn5|V00618.1|full_CDS,_neomycin_phosphotransferase_II|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-004	element-specific	P-Cauliflower mosaic virus	123	123	local_match:promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_relative_to_TSS|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-005	element-specific	P-Cauliflower mosaic virus	195	195	local_match:promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_relative_to_TSS|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-006	element-specific	T-nos-RHIRD	180	180	local_match:promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-007	element-specific	T-nos-RHIRD	180	180	local_match:promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-008	element-specific	P-nos-RHIRD	94	94	local_match:promoter|P-ocs|Agrobacterium_tumefaciens|AJ311874.1|octopine_synthase_promoter_region|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-009	element-specific	T-nos-RHIRD	118	118	local_match:promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-010	element-specific	E-FMV, P-34S FMV	196	196	local_match:promoter|P-FMV|Figwort_mosaic_virus|NC_003554.1|functional_FMV_promoter_region|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-011	element-specific	T-nos-RHIRD	84	84	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-00-012	element-specific	E-35S-CaMV, P-Cauliflower mosaic virus, P-scp1-SYNTH	82	82	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-00-013	element-specific	T-nos-RHIRD	84	84	local_match:promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-014	element-specific	CS-bar-STRHY	60	60	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-00-015	element-specific	E-FMV, P-34S FMV	78	78	local_match:promoter|P-FMV|Figwort_mosaic_virus|NC_003554.1|functional_FMV_promoter_region|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-016	element-specific	CS-cry1Ab_1Ac_tr-SYNTH, CS-cry1Ac-BACTU, CS-cry1Ab-BACTU	74	74	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-00-017	element-specific	P-Cauliflower mosaic virus	75	75	local_match:promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_relative_to_TSS|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-018	element-specific	T-nos-RHIRD	69	69	local_match:promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1	OK_LOCAL	EUginius
+QL-ELE-00-019	element-specific	CS-CP4epsps-RHIRD	108	0		SKIPPED	EUginius
+QL-ELE-00-020	element-specific	CS-cry1Ab-BACTU	73	0		SKIPPED	EUginius
+QL-ELE-00-021	element-specific	CS-pat-STRVR	109	0		SKIPPED	EUginius
+QL-ELE-00-022	element-specific	CS-bar-STRHY	69	69	local_match:ncbi|X17220.1	OK_LOCAL	EUginius
+QL-ELE-00-023	element-specific	T-Cauliflower mosaic virus	137	137	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-00-024	element-specific	T-rbcS_E9-PEA	87	87	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-00-025	element-specific	CS-pat-STRVR	108	108	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-00-026	element-specific	CS-bar-STRHY	60	60	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-AINT 2-5'/AINT 2-3'	element-specific	I-actin	112	112	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-AgroBS1 F/AgroBS1 R	element-specific	V-Flanking Ti-nos-RHIRD	76	76	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-AgroBS2 F/AgroBS2 R	element-specific	V-Flanking Ti-ocs-RHIRD	88	88	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-B'nase-F-n4/BNaseR-n3	element-specific	CS-barnase	102	102	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-BstarF-n2 /BstarR-n2	element-specific	CS-barstar	145	145	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-Cry1Ac-F(/R)-n4/Cry1AcR-n2	element-specific	CS-cry1Ac-BACTU	157	157	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-Cry1F-F2/Cry1Fr-n2	element-specific	CS-cry1F_tr-BACTA	90	90	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-Cry3Bbf-n2/Cry3Bbr-n2	element-specific	CS-cry3Bb1-BACUK	232	232	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-P-FMV-F/P-FMV-R	element-specific	P-34S FMV	79	79	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-P-Rice actin-F/P-Rice actin-R	element-specific	P-act1-ORYSA	95	95	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-P-SSuAra-F/P-SSuAra-R	element-specific	P-rbcS-ARATH	95	95	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-P-TA29-F/P-TA29-R	element-specific	P-ta29-TOBAC	117	117	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-P-Ubi-F/P-Ubi-R	element-specific	P-ubi1-MAIZE	76	76	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-P-nos-F/P-nos-R	element-specific	P-nos-RHIRD	79	0		SKIPPED	EUginius
+QL-ELE-PFMV 1-5'/PFMV 1-3'	element-specific	P-34S FMV	110	110	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-Patf-n2/Patr-n2	element-specific	CS-pat-STRVR	144	144	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-RERIO 2206/RERIO 2207	element-specific	CS-DsRed2 fluorescent protein	506	506	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-T-35S-F/T-35S-R	element-specific	T-Cauliflower mosaic virus	118	118	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-T-OCS-F/T-OCS-R	element-specific	T-ocs-RHIRD	85	85	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-T-g7-F/T-g7-R	element-specific	T-transcript 7, T-orf23-RHIRD	97	0		SKIPPED	EUginius
+QL-ELE-Vip3A-F/Vip3A-R	element-specific	CS-vip3Aa20-BACTU	97	0		SKIPPED	EUginius
+QL-ELE-bar 2-5'/bar 2-3'	element-specific	CS-bar-STRHY	186	186	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-cat-F/R	element-specific	V-chloramphenicol acetyl transferase	96	96	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-cat-F1/R1	element-specific	V-chloramphenicol acetyl transferase	573	573	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-cat-F2/cat-R2	element-specific	V-chloramphenicol acetyl transferase	529	529	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-cry1A 4-5'/cry1A 4-3'	element-specific	CS-cry1Ab-BACTU	152	152	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-cry1A.105 - F1/cry1A.105 - R1	element-specific	CS-cry1A_105-SYNTH	133	133	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-cry2Ab2 - F/cry2Ab2 - R	element-specific	CS-cry2Ab2-BACTK	121	121	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-cry3A-F/cry3A-R	element-specific	CS-mcry3A-SYNTH, CS-cry3A-BACTT	117	117	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-epsps 1-5'/epsps 3-3'	element-specific	CS-CP4epsps-RHIRD	118	118	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-epsps2 1-5'/epsps2 1-3'	element-specific	CS-CP4epsps-RHIRD	118	118	euginius_amplicon	OK_CLEAN	EUginius
+QL-ELE-npt 1-5'/npt 1-3'	element-specific	CS-nptII-ECOLX, V-nptII-ECOLX	155	155	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-16-0-1RB-F/16-0-1RB-R	event-specific	16-0-1	88	88	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-18-2-4RB-F/18-2-4RB-R	event-specific	18-2-4	152	152	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-319FalF/320FalR	event-specific	Falcon GS 40/90	83	83	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-375LibF/376LibR	event-specific	Liberator	96	96	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-558F/558R	event-specific	e871 Bacillus subtilis	76	76	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-816AvaF/817AvaR	event-specific	Falcon GS 40/90	166	166	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-BN-002	event-specific	GT73	204	0		SKIPPED	EUginius
+QL-EVE-CP-001	event-specific	Huanong No. 1	285	285	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-DC-001	event-specific	123.2.38	375	0		SKIPPED	EUginius
+QL-EVE-DC-003	event-specific	25958	482	0		SKIPPED	EUginius
+QL-EVE-DC-004	event-specific	26407	491	0		SKIPPED	EUginius
+QL-EVE-DC-005	event-specific	27531	458	0		SKIPPED	EUginius
+QL-EVE-DC-006	event-specific	123.8.8	338	0		SKIPPED	EUginius
+QL-EVE-EC-001	event-specific	PT73 E. coli (TM)	90	0		SKIPPED	EUginius
+QL-EVE-EC-002	event-specific	PL73 E. coli (LM)	85	0		SKIPPED	EUginius
+QL-EVE-KP-001	event-specific	MXY0541 Pichia pastoris	130	0		SKIPPED	EUginius
+QL-EVE-Kef6 forward/Kef6 reverse	event-specific	Kefeng6	128	128	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-MDB110/SHA016	event-specific	OXY-235	119	119	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-MS-J101-F/J101-R	event-specific	J101	102	102	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-MS-J163-F/J163-R	event-specific	J163	118	118	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-MS-KK179-F/KK179-R	event-specific	KK179	179	179	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-OS-001	event-specific	LLRICE601	66	0		SKIPPED	EUginius
+QL-EVE-OS-KM2_for/KM1_rev	event-specific	KMD1	78	78	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-Oxy-3F/Oxy-4R	event-specific	OXY-235	124	124	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-SQ0718/SQ0719	event-specific	MON71800	95	0		SKIPPED	EUginius
+QL-EVE-SS-AquAd-F/AquAd-R	event-specific	AquAdvantage Salmon	156	156	euginius_amplicon	OK_CLEAN	EUginius
+QL-EVE-TA-MON71200	event-specific	MON71200	139	0		SKIPPED	EUginius
+QL-EVE-ZM-001	event-specific	MON810	170	0		SKIPPED	EUginius
+QL-EVE-ZM-002	event-specific	Bt10 maize	117	0		SKIPPED	EUginius
+QL-EVE-ZM-P1waxy/P2waxy	event-specific	GE-CRISPR-Cas Waxy Corn	108	0		SKIPPED	EUginius
+QL-EVE-ZM-P3waxy/P2waxy	event-specific	GE-CRISPR-Cas Waxy Corn	145	0		SKIPPED	EUginius
+QL-PLN-00-007	taxon-specific	all-plants	571	0		SKIPPED	EUginius
+QL-TAX-AT-001	element-specific	CS-nos-RHIRD	86	86	euginius_amplicon	OK_CLEAN	EUginius
+QL-TAX-Acc1-F/Acc1-R	taxon-specific	Medicago sativa	91	91	euginius_amplicon	OK_CLEAN	EUginius
+QL-TAX-BN-003	taxon-specific	Brassica napus	85	0		SKIPPED	EUginius
+QL-TAX-BN-004	taxon-specific	Brassica napus	219	0		SKIPPED	EUginius
+QL-TAX-CMV-001	taxon-specific	Cauliflower mosaic virus	68	68	local_match:ncbi|V00141.1	OK_LOCAL	EUginius
+QL-TAX-CP-001	taxon-specific	Carica papaya	282	282	euginius_amplicon	OK_CLEAN	EUginius
+QL-TAX-CaMVF/CaMVR	taxon-specific	Cauliflower mosaic virus	90	90	euginius_amplicon	OK_CLEAN	EUginius
+QL-TAX-DC-001	taxon-specific	Dianthus caryophyllus	1279	1279	euginius_amplicon	OK_CLEAN	EUginius
+QL-TAX-FMVorf7-F4/FMVorf7-R4	taxon-specific	Figwort mosaic virus	113	113	local_match:ncbi|NC_003554.1	OK_LOCAL	EUginius
+QL-TAX-GM-001	taxon-specific	Glycine max	81	0		SKIPPED	EUginius
+QL-TAX-GM-002	taxon-specific	Glycine max	118	0		SKIPPED	EUginius
+QL-TAX-GM-008	taxon-specific	Glycine max	118	0		SKIPPED	EUginius
+QL-TAX-LU-001	taxon-specific	Linum usitatissimum	68	0		SKIPPED	EUginius
+QL-TAX-OS-002	taxon-specific	Oryza sativa	68	0		SKIPPED	EUginius
+QL-TAX-OS-003	taxon-specific	Oryza sativa	68	0		SKIPPED	EUginius
+QL-TAX-OS-006	taxon-specific	Oryza sativa	277	0		SKIPPED	EUginius
+QL-TAX-PS-001	taxon-specific	Pisum sativum	78	78	euginius_amplicon	OK_CLEAN	EUginius
+QL-TAX-SL-001	taxon-specific	Solanum lycopersicum	384	0		SKIPPED	EUginius
+QL-TAX-SL-005	taxon-specific	Solanum lycopersicum	92	0		SKIPPED	EUginius
+QL-TAX-SS-AM5F/AM5R	taxon-specific	Salmo salar	177	177	euginius_amplicon	OK_CLEAN	EUginius
+QL-TAX-ZM-002	taxon-specific	Zea mays	83	0		SKIPPED	EUginius
+QL-TAX-ZM-003	taxon-specific	Zea mays	225	0		SKIPPED	EUginius
+QT-CON-00-001	construct-specific	GTS 40-3-2	121	0		SKIPPED	EUginius
+QT-CON-00-002	construct-specific	GTS 40-3-2	88	0		SKIPPED	EUginius
+QT-CON-00-003	construct-specific	GTS 40-3-2	74	0		SKIPPED	EUginius
+QT-CON-00-004	construct-specific	DBN9936, MON80100, MON802, MON809, MON810	113	0		SKIPPED	EUginius
+QT-CON-00-005	construct-specific	40416, 4114, 43A47, 676, 678, 680, A2704-12, A2704-21, A5547-127, A5547-35, DAS1507, DAS59122, DAS59132, DBN9004, DP32316, DP62151, DP910521, Falcon GS 40/90, GU262, HCN10, HCR-1, Liberator, T120-7, T14, T25, T45, Topas 19/2	149	0		SKIPPED	EUginius
+QT-CON-00-006	construct-specific	Bt10 maize, Bt11	127	0		SKIPPED	EUginius
+QT-CON-00-007	construct-specific	B827, Bt176	100	0		SKIPPED	EUginius
+QT-CON-00-008	construct-specific	DAS44406, FG72, GA21, GHB614, GHB811	133	0		SKIPPED	EUginius
+QT-ELE-00-001	element-specific	P-Cauliflower mosaic virus	79	79	local_match:promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_relative_to_TSS|canonical_v1	OK_LOCAL	EUginius
+QT-ELE-00-002	element-specific	CS-pat-STRVR	68	0		SKIPPED	EUginius
+QT-ELE-00-003	element-specific	CS-cry1Ab-BACTU	129	0		SKIPPED	EUginius
+QT-ELE-00-004	element-specific	E-35S-CaMV, P-Cauliflower mosaic virus, P-scp1-SYNTH	82	82	euginius_amplicon	OK_CLEAN	EUginius
+QT-ELE-NOS ter 2-5' /NOS ter 2-3'	element-specific	T-nos-RHIRD	151	151	euginius_amplicon	OK_CLEAN	EUginius
+QT-ELE-P35S 1-5'/P35S 1-3'	element-specific	P-Cauliflower mosaic virus	100	100	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-BN-001	event-specific	T45	123	0		SKIPPED	EUginius
+QT-EVE-BN-002	event-specific	Ms8	130	0		SKIPPED	EUginius
+QT-EVE-BN-003	event-specific	Rf3	139	0		SKIPPED	EUginius
+QT-EVE-BN-004	event-specific	GT73	108	0		SKIPPED	EUginius
+QT-EVE-BN-005	event-specific	Ms1	187	0		SKIPPED	EUginius
+QT-EVE-BN-006	event-specific	Rf1	113	0		SKIPPED	EUginius
+QT-EVE-BN-007	event-specific	Rf2	104	0		SKIPPED	EUginius
+QT-EVE-BN-008	event-specific	Topas 19/2	95	0		SKIPPED	EUginius
+QT-EVE-BN-009	event-specific	73496	84	0		SKIPPED	EUginius
+QT-EVE-BN-010	event-specific	MON88302	101	0		SKIPPED	EUginius
+QT-EVE-BN-011	event-specific	Ms11	124	0		SKIPPED	EUginius
+QT-EVE-BN-012	event-specific	LBFLFK	128	0		SKIPPED	EUginius
+QT-EVE-BN-013	event-specific	LBFLFK	123	0		SKIPPED	EUginius
+QT-EVE-BN-014	event-specific	MON94100	89	0		SKIPPED	EUginius
+QT-EVE-BV-001	event-specific	H7-1	108	0		SKIPPED	EUginius
+QT-EVE-BV-002	event-specific	KWS20-1	77	0		SKIPPED	EUginius
+QT-EVE-CP-001	event-specific	Huanong No. 1	175	175	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-DBN9501-qF/DBN9501-qR	event-specific	DBN9501	96	96	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-GH-001a	event-specific	281-24-236	111	0		SKIPPED	EUginius
+QT-EVE-GH-001b	event-specific	3006-210-23	90	0		SKIPPED	EUginius
+QT-EVE-GH-002	event-specific	LLCotton25	79	0		SKIPPED	EUginius
+QT-EVE-GH-003	event-specific	MON1445	87	0		SKIPPED	EUginius
+QT-EVE-GH-004	event-specific	MON531	72	0		SKIPPED	EUginius
+QT-EVE-GH-005	event-specific	MON15985	82	0		SKIPPED	EUginius
+QT-EVE-GH-006	event-specific	GHB614	120	0		SKIPPED	EUginius
+QT-EVE-GH-007	event-specific	MON88913	94	0		SKIPPED	EUginius
+QT-EVE-GH-008	event-specific	GHB119	90	0		SKIPPED	EUginius
+QT-EVE-GH-009	event-specific	T304-40	78	0		SKIPPED	EUginius
+QT-EVE-GH-010	event-specific	MON88701	84	0		SKIPPED	EUginius
+QT-EVE-GH-011	event-specific	DAS81910	120	0		SKIPPED	EUginius
+QT-EVE-GH-012	event-specific	COT102	101	101	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-GH-013	event-specific	GHB811	144	0		SKIPPED	EUginius
+QT-EVE-GM-001	event-specific	FG72	70	0		SKIPPED	EUginius
+QT-EVE-GM-002	event-specific	MON87769	87	0		SKIPPED	EUginius
+QT-EVE-GM-003	event-specific	MON87705	86	0		SKIPPED	EUginius
+QT-EVE-GM-004	event-specific	A2704-12	64	0		SKIPPED	EUginius
+QT-EVE-GM-005	event-specific	GTS 40-3-2	84	0		SKIPPED	EUginius
+QT-EVE-GM-006	event-specific	MON89788	139	0		SKIPPED	EUginius
+QT-EVE-GM-007	event-specific	A5547-127	75	0		SKIPPED	EUginius
+QT-EVE-GM-008	event-specific	DP305423	93	0		SKIPPED	EUginius
+QT-EVE-GM-009	event-specific	DP356043	99	0		SKIPPED	EUginius
+QT-EVE-GM-010	event-specific	MON87701	89	0		SKIPPED	EUginius
+QT-EVE-GM-011	event-specific	CV127	88	0		SKIPPED	EUginius
+QT-EVE-GM-012	event-specific	MON87708	91	0		SKIPPED	EUginius
+QT-EVE-GM-013	event-specific	DAS68416	130	0		SKIPPED	EUginius
+QT-EVE-GM-014	event-specific	DAS81419	105	0		SKIPPED	EUginius
+QT-EVE-GM-015	event-specific	DAS44406	99	0		SKIPPED	EUginius
+QT-EVE-GM-016	event-specific	MON87751	87	0		SKIPPED	EUginius
+QT-EVE-GM-017	event-specific	SYHT0H2	88	0		SKIPPED	EUginius
+QT-EVE-GM-018	event-specific	GMB151	84	0		SKIPPED	EUginius
+QT-EVE-GM-019	event-specific	DBN9004	89	0		SKIPPED	EUginius
+QT-EVE-GM-020	event-specific	MON94313	70	0		SKIPPED	EUginius
+QT-EVE-GM-021	event-specific	COR23134	80	0		SKIPPED	EUginius
+QT-EVE-GM-022	event-specific	MON94637	84	0		SKIPPED	EUginius
+QT-EVE-HF-1F/HF-2R	event-specific	Huafan No 1	228	228	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-OS-001	event-specific	Golden Rice 2	121	0		SKIPPED	EUginius
+QT-EVE-OS-002	event-specific	LLRICE62	88	88	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-OS-G6H1-F/G6H1-R	event-specific	G6H1	90	90	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-ST-001	event-specific	EH92-527-1	134	0		SKIPPED	EUginius
+QT-EVE-ZM-001	event-specific	VCO1981	85	0		SKIPPED	EUginius
+QT-EVE-ZM-002	event-specific	5307	107	0		SKIPPED	EUginius
+QT-EVE-ZM-003	event-specific	MON87427	95	0		SKIPPED	EUginius
+QT-EVE-ZM-004	event-specific	DAS40278	98	0		SKIPPED	EUginius
+QT-EVE-ZM-005	event-specific	MON87460	82	0		SKIPPED	EUginius
+QT-EVE-ZM-006	event-specific	Bt11	70	0		SKIPPED	EUginius
+QT-EVE-ZM-007	event-specific	GA21	112	0		SKIPPED	EUginius
+QT-EVE-ZM-008	event-specific	NK603	108	0		SKIPPED	EUginius
+QT-EVE-ZM-009	event-specific	MON863	84	0		SKIPPED	EUginius
+QT-EVE-ZM-010	event-specific	DAS1507	58	58	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-ZM-011	event-specific	T25	102	0		SKIPPED	EUginius
+QT-EVE-ZM-012	event-specific	DAS59122	86	0		SKIPPED	EUginius
+QT-EVE-ZM-013	event-specific	MIR604	76	0		SKIPPED	EUginius
+QT-EVE-ZM-014	event-specific	GA21	101	0		SKIPPED	EUginius
+QT-EVE-ZM-015	event-specific	Bt11	68	0		SKIPPED	EUginius
+QT-EVE-ZM-016	event-specific	MON88017	94	0		SKIPPED	EUginius
+QT-EVE-ZM-017	event-specific	LY038	111	0		SKIPPED	EUginius
+QT-EVE-ZM-018	event-specific	MON89034	77	0		SKIPPED	EUginius
+QT-EVE-ZM-019	event-specific	3272	95	0		SKIPPED	EUginius
+QT-EVE-ZM-020	event-specific	MON810	92	0		SKIPPED	EUginius
+QT-EVE-ZM-021	event-specific	98140	80	0		SKIPPED	EUginius
+QT-EVE-ZM-022	event-specific	MIR162	92	0		SKIPPED	EUginius
+QT-EVE-ZM-023	event-specific	Bt176	82	0		SKIPPED	EUginius
+QT-EVE-ZM-024	event-specific	MON87411	109	0		SKIPPED	EUginius
+QT-EVE-ZM-025	event-specific	MON87403	88	0		SKIPPED	EUginius
+QT-EVE-ZM-026	event-specific	4114	80	0		SKIPPED	EUginius
+QT-EVE-ZM-027	event-specific	MZHG0JG	81	0		SKIPPED	EUginius
+QT-EVE-ZM-028	event-specific	MZIR098	73	0		SKIPPED	EUginius
+QT-EVE-ZM-029	event-specific	MON87419	97	97	euginius_amplicon	OK_CLEAN	EUginius
+QT-EVE-ZM-030	event-specific	MON87429	116	0		SKIPPED	EUginius
+QT-EVE-ZM-031	event-specific	DP915635	74	0		SKIPPED	EUginius
+QT-EVE-ZM-033	event-specific	MON95379	87	0		SKIPPED	EUginius
+QT-EVE-ZM-034	event-specific	DP202216	105	0		SKIPPED	EUginius
+QT-EVE-ZM-035	event-specific	DP23211	75	0		SKIPPED	EUginius
+QT-EVE-ZM-036	event-specific	MON95275	85	0		SKIPPED	EUginius
+QT-EVE-ZM-037	event-specific	MON94804	103	0		SKIPPED	EUginius
+QT-EVE-ZM-038	event-specific	DP910521	108	0		SKIPPED	EUginius
+QT-EVE-ZM-039	event-specific	DP51291	80	0		SKIPPED	EUginius
+QT-EVE-ZM-040	event-specific	DAS1131	98	0		SKIPPED	EUginius
+QT-TAX-BN-001	taxon-specific	Brassica napus	126	0		SKIPPED	EUginius
+QT-TAX-BN-002	taxon-specific	Brassica napus	78	0		SKIPPED	EUginius
+QT-TAX-BN-003	taxon-specific	Brassica napus	101	0		SKIPPED	EUginius
+QT-TAX-BN-012	taxon-specific	Brassica napus	101	0		SKIPPED	EUginius
+QT-TAX-BV-001	taxon-specific	Beta vulgaris	118	118	euginius_amplicon	OK_CLEAN	EUginius
+QT-TAX-BV-013	taxon-specific	Beta vulgaris	118	0		SKIPPED	EUginius
+QT-TAX-CP-001	taxon-specific	Carica papaya	74	74	euginius_amplicon	OK_CLEAN	EUginius
+QT-TAX-FatA primer1/FatA primer2	taxon-specific	Brassica napus	76	76	euginius_amplicon	OK_CLEAN	EUginius
+QT-TAX-GH-015	taxon-specific	Gossypium hirsutum	76	0		SKIPPED	EUginius
+QT-TAX-GH-016	taxon-specific	Gossypium hirsutum	123	0		SKIPPED	EUginius
+QT-TAX-GH-018	taxon-specific	Gossypium hirsutum	73	0		SKIPPED	EUginius
+QT-TAX-GH-019	taxon-specific	Gossypium hirsutum	73	0		SKIPPED	EUginius
+QT-TAX-GH-020	taxon-specific	Gossypium hirsutum	73	0		SKIPPED	EUginius
+QT-TAX-GH-021	taxon-specific	Gossypium hirsutum	115	0		SKIPPED	EUginius
+QT-TAX-GM-001	taxon-specific	Glycine max	81	0		SKIPPED	EUginius
+QT-TAX-GM-002	taxon-specific	Glycine max	74	0		SKIPPED	EUginius
+QT-TAX-GM-003	taxon-specific	Glycine max	102	0		SKIPPED	EUginius
+QT-TAX-GM-004	taxon-specific	Glycine max	70	0		SKIPPED	EUginius
+QT-TAX-GM-005	taxon-specific	Glycine max	74	0		SKIPPED	EUginius
+QT-TAX-GM-007	taxon-specific	Glycine max	118	0		SKIPPED	EUginius
+QT-TAX-GM-009	taxon-specific	Glycine max	105	0		SKIPPED	EUginius
+QT-TAX-GM-020	taxon-specific	Glycine max	102	0		SKIPPED	EUginius
+QT-TAX-OS-002	taxon-specific	Oryza sativa	124	124	euginius_amplicon	OK_CLEAN	EUginius
+QT-TAX-OS-003	taxon-specific	Oryza sativa	81	0		SKIPPED	EUginius
+QT-TAX-OS-017	taxon-specific	Oryza sativa	68	0		SKIPPED	EUginius
+QT-TAX-SL-002	taxon-specific	Solanum lycopersicum	92	0		SKIPPED	EUginius
+QT-TAX-SPS primer f/SPS primer r	taxon-specific	Oryza sativa	81	81	euginius_amplicon	OK_CLEAN	EUginius
+QT-TAX-ST-010	taxon-specific	Solanum tuberosum	89	0		SKIPPED	EUginius
+QT-TAX-ZM-001	taxon-specific	Zea mays	135	0		SKIPPED	EUginius
+QT-TAX-ZM-002	taxon-specific	Zea mays	79	0		SKIPPED	EUginius
+QT-TAX-ZM-003	taxon-specific	Zea mays	135	135	euginius_amplicon	OK_CLEAN	EUginius
+QT-TAX-ZM-004	taxon-specific	Zea mays	69	69	euginius_amplicon	OK_CLEAN	EUginius
+QT-TAX-ZM-005	taxon-specific	Zea mays	79	0		SKIPPED	EUginius
+QT-TAX-ZM-006	taxon-specific	Zea mays	151	0		SKIPPED	EUginius
+QT-TAX-ZM-008	taxon-specific	Zea mays	79	0		SKIPPED	EUginius
+QT-TAX-ZM-011	taxon-specific	Zea mays	70	0		SKIPPED	EUginius
+QT-TAX-ZM-014	taxon-specific	Zea mays	135	0		SKIPPED	EUginius
+QT-TAX-wx012-5'/wx012-3'	taxon-specific	Triticum aestivum	102	101	euginius_amplicon	OK_CLEAN	EUginius
+QT-TAX-zSSIIb-3F/zSSIIb-4R	taxon-specific	Zea mays	88	88	euginius_amplicon	OK_CLEAN	EUginius

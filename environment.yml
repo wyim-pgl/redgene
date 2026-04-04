@@ -1,0 +1,24 @@
+name: redgene
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - bwa=0.7.18
+  - minimap2=2.28
+  - samtools=1.21
+  - fastp=0.23.4
+  - spades=4.0.0
+  - blast=2.16.0
+  - sra-tools=3.1.1
+  - primer3-py=2.0.3
+  - seqkit=2.9.0
+  - biopython=1.84
+  - pysam=0.22.1
+  - matplotlib=3.9
+  - pandas=2.2
+  - pyyaml=6.0
+  - numpy=1.26
+  - bedtools=2.31.1
+  - pigz

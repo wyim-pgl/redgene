@@ -1,0 +1,107 @@
+method_code	scope	target	amplicon_len	fullseq_len	accession	source_type	description
+QL-CON-00-008	construct-specific	2904_1_kgs,_ASR368,_DBN9004,_DBN9936,_GT200,_GT73,_GTSB77,_H7-1,_J101,_J163,_KWS	88	88	FN550387.1	ncbi_blast_fullseq	FN550387.1 Zea mays transgenic partial ctp2 gene and partial cp4epsps gene
+QL-CON-00-012	construct-specific	55-1,_63-1	220	896	KR076687.1	ncbi_blast_fullseq	KR076687.1 Cucumber mosaic virus isolate Sp-J1 3a movement protein and capsid protein genes, partial
+QL-CON-00-013	construct-specific	3006-210-23,_4114,_DAS1507,_DAS59122,_DAS59132,_KMD1,_Kefeng6	90	0		NO_HIT	
+QL-CON-00-014	construct-specific	1345-4,_16-0-1,_18-2-4,_35_1_N,_55-1,_5B,_63-1,_A1-DFR_Petunias,_B_tomato,_C5,_C	151	3304	MF521566.1	ncbi_blast_fullseq	MF521566.1 Petunia x hybrida transgenic dihydroflavonol 4-reductase (A1) gene, complete cds; transpo
+QL-CON-00-015	construct-specific	CBH351,_CM8101,_DBT418,_DLL25,_EH-2_modbs_2.99,_IE034,_Iksan515,_Iksan526,_LLCot	103	985	JX139719.1	ncbi_blast_fullseq	JX139719.1 Oryza sativa transgenic GM cassette, partial sequence
+QL-CON-307-F/652-R	construct-specific	KMD1,_Kefeng6	175	0		NO_HIT	
+QL-CON-35S-F/nptII-R	construct-specific	23-18-17,_23-198,_31807,_31808,_5345,_8338,_ATBT04-06,_ATBT04-27,_ATBT04-30,_ATB	205	888	KT184682.1	ncbi_blast_fullseq	KT184682.1 Zea mays transgenic strain MON863 neomycin phosphotransferase gene, complete cds
+QL-CON-CP1/pFMV2	construct-specific	GT200,_GT73,_GTSB77,_H7-1,_J101,_J163,_MON1445,_MON1698,_MON87705,_MON88302,_MON	488	1804	BT022026.1	ncbi_blast_fullseq	BT022026.1 Arabidopsis thaliana At2g45300 gene, complete cds
+QL-CON-gat/T-pinII-F/gat/T-pinII-R	construct-specific	61061,_73496,_98140,_DP356043	112	917	KP784699.1	ncbi_blast_fullseq	KP784699.1 Zea mays transgenic isolate 98140 glyphosate acetyltransferase gene, partial cds
+QL-ELE-00-011	element-specific	T-nos-RHIRD	84	267	V00087.1	local_fullseq	promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1
+QL-ELE-00-012	element-specific	E-35S-CaMV,_P-Cauliflower_mosaic_virus,_P-scp1-SYNTH	82	531	V00141.1	local_fullseq	promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_r
+QL-ELE-00-014	element-specific	CS-bar-STRHY	60	0		NO_HIT	
+QL-ELE-00-016	element-specific	CS-cry1Ab_1Ac_tr-SYNTH,_CS-cry1Ac-BACTU,_CS-cry1Ab-BACTU	74	1857	Y09787.1	ncbi_blast_fullseq	Y09787.1 B.thuringiensis cryIA(c) gene
+QL-ELE-00-023	element-specific	T-Cauliflower_mosaic_virus	137	0		NO_HIT	
+QL-ELE-00-024	element-specific	T-rbcS_E9-PEA	87	0		NO_HIT	
+QL-ELE-00-025	element-specific	CS-pat-STRVR	108	493	JX139722.1	ncbi_blast_fullseq	JX139722.1 Glycine max transgenic strain A2704-12 GM cassette, partial sequence
+QL-ELE-00-026	element-specific	CS-bar-STRHY	60	0		NO_HIT	
+QL-ELE-AINT 2-5'/AINT 2-3'	element-specific	I-actin	112	623	X63830.1	ncbi_blast_fullseq	X63830.1 O.sativa Act1 gene
+QL-ELE-AgroBS1 F/AgroBS1 R	element-specific	V-Flanking_Ti-nos-RHIRD	76	0		NO_HIT	
+QL-ELE-AgroBS2 F/AgroBS2 R	element-specific	V-Flanking_Ti-ocs-RHIRD	88	1130	HF950132.1	ncbi_blast_fullseq	HF950132.1 Boechera divaricarpa GSS, clone B53-01-R_F20
+QL-ELE-B'nase-F-n4/BNaseR-n3	element-specific	CS-barnase	102	0		NO_HIT	
+QL-ELE-BstarF-n2 /BstarR-n2	element-specific	CS-barstar	145	0		NO_HIT	
+QL-ELE-Cry1Ac-F(/R)-n4/Cry1AcR-n2	element-specific	CS-cry1Ac-BACTU	157	1867	HQ161057.1	ncbi_blast_fullseq	HQ161057.1 Oryza sativa Indica Group transgenic isolate KF6R1 cultivar Kefeng6 genomic sequence
+QL-ELE-Cry1F-F2/Cry1Fr-n2	element-specific	CS-cry1F_tr-BACTA	90	0		NO_HIT	
+QL-ELE-Cry3Bbf-n2/Cry3Bbr-n2	element-specific	CS-cry3Bb1-BACUK	232	0		NO_HIT	
+QL-ELE-P-FMV-F/P-FMV-R	element-specific	P-34S_FMV	79	564	NC_003554.1	local_fullseq	promoter|P-FMV|Figwort_mosaic_virus|NC_003554.1|functional_FMV_promoter_region|canonical_v1
+QL-ELE-P-Rice actin-F/P-Rice actin-R	element-specific	P-act1-ORYSA	95	1266	S44221.1	local_fullseq	promoter|P-Act1-rice|Oryza_sativa|S44221.1|promoter_plus_5-UTR_leader_and_intron|canonical_v1
+QL-ELE-P-SSuAra-F/P-SSuAra-R	element-specific	P-rbcS-ARATH	95	1170	XM_002888530.2	ncbi_blast_fullseq	XM_002888530.2 PREDICTED: Arabidopsis lyrata subsp. lyrata ribulose bisphosphate carboxylase small c
+QL-ELE-P-TA29-F/P-TA29-R	element-specific	P-ta29-TOBAC	117	6254	X52283.1	ncbi_blast_fullseq	X52283.1 Tobacco anther-specific gene TA-29 and stem-specific gene TSJT1
+QL-ELE-P-Ubi-F/P-Ubi-R	element-specific	P-ubi1-MAIZE	76	3841	S94464.1	local_fullseq	promoter|P-Ubi1-maize|Zea_mays|S94464.1|promoter_plus_5-UTR_exon1_and_intron1|canonical_v1
+QL-ELE-PFMV 1-5'/PFMV 1-3'	element-specific	P-34S_FMV	110	564	NC_003554.1	local_fullseq	promoter|P-FMV|Figwort_mosaic_virus|NC_003554.1|functional_FMV_promoter_region|canonical_v1
+QL-ELE-Patf-n2/Patr-n2	element-specific	CS-pat-STRVR	144	493	JX139722.1	ncbi_blast_fullseq	JX139722.1 Glycine max transgenic strain A2704-12 GM cassette, partial sequence
+QL-ELE-RERIO 2206/RERIO 2207	element-specific	CS-DsRed2_fluorescent_protein	506	0		NO_HIT	
+QL-ELE-T-35S-F/T-35S-R	element-specific	T-Cauliflower_mosaic_virus	118	1632	FJ154952.1	ncbi_blast_fullseq	FJ154952.1 Brassica napus transgenic line T45 right border junction of transgenic event genomic sequ
+QL-ELE-T-OCS-F/T-OCS-R	element-specific	T-ocs-RHIRD	85	0		NO_HIT	
+QL-ELE-bar 2-5'/bar 2-3'	element-specific	CS-bar-STRHY	186	356	X17220.1	local_fullseq	cds|bar|Streptomyces_hygroscopicus|X17220.1|full_CDS,_phosphinothricin_acetyltransferase|canonical_v
+QL-ELE-cat-F/R	element-specific	V-chloramphenicol_acetyl_transferase	96	0		NO_HIT	
+QL-ELE-cat-F1/R1	element-specific	V-chloramphenicol_acetyl_transferase	573	851	NG_047580.1	ncbi_blast_fullseq	NG_047580.1 Staphylococcus sciuri pC194-like catA gene for type A-9 chloramphenicol O-acetyltransfer
+QL-ELE-cat-F2/cat-R2	element-specific	V-chloramphenicol_acetyl_transferase	529	851	NG_047580.1	ncbi_blast_fullseq	NG_047580.1 Staphylococcus sciuri pC194-like catA gene for type A-9 chloramphenicol O-acetyltransfer
+QL-ELE-cry1A 4-5'/cry1A 4-3'	element-specific	CS-cry1Ab-BACTU	152	204	AF465640.1	ncbi_blast_fullseq	AF465640.1 Zea mays transgenic Bacillus thuringiensis CryIA(b) protein gene, partial cds
+QL-ELE-cry1A.105 - F1/cry1A.105 - R1	element-specific	CS-cry1A_105-SYNTH	133	0		NO_HIT	
+QL-ELE-cry2Ab2 - F/cry2Ab2 - R	element-specific	CS-cry2Ab2-BACTK	121	0		NO_HIT	
+QL-ELE-cry3A-F/cry3A-R	element-specific	CS-mcry3A-SYNTH,_CS-cry3A-BACTT	117	0		NO_HIT	
+QL-ELE-epsps 1-5'/epsps 3-3'	element-specific	CS-CP4epsps-RHIRD	118	1529	AF464188.1	ncbi_blast_fullseq	AF464188.1 Glycine max CP4EPSPS gene, complete cds
+QL-ELE-epsps2 1-5'/epsps2 1-3'	element-specific	CS-CP4epsps-RHIRD	118	0		NO_HIT	
+QL-ELE-npt 1-5'/npt 1-3'	element-specific	CS-nptII-ECOLX,_V-nptII-ECOLX	155	795	V00618.1	local_fullseq	cds|nptII|Escherichia_coli_Tn5|V00618.1|full_CDS,_neomycin_phosphotransferase_II|canonical_v1
+QL-EVE-16-0-1RB-F/16-0-1RB-R	event-specific	16-0-1	88	234	KU376441.1	ncbi_blast_fullseq	KU376441.1 Carica papaya transgenic cultivar 16-0-1 genomic sequence
+QL-EVE-18-2-4RB-F/18-2-4RB-R	event-specific	18-2-4	152	309	KU376439.1	ncbi_blast_fullseq	KU376439.1 Carica papaya transgenic cultivar 18-2-4 genomic sequence
+QL-EVE-319FalF/320FalR	event-specific	Falcon_GS_40_90	83	216	AY096774.1	ncbi_blast_fullseq	AY096774.1 Populus tremula x Populus tremuloides transgenic isolate SK323 transgene insertion site
+QL-EVE-375LibF/376LibR	event-specific	Liberator	96	0		NO_HIT	
+QL-EVE-558F/558R	event-specific	e871_Bacillus_subtilis	76	2668	LT622644.1	ncbi_blast_fullseq	LT622644.1 Bacillus subtilis transgenic recA region with inserted chloramphenicol resistance gene
+QL-EVE-816AvaF/817AvaR	event-specific	Falcon_GS_40_90	166	1834	XM_009128664.3	ncbi_blast_fullseq	XM_009128664.3 PREDICTED: Brassica rapa pathogen-associated molecular patterns-induced protein A70 (
+QL-EVE-CP-001	event-specific	Huanong_No._1	285	0		NO_HIT	
+QL-EVE-Kef6 forward/Kef6 reverse	event-specific	Kefeng6	128	506	HM124448.1	ncbi_blast_fullseq	HM124448.1 Oryza sativa Indica Group cultivar kefeng-6 clone RB-4 transgenic insect-resistant line r
+QL-EVE-MDB110/SHA016	event-specific	OXY-235	119	1109	EU099579.1	ncbi_blast_fullseq	EU099579.1 Brassica napus transgenic cultivar Oxy-235 3' boundary junction, genomic sequence
+QL-EVE-MS-J101-F/J101-R	event-specific	J101	102	0		NO_HIT	
+QL-EVE-MS-J163-F/J163-R	event-specific	J163	118	0		NO_HIT	
+QL-EVE-MS-KK179-F/KK179-R	event-specific	KK179	179	1158	HF949564.1	ncbi_blast_fullseq	HF949564.1 Boechera divaricarpa GSS, clone B59-01-R_O04
+QL-EVE-OS-KM2_for/KM1_rev	event-specific	KMD1	78	556	EU980363.1	ncbi_blast_fullseq	EU980363.1 Oryza sativa Japonica Group Kemingdao 1 transgenic sequence
+QL-EVE-Oxy-3F/Oxy-4R	event-specific	OXY-235	124	1109	EU099579.1	ncbi_blast_fullseq	EU099579.1 Brassica napus transgenic cultivar Oxy-235 3' boundary junction, genomic sequence
+QL-EVE-SS-AquAd-F/AquAd-R	event-specific	AquAdvantage_Salmon	156	3350	S65567.1	ncbi_blast_fullseq	S65567.1 opAFP=antifreeze protein {promoter} [Macrozoarces americanus=ocean pouts, Genomic, 3350 nt]
+QL-TAX-AT-001	element-specific	CS-nos-RHIRD	86	1133	OP712404.1	ncbi_blast_fullseq	OP712404.1 Agrobacterium tumefaciens strain X-A70 nopaline synthase (nos) gene, partial cds
+QL-TAX-Acc1-F/Acc1-R	taxon-specific	Medicago_sativa	91	7175	L25042.1	ncbi_blast_fullseq	L25042.1 Medicago sativa acetyl-CoA carboxylase (ACCase) mRNA, complete cds
+QL-TAX-CP-001	taxon-specific	Carica_papaya	282	719	AY803756.1	ncbi_blast_fullseq	AY803756.1 Carica papaya chymopapain gene, promoter and partial cds
+QL-TAX-CaMVF/CaMVR	taxon-specific	Cauliflower_mosaic_virus	90	1391	HE978785.1	ncbi_blast_fullseq	HE978785.1 Cauliflower mosaic virus partial CP gene for coat protein, CaMV-Gho31
+QL-TAX-DC-001	taxon-specific	Dianthus_caryophyllus	1279	4604	AB727362.2	ncbi_blast_fullseq	AB727362.2 Dianthus caryophyllus genomic DNA, anthocyanidin synthase promoter region
+QL-TAX-PS-001	taxon-specific	Pisum_sativum	78	284	HM346476.1	ncbi_blast_fullseq	HM346476.1 Lathyrus pisiformis lectin 6 gene, partial cds
+QL-TAX-SS-AM5F/AM5R	taxon-specific	Salmo_salar	177	4673	AY614009.1	ncbi_blast_fullseq	AY614009.1 Salmo salar isolate Ss10_GH1 growth hormone I gene, complete cds
+QT-ELE-00-004	element-specific	E-35S-CaMV,_P-Cauliflower_mosaic_virus,_P-scp1-SYNTH	82	531	V00141.1	local_fullseq	promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_r
+QT-ELE-NOS ter 2-5' /NOS ter 2-3'	element-specific	T-nos-RHIRD	151	267	V00087.1	local_fullseq	promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1
+QT-ELE-P35S 1-5'/P35S 1-3'	element-specific	P-Cauliflower_mosaic_virus	100	0		NO_HIT	
+QT-EVE-CP-001	event-specific	Huanong_No._1	175	0		NO_HIT	
+QT-EVE-DBN9501-qF/DBN9501-qR	event-specific	DBN9501	96	0		NO_HIT	
+QT-EVE-GH-012	event-specific	COT102	101	0		NO_HIT	
+QT-EVE-HF-1F/HF-2R	event-specific	Huafan_No_1	228	753	KC820135.1	ncbi_blast_fullseq	KC820135.1 Arabidopsis thaliana transgenic NBR1 (NBR1) gene, exons 3, 4 and partial cds
+QT-EVE-OS-002	event-specific	LLRICE62	88	628	JQ406881.1	ncbi_blast_fullseq	JQ406881.1 Oryza sativa transgenic LLRICE62 5' insertion site genomic sequence
+QT-EVE-OS-G6H1-F/G6H1-R	event-specific	G6H1	90	0		NO_HIT	
+QT-EVE-ZM-010	event-specific	DAS1507	58	0		NO_HIT	
+QT-EVE-ZM-029	event-specific	MON87419	97	1133	HF949548.1	ncbi_blast_fullseq	HF949548.1 Boechera divaricarpa GSS, clone B59-01-R_N12
+QT-TAX-BV-001	taxon-specific	Beta_vulgaris	118	1296	AY026353.1	ncbi_blast_fullseq	AY026353.1 Beta vulgaris glutamine synthetase GS2 (gln2) mRNA, complete cds; nuclear gene for plasti
+QT-TAX-CP-001	taxon-specific	Carica_papaya	74	719	AY803756.1	ncbi_blast_fullseq	AY803756.1 Carica papaya chymopapain gene, promoter and partial cds
+QT-TAX-FatA primer1/FatA primer2	taxon-specific	Brassica_napus	76	1476	XM_010437010.2	ncbi_blast_fullseq	XM_010437010.2 PREDICTED: Camelina sativa oleoyl-acyl carrier protein thioesterase 2, chloroplastic 
+QT-TAX-OS-002	taxon-specific	Oryza_sativa	124	2740	XM_052303253.1	ncbi_blast_fullseq	XM_052303253.1 PREDICTED: Oryza glaberrima phospholipase D alpha 2 (LOC127776725), mRNA
+QT-TAX-SPS primer f/SPS primer r	taxon-specific	Oryza_sativa	81	721	KT225496.1	ncbi_blast_fullseq	KT225496.1 Oryza sativa Japonica Group sucrose phosphate synthase 32 gene, partial cds
+QT-TAX-ZM-003	taxon-specific	Zea_mays	135	360	K03285.1	ncbi_blast_fullseq	K03285.1 Maize alcohol dehydrogenase gene (Adh1-PrF allele), 5' end
+QT-TAX-ZM-004	taxon-specific	Zea_mays	69	928	EU963452.1	ncbi_blast_fullseq	EU963452.1 Zea mays clone 262836 mRNA sequence
+QT-TAX-wx012-5'/wx012-3'	taxon-specific	Triticum_aestivum	101	4431	LC373576.1	ncbi_blast_fullseq	LC373576.1 Triticum aestivum K107Afpp4 Wx gene for waxy protein, complete cds, allele: Wx-D1g
+QT-TAX-zSSIIb-3F/zSSIIb-4R	taxon-specific	Zea_mays	88	2480	AF019297.1	ncbi_blast_fullseq	AF019297.1 Zea mays starch synthase isoform zSTSII-2 (zSSIIb) mRNA, complete cds
+QL-ELE-00-001	element-specific	P-Cauliflower_mosaic_virus	195	531	V00141.1	local_fullseq	promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_r
+QL-ELE-00-002	element-specific	CS-nptII-ECOLX,_V-nptII-ECOLX	215	795	V00618.1	local_fullseq	cds|nptII|Escherichia_coli_Tn5|V00618.1|full_CDS,_neomycin_phosphotransferase_II|canonical_v1
+QL-ELE-00-003	element-specific	CS-nptII-ECOLX,_V-nptII-ECOLX	173	795	V00618.1	local_fullseq	cds|nptII|Escherichia_coli_Tn5|V00618.1|full_CDS,_neomycin_phosphotransferase_II|canonical_v1
+QL-ELE-00-004	element-specific	P-Cauliflower_mosaic_virus	123	531	V00141.1	local_fullseq	promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_r
+QL-ELE-00-005	element-specific	P-Cauliflower_mosaic_virus	195	531	V00141.1	local_fullseq	promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_r
+QL-ELE-00-006	element-specific	T-nos-RHIRD	180	267	V00087.1	local_fullseq	promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1
+QL-ELE-00-007	element-specific	T-nos-RHIRD	180	267	V00087.1	local_fullseq	promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1
+QL-ELE-00-008	element-specific	P-nos-RHIRD	94	396	AJ311874.1	local_fullseq	promoter|P-ocs|Agrobacterium_tumefaciens|AJ311874.1|octopine_synthase_promoter_region|canonical_v1
+QL-ELE-00-009	element-specific	T-nos-RHIRD	118	267	V00087.1	local_fullseq	promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1
+QL-ELE-00-010	element-specific	E-FMV,_P-34S_FMV	196	564	NC_003554.1	local_fullseq	promoter|P-FMV|Figwort_mosaic_virus|NC_003554.1|functional_FMV_promoter_region|canonical_v1
+QL-ELE-00-013	element-specific	T-nos-RHIRD	84	267	V00087.1	local_fullseq	promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1
+QL-ELE-00-015	element-specific	E-FMV,_P-34S_FMV	78	564	NC_003554.1	local_fullseq	promoter|P-FMV|Figwort_mosaic_virus|NC_003554.1|functional_FMV_promoter_region|canonical_v1
+QL-ELE-00-017	element-specific	P-Cauliflower_mosaic_virus	75	531	V00141.1	local_fullseq	promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_r
+QL-ELE-00-018	element-specific	T-nos-RHIRD	69	267	V00087.1	local_fullseq	promoter|P-nos|Agrobacterium_tumefaciens|V00087.1|nopaline_synthase_promoter_region|canonical_v1
+QL-ELE-00-022	element-specific	CS-bar-STRHY	69	0		NO_HIT	
+QL-TAX-CMV-001	taxon-specific	Cauliflower_mosaic_virus	68	0		NO_HIT	
+QL-TAX-FMVorf7-F4/FMVorf7-R4	taxon-specific	Figwort_mosaic_virus	113	7743	NC_003554.1	ncbi_blast_fullseq	NC_003554.1 Figwort mosaic virus (FMV) genome
+QT-ELE-00-001	element-specific	P-Cauliflower_mosaic_virus	79	531	V00141.1	local_fullseq	promoter|P-35S-CaMV|Cauliflower_mosaic_virus|V00141.1|functional_35S_promoter_region,_-421_to_+109_r

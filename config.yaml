@@ -1,0 +1,123 @@
+# GMO Positive Control Characterization Pipeline - Configuration
+# Each sample needs: name, host reference, construct reference, and reads
+
+pipeline:
+  threads: 8
+  memory_gb: 32
+  # Use SLURM job submission (false = run locally)
+  use_slurm: false
+  slurm:
+    partition: cpu-s2-core-0
+    account: cpu-s5-bch709-0
+    time: "4:00:00"
+
+# Reference databases
+references:
+  # Element database for construct identification
+  element_db: element_db/gmo_combined_db.fa
+
+# Samples to process
+samples:
+  rice_G281:
+    name: "Rice G281 transgenic event"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: test_data/rice_G281_R1.fastq.gz
+      r2: test_data/rice_G281_R2.fastq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+      copy_number: 2
+      orientation: head-to-head
+
+  rice_G281_15x:
+    name: "Rice G281 - 15x coverage"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: test_data/subsampled/rice_G281_15x_R1.fq.gz
+      r2: test_data/subsampled/rice_G281_15x_R2.fq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+
+  rice_G281_10x:
+    name: "Rice G281 - 10x coverage"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: test_data/subsampled/rice_G281_10x_R1.fq.gz
+      r2: test_data/subsampled/rice_G281_10x_R2.fq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+
+  rice_G281_5x:
+    name: "Rice G281 - 5x coverage"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: test_data/subsampled/rice_G281_5x_R1.fq.gz
+      r2: test_data/subsampled/rice_G281_5x_R2.fq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+
+  rice_G281_3x:
+    name: "Rice G281 - 3x coverage"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: test_data/subsampled/rice_G281_3x_R1.fq.gz
+      r2: test_data/subsampled/rice_G281_3x_R2.fq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+
+  # Tomato Micro-Tom samples (PRJNA692070)
+  tomato_WT:
+    name: "Micro-Tom Wild Type (MT_WT)"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/SRR13450615_1.fastq.gz
+      r2: test_data/tomato/SRR13450615_2.fastq.gz
+    expected:
+      cas9_present: false
+
+  tomato_Cas9_A2_1:
+    name: "Micro-Tom Cas9 1-A2-1 (Cas9 removed, heterozygous edit)"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/SRR13450618_1.fastq.gz
+      r2: test_data/tomato/SRR13450618_2.fastq.gz
+    expected:
+      cas9_present: false
+      edit_type: heterozygous
+
+  tomato_Cas9_A2_2:
+    name: "Micro-Tom Cas9 1-A2-2 (Cas9 present, homozygous edit)"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/SRR13450617_1.fastq.gz
+      r2: test_data/tomato/SRR13450617_2.fastq.gz
+    expected:
+      cas9_present: true
+      edit_type: homozygous
+
+  tomato_Cas9_A2_3:
+    name: "Micro-Tom Cas9 1-A2-3 (Cas9 present, heterozygous edit)"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/SRR13450616_1.fastq.gz
+      r2: test_data/tomato/SRR13450616_2.fastq.gz
+    expected:
+      cas9_present: true
+      edit_type: heterozygous
+
+# Output directory
+output_dir: results

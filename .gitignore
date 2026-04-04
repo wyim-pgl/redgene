@@ -1,0 +1,36 @@
+# Data files (large)
+test_data/
+db/
+element_db/*.fa
+element_db/*.fa.*
+results/
+*.bam
+*.bam.bai
+*.bai
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.sra
+
+# SPAdes work dirs
+spades_work/
+
+# Conda/environment
+__pycache__/
+*.pyc
+.conda/
+
+# SLURM logs
+slurm_*.out
+slurm_*.err
+*.out
+*.err
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

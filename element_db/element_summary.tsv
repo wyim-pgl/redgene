@@ -1,0 +1,44 @@
+Element class	Element name	FASTA header ID	Source organism	GenBank accession	Coordinates	Length (bp)	Boundary rule	Source note
+promoter	CaMV 35S promoter	P-35S-CaMV	Cauliflower_mosaic_virus	V00141.1	6909-7439	531	functional 35S promoter region, -421 to +109 relative to TSS	Most widely used GMO screening target; multiple variants exist (enhanced, double, core)
+promoter	CaMV 35S enhanced (double)	P-e35S-CaMV	Cauliflower_mosaic_virus	V00141.1	6677-7439	763	enhanced/doubled 35S including upstream enhancer duplication	Used in many modern constructs; Kay et al. 1987 Science 236:1299
+promoter	FMV 35S promoter	P-FMV	Figwort_mosaic_virus	NC_003554.1	6367-6930	564	functional FMV promoter region	Alternative to CaMV 35S; Sanger et al. 1990
+promoter	NOS promoter	P-nos	Agrobacterium_tumefaciens	V00087.1	1847-2113	267	nopaline synthase promoter region	Used in some constructs for marker gene expression
+promoter	OCS promoter	P-ocs	Agrobacterium_tumefaciens	AJ311874.1	1-396	396	octopine synthase promoter region	Less common but present in some events
+promoter	SSuAra promoter	P-SSuAra	Arabidopsis_thaliana	X13611.1	1-1100	1100	small subunit of RuBisCO Ara promoter	Light-regulated promoter; Debode et al. 2013
+promoter	TA29 promoter	P-TA29	Nicotiana_tabacum	X52283.1	1-792	792	tapetum-specific TA29 promoter	Used in MS8 rapeseed; anther-specific
+promoter	Maize Ubi1 promoter	P-Ubi1-maize	Zea_mays	S94464.1	FULL-FULL	3841	promoter plus 5-UTR exon1 and intron1	Critical: must include exon1+intron1 for function; Christensen & Quail 1996
+promoter	Rice actin Act1 promoter	P-Act1-rice	Oryza_sativa	S44221.1	FULL-FULL	1266	promoter plus 5-UTR leader and intron	McElroy et al. 1990; standard rice promoter cassette
+promoter	CsVMV promoter	P-CsVMV	Cassava_vein_mosaic_virus	U59751.1	1-517	517	Cassava vein mosaic virus promoter	Used in some Dow/Corteva events; Verdaguer et al. 1996
+promoter	Maize MTL/PLD3 promoter	P-MTL-maize	Zea_mays	curated	full	0	haploid inducer MTL/PLD3 promoter	Maize-derived; may cross-react with host; Debode 2019
+promoter	PcUbi promoter	P-PcUbi	Petroselinum_crispum	curated	full	0	parsley ubiquitin promoter	Used in some BASF events; Debode 2019
+terminator	NOS terminator	T-nos	Agrobacterium_tumefaciens	V00087.1	1277-1536	260	nos 3-prime UTR and transcription termination region	Second most common screening target after P-35S
+terminator	OCS terminator	T-ocs	Agrobacterium_tumefaciens	curated	full	0	ocs 3-prime terminator region	Present in several older events
+terminator	CaMV 35S terminator	T-35S-CaMV	Cauliflower_mosaic_virus	V00141.1	7631-7850	220	CaMV 35S polyadenylation and termination region	Must be clearly distinguished from P-35S
+terminator	E9 terminator	T-E9	Pisum_sativum	X00806.1	923-1100	178	pea rbcS E9 3-prime terminator	Used in GTS40-3-2 soybean; Debode 2013
+terminator	g7 terminator	T-g7	Agrobacterium_tumefaciens	curated	full	0	gene 7 3-prime terminator region	Used in some events; Debode 2013
+terminator	pCambia 35S terminator	T-35S-pCAMBIA	Cauliflower_mosaic_virus	AF234296.1	8409-8666	258	pCAMBIA vector-derived 35S terminator variant	Slightly different from canonical T-35S; Debode 2019
+terminator	Pinll terminator	T-PinII	Solanum_tuberosum	curated	full	0	potato proteinase inhibitor II terminator	Used in Bt crops; Keil et al. 1986
+cds	nptII	nptII	Escherichia_coli_Tn5	V00618.1	1-795	795	full CDS, neomycin phosphotransferase II	Most common selectable marker; kanamycin resistance
+cds	bar	bar	Streptomyces_hygroscopicus	X17220.1	260-811	356	full CDS, phosphinothricin acetyltransferase	Basta/glufosinate resistance
+cds	pat	pat	Streptomyces_viridochromogenes	M22827.1	203-754	552	full CDS, phosphinothricin acetyltransferase	Similar to bar but from different organism
+cds	hpt (hph)	hpt	Streptomyces_hygroscopicus	U40398.1	113-1138	1026	full CDS, hygromycin phosphotransferase	Also called hph; hygromycin resistance
+cds	aadA	aadA	Escherichia_coli	X02340.1	301-1092	792	full CDS, aminoglycoside adenyltransferase	Spectinomycin/streptomycin resistance; used as bacterial marker
+cds	cp4-epsps	cp4-epsps	Agrobacterium_sp_CP4	L29358.1	22-1377	531	full CDS, CP4 EPSPS synthase, excluding transit peptide	Roundup Ready trait; transit peptide fusions must be separate
+cds	GOX (glyphosate oxidase)	gox	Ochrobactrum_anthropi	curated	full	0	full CDS, glyphosate oxidoreductase	Used in some older glyphosate-tolerant events
+cds	2mEPSPS	2mepsps	Zea_mays	curated	full	0	double-mutant maize EPSPS	Used in GA21 maize; host-derived modified gene
+cds	cry1Ab	cry1Ab	Bacillus_thuringiensis	M13898.1	156-3614	3459	full CDS, crystal protein Cry1Ab	MON810, Bt11; most common Bt gene
+cds	cry1Ac	cry1Ac	Bacillus_thuringiensis	M11068.1	1-3534	3534	full CDS, crystal protein Cry1Ac	Bollgard cotton; MON531
+cds	cry1F	cry1F	Bacillus_thuringiensis	M73254.1	1-3537	3525	full CDS, crystal protein Cry1F	TC1507 maize; Herculex
+cds	cry2Ab2	cry2Ab2	Bacillus_thuringiensis	curated	full	0	full CDS, crystal protein Cry2Ab2	MON89034; dual Bt stack
+cds	cry3Bb1	cry3Bb1	Bacillus_thuringiensis	M89794.1	1-1953	1953	full CDS, crystal protein Cry3Bb1	MON863 maize; corn rootworm resistance
+cds	cry34Ab1	cry34Ab1	Bacillus_thuringiensis	curated	full	0	full CDS, crystal protein Cry34Ab1	DAS-59122 maize; binary toxin
+cds	cry35Ab1	cry35Ab1	Bacillus_thuringiensis	curated	full	0	full CDS, crystal protein Cry35Ab1	DAS-59122 maize; binary toxin partner
+cds	vip3Aa	vip3Aa	Bacillus_thuringiensis	curated	full	0	full CDS, vegetative insecticidal protein	MIR162 maize; newer Bt trait
+cds	gus (uidA)	gus	Escherichia_coli	S69414.1	1-1812	1812	full CDS, beta-glucuronidase	Reporter gene; occasionally in commercial events
+cds	barnase	barnase	Bacillus_amyloliquefaciens	M14442.1	206-541	336	full CDS, ribonuclease barnase	Male sterility system; MS8 rapeseed
+cds	barstar	barstar	Bacillus_amyloliquefaciens	X15545.1	1-273	273	full CDS, barnase inhibitor barstar	Restorer gene; RF3 rapeseed
+regulatory	hsp70 intron	hsp70-intron	Zea_mays	curated	full	0	maize heat shock protein 70 intron	Used in MON810 between P-35S and cry1Ab; enhancer element
+regulatory	CTP2 transit peptide	CTP2	Arabidopsis_thaliana	curated	full	0	chloroplast transit peptide from EPSPS	Used to direct CP4-EPSPS to chloroplast in RR soybean
+regulatory	CTP4 transit peptide	CTP4	Petunia_hybrida	curated	full	0	chloroplast transit peptide from EPSPS	Alternative CTP used in some EPSPS constructs
+regulatory	T-DNA LB (left border)	LB-TDNA	Agrobacterium_tumefaciens	AF485783.1	1-25	25	canonical T-DNA left border repeat	25bp imperfect repeat; Agrobacterium Ti plasmid
+regulatory	T-DNA RB (right border)	RB-TDNA	Agrobacterium_tumefaciens	AF485783.1	11601-11625	25	canonical T-DNA right border repeat	25bp imperfect repeat; Agrobacterium Ti plasmid
