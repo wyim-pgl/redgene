@@ -60,8 +60,10 @@ Minimap2-based detection between pCAMBIA-1300/element_db and rice genome:
 
 ## Tomato Micro-Tom (PRJNA692070)
 
-### Dataset (Bae et al. 2022, Horticultural Science and Technology)
-CRISPR/Cas9-edited Micro-Tom tomato targeting SlFAD2 gene:
+### Dataset
+CRISPR/Cas9-edited Micro-Tom tomato (Seol et al. 2025, Plant Biotechnology Reports).
+Targets: **SlAMS** (Solyc08g062780) and **SlPHD_MS1** (Solyc04g008420) for male sterility.
+SRA data from PRJNA692070 (originally published by Bae et al. 2022).
 
 | Sample | SRA | Library | Cas9 Status | Edit Type | Raw Reads |
 |--------|-----|---------|-------------|-----------|-----------|

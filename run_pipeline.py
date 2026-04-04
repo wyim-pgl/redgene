@@ -28,6 +28,7 @@ STEP_SCRIPTS: dict[str, str] = {
     "5": "scripts/s05_contig_map.py",
     "6": "scripts/s06_junction.py",
     "7": "scripts/s07_host_map.py",
+    "8": "scripts/s08_indel_detection.py",
     "10": "scripts/s10_copynumber.py",
 }
 
@@ -39,6 +40,7 @@ STEP_NAMES: dict[str, str] = {
     "5": "Map contigs to host (minimap2)",
     "6": "Chimeric contig / junction detection",
     "7": "Map all reads to host (bwa mem)",
+    "8": "CRISPR indel detection (treatment vs WT)",
     "10": "Copy number estimation",
 }
 

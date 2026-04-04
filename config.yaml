@@ -96,6 +96,11 @@ samples:
     expected:
       cas9_present: false
       edit_type: heterozygous
+      editing_targets:
+        - gene: SlAMS
+          locus: Solyc08g062780
+        - gene: SlPHD_MS1
+          locus: Solyc04g008420
 
   tomato_Cas9_A2_2:
     name: "Micro-Tom Cas9 1-A2-2 (Cas9 present, homozygous edit)"
@@ -107,6 +112,12 @@ samples:
     expected:
       cas9_present: true
       edit_type: homozygous
+      tdna_insertion_chr: SLM_r2.0ch08
+      editing_targets:
+        - gene: SlAMS
+          locus: Solyc08g062780
+        - gene: SlPHD_MS1
+          locus: Solyc04g008420
 
   tomato_Cas9_A2_3:
     name: "Micro-Tom Cas9 1-A2-3 (Cas9 present, heterozygous edit)"
@@ -118,6 +129,13 @@ samples:
     expected:
       cas9_present: true
       edit_type: heterozygous
+      tdna_insertion_chr: SLM_r2.0ch08
+      tdna_insertion_pos: 65107378
+      editing_targets:
+        - gene: SlAMS
+          locus: Solyc08g062780
+        - gene: SlPHD_MS1
+          locus: Solyc04g008420
 
 # Output directory
 output_dir: results

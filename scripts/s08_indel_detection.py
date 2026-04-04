@@ -270,27 +270,27 @@ def main() -> None:
         indel["nhej_signature"] = False
         indel["crispr_candidate"] = False
 
-        # Check PAM (NGG) within 3-8bp downstream of indel
-        # Extract flanking sequence from reference
+        # Check PAM (NGG) at specific positions relative to indel
+        # Cas9 cuts 3bp upstream of PAM, so PAM should be at indel_pos +3 to +6
         try:
-            region = f"{indel['chrom']}:{max(1,indel['pos']-10)}-{indel['pos']+30}"
+            region = f"{indel['chrom']}:{max(1,indel['pos']-8)}-{indel['pos']+8}"
             result = subprocess.run(
                 ["samtools", "faidx", str(args.host_ref), region],
                 capture_output=True, text=True,
             )
             seq = "".join(result.stdout.strip().split("\n")[1:]).upper()
-            # Look for NGG in the flanking region (both strands)
-            # Forward strand PAM: NGG at position +3 to +8 from cut
-            # Reverse strand PAM: CCN at position -8 to -3 from cut
-            for i in range(len(seq) - 2):
-                if seq[i+1:i+3] == "GG":
-                    indel["has_pam"] = True
-                    indel["pam_motif"] = seq[i:i+3]
-                    break
-                if seq[i:i+2] == "CC":
-                    indel["has_pam"] = True
-                    indel["pam_motif"] = seq[i:i+3]
-                    break
+            mid = 8  # indel position within extracted sequence
+            # Forward strand: NGG at positions +3 to +6 from cut site
+            if mid + 6 <= len(seq) and seq[mid+4:mid+6] == "GG":
+                indel["has_pam"] = True
+                indel["pam_motif"] = seq[mid+3:mid+6] + "(+)"
+            # Reverse strand: CCN at positions -6 to -3 from cut site
+            elif mid >= 6 and seq[mid-6:mid-4] == "CC":
+                indel["has_pam"] = True
+                indel["pam_motif"] = seq[mid-6:mid-3] + "(-)"
+            else:
+                indel["has_pam"] = False
+                indel["pam_motif"] = ""
         except Exception:
             pass
 

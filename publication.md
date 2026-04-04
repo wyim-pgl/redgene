@@ -36,6 +36,14 @@
 
 ## 2. GM Tomato Gene-Editing Line (CRISPR/Cas9)
 
+### Primary Reference (CRISPR targets)
+- **Paper**: Seol et al. 2025, "CRISPR/Cas9-mediated mutagenesis of SlAMS and SlPHD_MS1 for male sterility in tomato"
+- **Journal**: Plant Biotechnology Reports
+- **DOI**: 10.1007/s11816-025-00952-0
+- **PMCID**: PMC11897730
+- **CRISPR targets**: SlAMS (Solyc08g062780), SlPHD_MS1 (Solyc04g008420)
+
+### SRA Data Reference
 - **Paper**: Bae et al. 2022, "Establishment of a rapid assay for sequencing of carried DNA and edited sites in gene-editing tomato plants"
 - **Journal**: Hortic Environ Biotechnol, 63:515-521
 - **DOI**: 10.1007/s13580-022-00427-5
@@ -44,30 +52,33 @@
 
 ### SRA Data
 
-| Sample | Accession | Platform | Layout | Depth | Size |
-|--------|-----------|----------|--------|-------|------|
-| Micro-Tom WT | SRR13450615 | HiSeq 3000 | PE151 | ~38x | 36.0 Gb |
-| 20_A2_1 (transgenic) | SRR13450618 | HiSeq 3000 | PE151 | ~48x | 45.3 Gb |
-| 20_A2_2 (transgenic) | SRR13450617 | HiSeq 3000 | PE151 | ~10x | 9.4 Gb |
-| 20_A2_3 (transgenic) | SRR13450616 | HiSeq 3000 | PE151 | ~10x | 9.6 Gb |
+| Sample | Accession | Library | Platform | Layout | Cas9 | Edit |
+|--------|-----------|---------|----------|--------|------|------|
+| Micro-Tom WT | SRR13450615 | MT_WT | HiSeq 3000 | PE151 | N/A | None |
+| 20_A2_1 | SRR13450618 | 20_A2_1 | HiSeq 3000 | PE151 | Removed | Hetero |
+| 20_A2_2 | SRR13450617 | 20_A2_2 | HiSeq 3000 | PE151 | Present | Homo |
+| 20_A2_3 | SRR13450616 | 20_A2_3 | HiSeq 3000 | PE151 | Present | Hetero |
 
 ### Key Info
 
-- **Host**: Solanum lycopersicum (Micro-Tom, M82)
-- **Event**: CRISPR/Cas9 gene-editing tomato (target: MS1-like, MS1035 male sterility genes)
-- **Construct**: pAGM4723 (Cas9 + sgRNA), sequence available via Addgene #48015
-- **Editing results**: bi-allelic indels at target sites (e.g., 5bp del + 1bp ins in MS1-like)
+- **Host**: Solanum lycopersicum cv. Micro-Tom
+- **Reference genome**: SLM_r2.0.pmol.fasta (plantgarden.jp, 832.8 Mbp, 12 chr)
+- **Event**: CRISPR/Cas9 gene-editing for male sterility
+- **Editing targets**:
+  - **SlAMS** (Solyc08g062780) - Aborted Microspores homolog
+  - **SlPHD_MS1** (Solyc04g008420) - PHD-finger MS1 homolog
+- **Construct**: Contains Cas9, nptII, CaMV 35S promoter
+- **Our finding**: T-DNA insertion at chr08:65,107,378 (A2_3 sample)
 
 ### Ground Truth Status
 
-- **Insertion site**: NOT reported in paper
-- **Copy number**: NOT reported in paper
-- Paper focus is rapid screening assay (BioCube) validation, not insertion characterization
-- No construct sequence deposited to NCBI; pAGM4723 available from Addgene
+- **Insertion site**: NOT reported in papers; our pipeline detected chr08:65,107,378
+- **Copy number**: NOT reported
+- **Editing sites**: SlAMS on chr08, SlPHD_MS1 on chr04 — to be verified with step 8
 
 ### Notes
 
 - Korean research team — directly relevant to Korean quarantine context
 - PE151 read length matches our target PE150
-- Useful as de novo discovery test (no ground truth to compare)
-- Priority: 2nd (after G281 rice which has full ground truth)
+- Useful as de novo discovery test (no ground truth for T-DNA position)
+- CRISPR editing sites can be validated against known target genes
