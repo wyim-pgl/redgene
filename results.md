@@ -350,13 +350,14 @@ with homozygous SlAMS editing; the 1-A2 lines have heterogeneous editing pattern
 - **Platform**: BGISEQ-1000, PE150
 - **Total reads**: ~35M pairs (~5x coverage on 2.1 Gbp genome)
 - **Host reference**: Zm-B73-REFERENCE-NAM-5.0 (GCF_902167145.1, 2.18 Gbp, 687 scaffolds)
-- **Construct reference**: `db/corn_border_db.fa` (62 LB/RB border sequences for 31 corn events, Table S1)
+- **Construct reference**: `db/gmo_corn_combined_db.fa` (192 sequences: 130 EUginius elements + 62 corn LB/RB border sequences)
 
 ### Method
-- **Border sequence approach**: Unlike rice (vector-specific pCAMBIA-1300) or tomato (131-element GMO DB),
-  corn uses **event-specific LB/RB border sequences** from Table S1 of the paper. Each border sequence
-  (~100-200bp) spans the host genome–T-DNA junction, containing both flanking genomic DNA and
-  exogenous gene sequence. This allows event-specific identification via split-read alignment.
+- **Combined construct DB**: Uses both EUginius element DB (130 GMO elements: promoters, terminators,
+  selectable markers) AND event-specific LB/RB border sequences (62 sequences, 31 events) from
+  Table S1 of the paper. Border sequences (~100-200bp) span the host genome–T-DNA junction for
+  event-specific identification. Element DB provides construct element coverage for copy number
+  and general T-DNA detection.
 - **Pipeline**: Steps 1-6 (QC → construct map → read extract → assembly → contig map → junction detection)
 - **Key challenge**: 2.25M reads extracted at step 3 (vs 6K rice, 3.4K tomato) — border sequences
   contain maize genomic flanking regions that recruit massive numbers of host-derived reads.

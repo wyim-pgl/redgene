@@ -211,5 +211,17 @@ samples:
       cas9_present: true
       edit_type: heterozygous
 
+  # Corn ND207 transformant (CRA026358, Sci Rep 2025)
+  corn_ND207:
+    name: "Corn ND207 pest/herbicide-resistant (homozygous, PCR-Free 5x)"
+    host_reference: db/Zm_B73_v5.fa
+    construct_reference: db/gmo_corn_combined_db.fa
+    reads:
+      r1: data/corn_ND207/ND207_PCRFree_R1.fq.gz
+      r2: data/corn_ND207/ND207_PCRFree_R2.fq.gz
+    expected:
+      insertion_type: T-DNA
+      zygosity: homozygous
+
 # Output directory
 output_dir: results
