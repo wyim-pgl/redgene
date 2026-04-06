@@ -1,0 +1,3 @@
+chrom	pos	type	size	indel_seq	freq	dp	count	zygosity	effect	gene	aa_change	details	grna_idx	site_type
+SLM_r2.0ch08	53314230	deletion	4	GTAC	0.21951219512195122	41	9	heterozygous	frameshift	LOC101253608		Frameshift deletion of 4bp (GTAC) in LOC101253608	2	on-target
+SLM_r2.0ch08	53314230	deletion	1	G	0.14634146341463414	41	6	low-frequency	frameshift	LOC101253608		Frameshift deletion of 1bp (G) in LOC101253608	2	on-target
