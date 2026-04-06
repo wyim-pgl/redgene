@@ -409,6 +409,12 @@ def predict_effect(
 # Plotting
 # ---------------------------------------------------------------------------
 
+ALLELE_COLORS = [
+    "#B71C1C", "#1565C0", "#2E7D32", "#E65100", "#6A1B9A",
+    "#00838F", "#C62828", "#283593", "#558B2F", "#BF360C",
+]
+
+
 def plot_editing_effects(
     sites_with_effects: list[dict],
     sample_name: str,
@@ -421,8 +427,8 @@ def plot_editing_effects(
         log("No editing sites to plot")
         return
 
-    fig = plt.figure(figsize=(14, max(4, 2 + n_sites * 1.8)))
-    gs = gridspec.GridSpec(2, 2, height_ratios=[2, 1], hspace=0.35, wspace=0.3)
+    fig = plt.figure(figsize=(16, max(6, 3 + n_sites * 1.5)))
+    gs = gridspec.GridSpec(2, 2, height_ratios=[2.5, 1.5], hspace=0.4, wspace=0.35)
 
     # ---- Panel 1: Effect summary table (top-left) ----
     ax_table = fig.add_subplot(gs[0, 0])
@@ -435,16 +441,26 @@ def plot_editing_effects(
         site = s["site"]
         effect = eff["effect"]
         color = EFFECT_COLORS.get(effect, "#BDBDBD")
-        row_colors.append((*matplotlib.colors.to_rgb(color), 0.2))
+        row_colors.append((*matplotlib.colors.to_rgb(color), 0.15))
 
         gene = eff.get("gene_name", "")
         aa = eff.get("aa_change", "")
         freq = float(site.get("freq", 0))
+        ref_seq = site.get("ref", "-")
+        indel_seq = site.get("indel_seq", "")
+
+        # Shorten chrom name for table fit
+        chrom = site.get("chrom", "")
+        if "ch" in chrom:
+            chrom_short = "chr" + chrom.split("ch")[-1]
+        else:
+            chrom_short = chrom[-6:] if len(chrom) > 6 else chrom
 
         table_data.append([
-            f"{site.get('chrom', '')}:{site.get('pos', '')}",
+            f"{chrom_short}:{site.get('pos', '')}",
             f"{site.get('type', '')} {site.get('size', '')}bp",
-            site.get("indel_seq", ""),
+            f"ref:{ref_seq}",
+            indel_seq,
             effect.replace("_", " ").title(),
             gene,
             aa if aa else "-",
@@ -452,19 +468,25 @@ def plot_editing_effects(
             site.get("zygosity", ""),
         ])
 
-    col_labels = ["Position", "Type", "Sequence", "Effect", "Gene",
-                   "AA Change", "Freq", "Zygosity"]
+    col_labels = ["Position", "Type", "Reference", "Variant", "Effect",
+                   "Gene", "AA Change", "Freq", "Zygosity"]
 
     if table_data:
         table = ax_table.table(
             cellText=table_data,
             colLabels=col_labels,
-            loc="center",
+            loc="upper center",
             cellLoc="center",
         )
         table.auto_set_font_size(False)
-        table.set_fontsize(7)
-        table.scale(1, 1.4)
+        table.set_fontsize(6.5)
+        table.scale(1.0, 1.5)
+
+        # Auto-adjust column widths
+        col_widths = [0.11, 0.09, 0.09, 0.08, 0.10, 0.13, 0.10, 0.07, 0.10]
+        for j, w in enumerate(col_widths):
+            for i in range(len(table_data) + 1):
+                table[i, j].set_width(w)
 
         # Color rows
         for i, color in enumerate(row_colors):
@@ -473,7 +495,7 @@ def plot_editing_effects(
 
         # Bold header
         for j in range(len(col_labels)):
-            table[0, j].set_text_props(fontweight="bold", fontsize=8)
+            table[0, j].set_text_props(fontweight="bold", fontsize=7)
             table[0, j].set_facecolor("#E0E0E0")
 
     ax_table.set_title(
@@ -481,74 +503,112 @@ def plot_editing_effects(
         fontsize=12, fontweight="bold", pad=15,
     )
 
-    # ---- Panel 2: Effect type pie chart (top-right) ----
+    # ---- Panel 2: Allele frequency pie (top-right) ----
+    # Show per-allele frequencies rather than just effect type
     ax_pie = fig.add_subplot(gs[0, 1])
-    effect_counts = defaultdict(int)
-    for s in sites_with_effects:
-        effect_counts[s["effect_info"]["effect"]] += 1
 
-    labels = []
-    sizes = []
-    colors = []
-    for eff, count in sorted(effect_counts.items()):
-        labels.append(eff.replace("_", " ").title())
-        sizes.append(count)
-        colors.append(EFFECT_COLORS.get(eff, "#BDBDBD"))
+    allele_labels = []
+    allele_sizes = []
+    allele_colors = []
+    total_freq = 0.0
+    for i, s in enumerate(sites_with_effects):
+        site = s["site"]
+        freq = float(site.get("freq", 0))
+        total_freq += freq
+        indel_type = site.get("type", "")
+        indel_size = site.get("size", "")
+        indel_seq = site.get("indel_seq", "")
+        effect = s["effect_info"]["effect"].replace("_", " ").title()
+        allele_labels.append(f"{indel_type} {indel_size}bp {indel_seq}\n({effect}, {freq:.1%})")
+        allele_sizes.append(freq)
+        allele_colors.append(ALLELE_COLORS[i % len(ALLELE_COLORS)])
 
-    if sizes:
+    # Add wildtype fraction
+    wt_freq = max(0, 1.0 - total_freq)
+    if wt_freq > 0:
+        allele_labels.append(f"Wild-type\n({wt_freq:.1%})")
+        allele_sizes.append(wt_freq)
+        allele_colors.append("#E0E0E0")
+
+    if allele_sizes:
         wedges, texts, autotexts = ax_pie.pie(
-            sizes, labels=labels, colors=colors, autopct="%1.0f%%",
+            allele_sizes, labels=allele_labels, colors=allele_colors,
+            autopct=lambda pct: f"{pct:.1f}%" if pct > 3 else "",
             startangle=90, pctdistance=0.75,
-            textprops={"fontsize": 8},
+            textprops={"fontsize": 7},
+            wedgeprops={"edgecolor": "white", "linewidth": 1.5},
         )
         for t in autotexts:
             t.set_fontsize(7)
             t.set_fontweight("bold")
-    ax_pie.set_title("Effect Distribution", fontsize=10, fontweight="bold")
+            t.set_color("white")
+    ax_pie.set_title("Allele Distribution", fontsize=10, fontweight="bold")
 
-    # ---- Panel 3: Allele frequency + depth bar chart (bottom-left) ----
+    # ---- Panel 3: Allele frequency bar chart (bottom-left) ----
     ax_freq = fig.add_subplot(gs[1, 0])
 
     x_pos = np.arange(n_sites)
     freqs = [float(s["site"].get("freq", 0)) for s in sites_with_effects]
-    bar_colors = [EFFECT_COLORS.get(s["effect_info"]["effect"], "#BDBDBD")
-                  for s in sites_with_effects]
 
-    bars = ax_freq.bar(x_pos, [f * 100 for f in freqs], color=bar_colors,
+    # Use distinct colors per allele
+    bars = ax_freq.bar(x_pos, [f * 100 for f in freqs],
+                       color=[ALLELE_COLORS[i % len(ALLELE_COLORS)]
+                              for i in range(n_sites)],
                        edgecolor="black", linewidth=0.5, width=0.6)
 
-    # Depth as text on bars
+    # Depth annotation on bars
     for i, s in enumerate(sites_with_effects):
         dp = s["site"].get("dp", "?")
         count = s["site"].get("count", "?")
         ax_freq.text(i, freqs[i] * 100 + 1, f"{count}/{dp}",
-                     ha="center", va="bottom", fontsize=7, fontweight="bold")
+                     ha="center", va="bottom", fontsize=8, fontweight="bold",
+                     color=ALLELE_COLORS[i % len(ALLELE_COLORS)])
 
     ax_freq.set_xticks(x_pos)
-    x_labels = [f"{s['site'].get('chrom', '')[-4:]}:{s['site'].get('pos', '')}"
-                for s in sites_with_effects]
-    ax_freq.set_xticklabels(x_labels, fontsize=7, rotation=30, ha="right")
+    x_labels = []
+    for s in sites_with_effects:
+        site = s["site"]
+        indel_type = site.get("type", "?")
+        indel_size = site.get("size", "?")
+        indel_seq = site.get("indel_seq", "")
+        x_labels.append(f"{indel_type} {indel_size}bp\n{indel_seq}")
+    ax_freq.set_xticklabels(x_labels, fontsize=7, ha="center")
     ax_freq.set_ylabel("Allele Frequency (%)", fontsize=9)
     ax_freq.set_title("Allele Frequency (reads/depth)", fontsize=10,
                        fontweight="bold")
     ax_freq.set_ylim(0, max(f * 100 for f in freqs) * 1.3 + 5 if freqs else 50)
 
-    # ---- Panel 4: Codon context (bottom-right) ----
+    # ---- Panel 4: Codon context + ref sequence (bottom-right) ----
     ax_codon = fig.add_subplot(gs[1, 1])
     ax_codon.axis("off")
 
-    codon_text = "Codon Context:\n\n"
-    for s in sites_with_effects:
+    codon_text = "Variant Details:\n\n"
+    for i, s in enumerate(sites_with_effects):
         eff = s["effect_info"]
+        site = s["site"]
+        ref_seq = site.get("ref", "-")
+        indel_seq = site.get("indel_seq", "")
+        indel_type = site.get("type", "")
+
+        codon_text += f"  [{i+1}] Ref: {ref_seq}  →  "
+        if indel_type == "deletion":
+            codon_text += f"Del: {indel_seq}\n"
+        else:
+            codon_text += f"Ins: {indel_seq}\n"
+
         if eff.get("details"):
-            codon_text += f"  {eff['details']}\n\n"
+            codon_text += f"      {eff['details']}\n"
+        codon_text += "\n"
 
     ax_codon.text(0.05, 0.95, codon_text, transform=ax_codon.transAxes,
-                  fontsize=8, va="top", fontfamily="monospace",
+                  fontsize=7.5, va="top", fontfamily="monospace",
                   bbox=dict(boxstyle="round,pad=0.5", facecolor="#FAFAFA",
                             edgecolor="#ccc"))
 
     # Effect color legend
+    effect_counts = defaultdict(int)
+    for s in sites_with_effects:
+        effect_counts[s["effect_info"]["effect"]] += 1
     legend_patches = [
         mpatches.Patch(color=c, label=e.replace("_", " ").title())
         for e, c in EFFECT_COLORS.items()

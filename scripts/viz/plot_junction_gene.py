@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
-"""Enhanced junction visualization with gene/exon/CDS annotation.
+"""Junction visualization with gene/exon/CDS annotation.
 
-Shows each junction site in the context of host genome gene structure,
-with the inserted construct sequence annotated alongside.
-
-Panels per junction:
-  - Gene model track (exons/CDS/UTR/introns) with junction position
-  - Contig alignment diagram showing host and construct segments
-  - Inserted sequence annotation
+Redesigned layout:
+  Row 1: Gene track — all genes in a single wide row, junction centered
+  Row 2: Funnel/wedge contig — host narrows to junction, construct shown
+         at true scale with kb annotation
+  Row 3: Legend
 
 Usage:
   python plot_junction_gene.py \
     --junctions results/{sample}/s06_junction/junctions.tsv \
     --gff db/genome.gff3 \
     --contigs results/{sample}/s04_assembly/contigs.fasta \
-    --sample-name {sample} \
-    --output results/{sample}/s06_junction/junction_gene_context.png
+    --sample-name {sample} --outdir results
 """
 
 import argparse
 import csv
 import gzip
-import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -30,6 +26,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.patches import FancyBboxPatch, Polygon
 import matplotlib.gridspec as gridspec
 import numpy as np
 
@@ -46,24 +43,15 @@ def parse_gff3_region(
     gff_path: Path, chrom: str, region_start: int, region_end: int,
     flank: int = 10000,
 ) -> dict:
-    """Parse GFF3 for genes/mRNA/exon/CDS features overlapping a region.
-
-    Returns dict with:
-      genes: [{id, name, description, start, end, strand,
-               exons: [(s,e),...], cds: [(s,e,frame),...], utrs: [(s,e),...]}]
-    """
+    """Parse GFF3 for genes overlapping a region. Returns dict with genes list."""
     query_start = region_start - flank
     query_end = region_end + flank
 
     opener = gzip.open if str(gff_path).endswith(".gz") else open
     mode = "rt" if str(gff_path).endswith(".gz") else "r"
 
-    # First pass: find genes and their hierarchy
-    genes = {}  # gene_id -> gene info
-    mrna_to_gene = {}  # mRNA_id -> gene_id
-    gene_mrnas = defaultdict(list)  # gene_id -> [mRNA_ids]
-
-    features_by_parent = defaultdict(list)
+    genes = {}
+    mrna_to_gene = {}
 
     with opener(gff_path, mode) as f:
         for line in f:
@@ -83,11 +71,9 @@ def parse_gff3_region(
             f_strand = fields[6]
             attrs = fields[8]
 
-            # Check overlap
             if f_end < query_start or f_start > query_end:
                 continue
 
-            # Parse attributes
             attr_dict = {}
             for attr in attrs.split(";"):
                 if "=" in attr:
@@ -100,43 +86,29 @@ def parse_gff3_region(
             if f_type == "gene":
                 name = attr_dict.get("Name", feat_id)
                 desc = attr_dict.get("description", "")
-                # URL decode
                 desc = desc.replace("%2C", ",").replace("%20", " ")
                 genes[feat_id] = {
-                    "id": feat_id,
-                    "name": name,
-                    "description": desc,
-                    "start": f_start,
-                    "end": f_end,
-                    "strand": f_strand,
-                    "exons": [],
-                    "cds": [],
-                    "utrs": [],
+                    "id": feat_id, "name": name, "description": desc,
+                    "start": f_start, "end": f_end, "strand": f_strand,
+                    "exons": [], "cds": [], "utrs": [],
                 }
             elif f_type == "mRNA":
                 if parent in genes:
                     mrna_to_gene[feat_id] = parent
-                    gene_mrnas[parent].append(feat_id)
             elif f_type == "exon":
-                # Find which gene this belongs to
-                if parent in mrna_to_gene:
-                    gid = mrna_to_gene[parent]
+                gid = mrna_to_gene.get(parent, parent)
+                if gid in genes:
                     genes[gid]["exons"].append((f_start, f_end))
-                elif parent in genes:
-                    genes[parent]["exons"].append((f_start, f_end))
             elif f_type == "CDS":
-                frame = fields[7] if fields[7] != "." else "0"
-                if parent in mrna_to_gene:
-                    gid = mrna_to_gene[parent]
-                    genes[gid]["cds"].append((f_start, f_end, int(frame)))
-                elif parent in genes:
-                    genes[parent]["cds"].append((f_start, f_end, int(frame)))
+                frame = int(fields[7]) if fields[7] != "." else 0
+                gid = mrna_to_gene.get(parent, parent)
+                if gid in genes:
+                    genes[gid]["cds"].append((f_start, f_end, frame))
             elif f_type in ("five_prime_UTR", "three_prime_UTR"):
-                if parent in mrna_to_gene:
-                    gid = mrna_to_gene[parent]
+                gid = mrna_to_gene.get(parent, parent)
+                if gid in genes:
                     genes[gid]["utrs"].append((f_start, f_end))
 
-    # Sort exons and CDS
     for g in genes.values():
         g["exons"] = sorted(set(g["exons"]))
         g["cds"] = sorted(set(g["cds"]))
@@ -146,18 +118,15 @@ def parse_gff3_region(
 
 
 # ---------------------------------------------------------------------------
-# Contig sequence extraction
+# Contig FASTA
 # ---------------------------------------------------------------------------
 
 def read_contigs(fasta_path: Path) -> dict[str, str]:
-    """Read contigs from FASTA file."""
     contigs = {}
     current = None
     seq_parts = []
-
     opener = gzip.open if str(fasta_path).endswith(".gz") else open
     mode = "rt" if str(fasta_path).endswith(".gz") else "r"
-
     with opener(fasta_path, mode) as f:
         for line in f:
             if line.startswith(">"):
@@ -169,22 +138,45 @@ def read_contigs(fasta_path: Path) -> dict[str, str]:
                 seq_parts.append(line.strip())
         if current:
             contigs[current] = "".join(seq_parts)
-
     return contigs
 
 
 # ---------------------------------------------------------------------------
-# Plotting
+# Colors
 # ---------------------------------------------------------------------------
 
-# Colors
-HOST_COLOR = "#4CAF50"       # green
-CONSTRUCT_COLOR = "#F44336"  # red
-EXON_COLOR = "#1565C0"       # blue
-CDS_COLOR = "#0D47A1"        # dark blue
-UTR_COLOR = "#90CAF9"        # light blue
-INTRON_COLOR = "#78909C"     # gray
-JUNCTION_COLOR = "#FF6F00"   # amber
+HOST_COLOR = "#4CAF50"
+CONSTRUCT_COLOR = "#E53935"
+EXON_COLOR = "#1565C0"
+CDS_COLOR = "#0D47A1"
+UTR_COLOR = "#90CAF9"
+INTRON_COLOR = "#78909C"
+JUNCTION_COLOR = "#FF6F00"
+GENE_COLORS = ["#1565C0", "#6A1B9A", "#00838F", "#2E7D32", "#E65100"]
+
+
+# ---------------------------------------------------------------------------
+# Main plot
+# ---------------------------------------------------------------------------
+
+def _classify_junction_location(junction_pos: int, gene: dict) -> str:
+    """Classify where junction falls relative to gene features."""
+    for cs, ce, _ in gene["cds"]:
+        if cs <= junction_pos <= ce:
+            return "CDS"
+    for es, ee in gene["exons"]:
+        if es <= junction_pos <= ee:
+            return "UTR"
+    if gene["start"] <= junction_pos <= gene["end"]:
+        return "intron"
+    return "intergenic"
+
+
+def _fmt_kb(bp: int) -> str:
+    """Format bp as human-readable."""
+    if abs(bp) >= 1000:
+        return f"{bp/1000:.1f} kb"
+    return f"{bp} bp"
 
 
 def plot_junction_with_gene(
@@ -194,7 +186,7 @@ def plot_junction_with_gene(
     sample_name: str,
     output_path: Path,
 ) -> None:
-    """Create a multi-panel junction diagram with gene context."""
+    """Create redesigned junction diagram: gene track + funnel contig."""
 
     host_chr = junction["host_chr"]
     host_start = int(junction["host_start"])
@@ -207,273 +199,372 @@ def plot_junction_with_gene(
     confidence = junction["confidence"]
     host_mapq = junction.get("host_mapq", "?")
 
-    # Parse construct element name
     element_parts = construct_element.split("|")
-    element_type = element_parts[0] if len(element_parts) > 0 else "unknown"
     element_name = element_parts[1] if len(element_parts) > 1 else construct_element[:30]
 
     genes = gene_info.get("genes", [])
+    # Sort genes by start position
+    genes = sorted(genes, key=lambda g: g["start"])
+    # Limit to closest 5 genes to junction
+    if len(genes) > 5:
+        genes = sorted(genes, key=lambda g: abs((g["start"]+g["end"])/2 - junction_pos))[:5]
+        genes = sorted(genes, key=lambda g: g["start"])
 
-    # Determine plot window around junction
-    flank = 5000
-    plot_start = junction_pos - flank
-    plot_end = junction_pos + flank
-
-    # Adjust to show full gene if it extends beyond
+    # --- Window: center on junction ---
+    flank = 10000
+    # Expand to include all gene boundaries
+    all_positions = [junction_pos - flank, junction_pos + flank]
     for g in genes:
-        if g["start"] < plot_start and g["end"] > plot_start - flank:
-            plot_start = g["start"] - 500
-        if g["end"] > plot_end and g["start"] < plot_end + flank:
-            plot_end = g["end"] + 500
+        all_positions.extend([g["start"], g["end"]])
+    win_start = min(all_positions) - 500
+    win_end = max(all_positions) + 500
+    # Ensure junction is roughly centered (at least 40-60% from left)
+    win_width = win_end - win_start
+    junc_frac = (junction_pos - win_start) / win_width if win_width > 0 else 0.5
+    if junc_frac < 0.35:
+        win_end = junction_pos + int((junction_pos - win_start) / 0.4 * 0.6)
+    elif junc_frac > 0.65:
+        win_start = junction_pos - int((win_end - junction_pos) / 0.4 * 0.6)
+    win_width = win_end - win_start
 
-    n_genes = len(genes)
-    fig_height = max(6, 3 + n_genes * 1.5 + 2)
-
-    fig = plt.figure(figsize=(16, fig_height))
-    gs = gridspec.GridSpec(
-        3 + n_genes, 1,
-        height_ratios=[1.5] + [1.2] * n_genes + [1.5, 0.8],
-        hspace=0.15,
-    )
-
-    # ---- Panel 1: Genomic context overview ----
-    ax_ctx = fig.add_subplot(gs[0])
-    ax_ctx.set_xlim(plot_start, plot_end)
-    ax_ctx.set_ylim(-0.5, 0.5)
-
-    # Chromosome bar
-    ax_ctx.barh(0, plot_end - plot_start, left=plot_start, height=0.15,
-                color="#E0E0E0", edgecolor="#999", linewidth=0.5, zorder=1)
-
-    # Junction marker
-    ax_ctx.axvline(x=junction_pos, color=JUNCTION_COLOR, linewidth=2.5,
-                   linestyle="-", zorder=10)
-    ax_ctx.annotate(
-        f"Junction: {host_chr}:{junction_pos:,}\n[{junction_type}] MAPQ={host_mapq}",
-        xy=(junction_pos, 0.15),
-        xytext=(junction_pos, 0.4),
-        fontsize=8, fontweight="bold", color=JUNCTION_COLOR,
-        ha="center", va="bottom",
-        arrowprops=dict(arrowstyle="->", color=JUNCTION_COLOR, lw=1.5),
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="#FFF3E0",
-                  edgecolor=JUNCTION_COLOR, alpha=0.9),
-    )
-
-    # Host alignment region
-    ax_ctx.barh(0, host_end - host_start, left=host_start, height=0.3,
-                color=HOST_COLOR, alpha=0.3, edgecolor=HOST_COLOR,
-                linewidth=1, zorder=2)
-
-    ax_ctx.set_title(
-        f"Junction Gene Context — {sample_name}\n"
-        f"{host_chr}:{plot_start:,}-{plot_end:,} | "
-        f"Construct: {element_name} | Confidence: {confidence}",
-        fontsize=11, fontweight="bold", pad=10,
-    )
-    ax_ctx.set_ylabel("Genome", fontsize=9)
-    ax_ctx.set_yticks([])
-    ax_ctx.tick_params(labelbottom=False)
-    ax_ctx.spines["left"].set_visible(False)
-
-    # ---- Panels 2..N: Gene models ----
-    for gi, gene in enumerate(genes):
-        ax_gene = fig.add_subplot(gs[1 + gi])
-        ax_gene.set_xlim(plot_start, plot_end)
-        ax_gene.set_ylim(-0.8, 0.8)
-
-        gene_name = gene["name"]
-        gene_desc = gene.get("description", "")
-        gene_strand = gene["strand"]
-        gene_start = gene["start"]
-        gene_end = gene["end"]
-
-        # Intron line (gene body)
-        ax_gene.plot([gene_start, gene_end], [0, 0],
-                     color=INTRON_COLOR, linewidth=1.5, zorder=1)
-
-        # Strand arrows along intron
-        arrow_step = max(200, (gene_end - gene_start) // 20)
-        for apos in range(gene_start, gene_end, arrow_step):
-            if plot_start <= apos <= plot_end:
-                dx = 80 if gene_strand == "+" else -80
-                ax_gene.annotate("", xy=(apos + dx, 0), xytext=(apos, 0),
-                                 arrowprops=dict(arrowstyle="->",
-                                                 color=INTRON_COLOR, lw=0.8))
-
-        # Draw exons (light boxes)
-        for es, ee in gene["exons"]:
-            if ee < plot_start or es > plot_end:
-                continue
-            ax_gene.barh(0, ee - es, left=es, height=0.5,
-                         color=UTR_COLOR, edgecolor=EXON_COLOR,
-                         linewidth=0.8, zorder=3)
-
-        # Draw CDS (filled boxes, darker)
-        for cs, ce, frame in gene["cds"]:
-            if ce < plot_start or cs > plot_end:
-                continue
-            ax_gene.barh(0, ce - cs, left=cs, height=0.5,
-                         color=CDS_COLOR, edgecolor="black",
-                         linewidth=0.8, alpha=0.85, zorder=4)
-
-            # Frame annotation (small text)
-            mid = (cs + ce) / 2
-            if plot_start <= mid <= plot_end:
-                ax_gene.text(mid, -0.35, f"f{frame}",
-                             fontsize=5, ha="center", va="top",
-                             color="#666")
-
-        # Draw UTRs
-        for us, ue in gene["utrs"]:
-            if ue < plot_start or us > plot_end:
-                continue
-            ax_gene.barh(0, ue - us, left=us, height=0.35,
-                         color=UTR_COLOR, edgecolor=EXON_COLOR,
-                         linewidth=0.5, zorder=3)
-
-        # Junction line through gene
-        ax_gene.axvline(x=junction_pos, color=JUNCTION_COLOR, linewidth=2,
-                        linestyle="--", alpha=0.7, zorder=10)
-
-        # Check if junction falls in CDS/exon/intron/UTR
-        location = "intergenic"
-        for cs, ce, _ in gene["cds"]:
-            if cs <= junction_pos <= ce:
-                location = "CDS"
-                break
-        if location == "intergenic":
-            for es, ee in gene["exons"]:
-                if es <= junction_pos <= ee:
-                    location = "exon (UTR)"
-                    break
-        if location == "intergenic":
-            if gene_start <= junction_pos <= gene_end:
-                location = "intron"
-
-        # Gene label
-        label = f"{gene_name} ({gene_strand})"
-        if gene_desc:
-            label += f"\n{gene_desc[:60]}"
-        label += f"\nJunction in: {location}"
-
-        ax_gene.text(plot_start + (plot_end - plot_start) * 0.02, 0.65,
-                     label, fontsize=8, va="top",
-                     bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                               edgecolor="#ccc", alpha=0.9))
-
-        ax_gene.set_ylabel(f"Gene {gi+1}", fontsize=8)
-        ax_gene.set_yticks([])
-        ax_gene.tick_params(labelbottom=False)
-        ax_gene.spines["left"].set_visible(False)
-
-    # ---- Panel: Contig alignment diagram ----
-    ax_contig = fig.add_subplot(gs[1 + n_genes])
-    ax_contig.set_xlim(0, contig_len)
-    ax_contig.set_ylim(-0.8, 1.2)
-
-    # Contig backbone
-    ax_contig.barh(0, contig_len, height=0.4, color="#E0E0E0",
-                   edgecolor="black", linewidth=0.8, zorder=1)
-
-    # Host alignment portion (approximate)
+    # --- Contig geometry ---
     host_aln_len = abs(host_end - host_start)
     construct_start = int(junction.get("construct_start", 0))
     construct_end = int(junction.get("construct_end", 0))
     construct_aln_len = abs(construct_end - construct_start)
 
-    # Determine which side is host vs construct
     if junction_type in ("LB", "5prime"):
-        # Host on right, construct on left
         host_contig_start = contig_len - host_aln_len
         host_contig_end = contig_len
         const_contig_start = 0
         const_contig_end = construct_aln_len
     else:
-        # Host on left, construct on right
         host_contig_start = 0
         host_contig_end = host_aln_len
         const_contig_start = contig_len - construct_aln_len
         const_contig_end = contig_len
 
-    # Clamp
     host_contig_start = max(0, host_contig_start)
     const_contig_end = min(contig_len, const_contig_end)
-
-    # Draw host region
-    ax_contig.barh(0, host_contig_end - host_contig_start,
-                   left=host_contig_start, height=0.4,
-                   color=HOST_COLOR, alpha=0.6, edgecolor=HOST_COLOR,
-                   linewidth=1, zorder=3)
-    ax_contig.text((host_contig_start + host_contig_end) / 2, 0,
-                   f"Host\n{host_chr}:{host_start:,}-{host_end:,}",
-                   ha="center", va="center", fontsize=7,
-                   fontweight="bold", color="white")
-
-    # Draw construct region
-    ax_contig.barh(0, const_contig_end - const_contig_start,
-                   left=const_contig_start, height=0.4,
-                   color=CONSTRUCT_COLOR, alpha=0.6, edgecolor=CONSTRUCT_COLOR,
-                   linewidth=1, zorder=3)
-    ax_contig.text((const_contig_start + const_contig_end) / 2, 0,
-                   f"Construct\n{element_name}",
-                   ha="center", va="center", fontsize=7,
-                   fontweight="bold", color="white")
-
-    # Junction point on contig
     junction_on_contig = host_contig_start if junction_type in ("LB", "5prime") else host_contig_end
-    ax_contig.axvline(x=junction_on_contig, color=JUNCTION_COLOR,
-                      linewidth=2.5, zorder=10)
-    ax_contig.annotate("Junction", xy=(junction_on_contig, 0.25),
-                       xytext=(junction_on_contig, 0.9),
-                       fontsize=8, fontweight="bold", color=JUNCTION_COLOR,
-                       ha="center",
-                       arrowprops=dict(arrowstyle="->", color=JUNCTION_COLOR))
 
-    # Show contig sequence around junction (if available)
+    # --- Figure ---
+    fig = plt.figure(figsize=(16, 8))
+    gs = gridspec.GridSpec(
+        3, 1,
+        height_ratios=[2.5, 2.0, 0.3],
+        hspace=0.05,
+    )
+
+    # ==== ROW 1: Gene track (single wide row, all genes) ====
+    ax_gene = fig.add_subplot(gs[0])
+    ax_gene.set_xlim(win_start, win_end)
+
+    n_genes = len(genes)
+    # If genes overlap vertically, stack them
+    gene_y_positions = []
+    GENE_HEIGHT = 0.35
+    GENE_SPACING = 0.85
+    for gi, gene in enumerate(genes):
+        # Simple stacking: check overlap with previously placed genes
+        y = 0
+        for prev_gi, prev_gene in enumerate(genes[:gi]):
+            prev_y = gene_y_positions[prev_gi]
+            if gene["start"] <= prev_gene["end"] + 200 and gene["end"] >= prev_gene["start"] - 200:
+                y = max(y, prev_y + GENE_SPACING)
+        gene_y_positions.append(y)
+
+    max_y = max(gene_y_positions) if gene_y_positions else 0
+    ax_gene.set_ylim(-0.8, max_y + GENE_SPACING + 0.3)
+
+    # Chromosome bar (background)
+    chr_y = -0.5
+    ax_gene.barh(chr_y, win_width, left=win_start, height=0.12,
+                 color="#E0E0E0", edgecolor="#BBB", linewidth=0.5, zorder=0)
+    # Chromosome label
+    ax_gene.text(win_start + win_width * 0.005, chr_y, host_chr,
+                 fontsize=7, va="center", ha="left", color="#666", style="italic")
+
+    # Draw each gene
+    for gi, gene in enumerate(genes):
+        y = gene_y_positions[gi]
+        color = GENE_COLORS[gi % len(GENE_COLORS)]
+        gene_start = gene["start"]
+        gene_end = gene["end"]
+        gene_strand = gene["strand"]
+
+        # Intron line
+        draw_start = max(gene_start, win_start)
+        draw_end = min(gene_end, win_end)
+        ax_gene.plot([draw_start, draw_end], [y, y],
+                     color=INTRON_COLOR, linewidth=1.2, zorder=1)
+
+        # Strand direction arrows
+        arrow_step = max(500, (draw_end - draw_start) // 15)
+        for apos in range(int(draw_start) + 200, int(draw_end) - 200, arrow_step):
+            dx = 150 if gene_strand == "+" else -150
+            ax_gene.annotate("", xy=(apos + dx, y), xytext=(apos, y),
+                             arrowprops=dict(arrowstyle="->", color=INTRON_COLOR,
+                                             lw=0.6), zorder=1)
+
+        # Exons
+        for es, ee in gene["exons"]:
+            if ee < win_start or es > win_end:
+                continue
+            es_c = max(es, win_start)
+            ee_c = min(ee, win_end)
+            ax_gene.barh(y, ee_c - es_c, left=es_c, height=GENE_HEIGHT,
+                         color=UTR_COLOR, edgecolor=color,
+                         linewidth=0.8, zorder=3)
+
+        # CDS (darker fill)
+        for cs, ce, frame in gene["cds"]:
+            if ce < win_start or cs > win_end:
+                continue
+            cs_c = max(cs, win_start)
+            ce_c = min(ce, win_end)
+            ax_gene.barh(y, ce_c - cs_c, left=cs_c, height=GENE_HEIGHT,
+                         color=color, edgecolor="black",
+                         linewidth=0.7, alpha=0.85, zorder=4)
+
+        # UTRs
+        for us, ue in gene["utrs"]:
+            if ue < win_start or us > win_end:
+                continue
+            us_c = max(us, win_start)
+            ue_c = min(ue, win_end)
+            ax_gene.barh(y, ue_c - us_c, left=us_c, height=GENE_HEIGHT * 0.7,
+                         color=UTR_COLOR, edgecolor=color,
+                         linewidth=0.5, zorder=3)
+
+        # Gene label
+        location = _classify_junction_location(junction_pos, gene)
+        label_text = f"{gene['name']} ({gene_strand})"
+        if location != "intergenic":
+            label_text += f" [{location}]"
+
+        # Place label above gene, slightly offset
+        label_x = max(win_start + win_width * 0.01,
+                      min((gene_start + gene_end) / 2, win_end - win_width * 0.15))
+        ax_gene.text(label_x, y + GENE_HEIGHT / 2 + 0.08, label_text,
+                     fontsize=7.5, va="bottom", ha="center", color=color,
+                     fontweight="bold",
+                     bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
+                               edgecolor=color, alpha=0.85, linewidth=0.5))
+
+    # Junction line through gene track
+    ax_gene.axvline(x=junction_pos, color=JUNCTION_COLOR, linewidth=2.5,
+                    linestyle="-", zorder=20, alpha=0.9)
+
+    # Junction label at top
+    ax_gene.annotate(
+        f"Junction: {host_chr}:{junction_pos:,}\n[{junction_type}] MAPQ={host_mapq}",
+        xy=(junction_pos, max_y + GENE_SPACING),
+        xytext=(junction_pos, max_y + GENE_SPACING + 0.2),
+        fontsize=8.5, fontweight="bold", color=JUNCTION_COLOR,
+        ha="center", va="bottom",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="#FFF3E0",
+                  edgecolor=JUNCTION_COLOR, alpha=0.95),
+    )
+
+    # Scale bar
+    scale_len = _pick_scale_bar(win_width)
+    sb_x = win_end - scale_len - win_width * 0.02
+    sb_y = -0.3
+    ax_gene.plot([sb_x, sb_x + scale_len], [sb_y, sb_y],
+                 color="black", linewidth=2, zorder=10)
+    ax_gene.plot([sb_x, sb_x], [sb_y - 0.05, sb_y + 0.05],
+                 color="black", linewidth=1.5, zorder=10)
+    ax_gene.plot([sb_x + scale_len, sb_x + scale_len], [sb_y - 0.05, sb_y + 0.05],
+                 color="black", linewidth=1.5, zorder=10)
+    ax_gene.text(sb_x + scale_len / 2, sb_y - 0.12, _fmt_kb(scale_len),
+                 fontsize=7, ha="center", va="top", color="black")
+
+    ax_gene.set_title(
+        f"Junction Gene Context — {sample_name}\n"
+        f"Construct: {element_name} | Confidence: {confidence}",
+        fontsize=12, fontweight="bold", pad=12,
+    )
+    ax_gene.set_yticks([])
+    ax_gene.tick_params(labelbottom=False, bottom=False)
+    for spine in ax_gene.spines.values():
+        spine.set_visible(False)
+
+    # ==== ROW 2: Funnel contig diagram ====
+    ax_contig = fig.add_subplot(gs[1])
+
+    # Contig uses its OWN scale, centered so junction_on_contig aligns
+    # with junction_pos from the gene track above.
+    # We map contig coordinates → plot x via a linear transform.
+    contig_visual_width = win_width * 0.65  # contig spans ~65% of plot width
+    contig_scale = contig_visual_width / contig_len  # plot-units per contig-bp
+
+    def contig_to_x(cp: float) -> float:
+        """Map contig position to plot x-coordinate (junction-aligned)."""
+        return junction_pos + (cp - junction_on_contig) * contig_scale
+
+    ax_contig.set_xlim(win_start, win_end)
+    ax_contig.set_ylim(-1.8, 2.0)
+
+    # -- Contig backbone (gray bar) --
+    bar_y = 0.0
+    bar_h = 0.55
+    contig_x0 = contig_to_x(0)
+    contig_x1 = contig_to_x(contig_len)
+    ax_contig.barh(bar_y, contig_x1 - contig_x0, left=contig_x0,
+                   height=bar_h, color="#F5F5F5", edgecolor="#999",
+                   linewidth=0.8, zorder=1)
+
+    # -- Host portion --
+    hx0 = contig_to_x(host_contig_start)
+    hx1 = contig_to_x(host_contig_end)
+    ax_contig.barh(bar_y, hx1 - hx0, left=hx0, height=bar_h,
+                   color=HOST_COLOR, alpha=0.75, edgecolor=HOST_COLOR,
+                   linewidth=1.2, zorder=5)
+    host_mid = (hx0 + hx1) / 2
+    ax_contig.text(host_mid, bar_y + 0.02,
+                   f"Host\n{host_chr}:{host_start:,}-{host_end:,}",
+                   ha="center", va="center", fontsize=7.5, fontweight="bold",
+                   color="white", zorder=6)
+    # Host length label below
+    ax_contig.text(host_mid, bar_y - bar_h / 2 - 0.12,
+                   _fmt_kb(host_aln_len), ha="center", va="top",
+                   fontsize=7, color=HOST_COLOR, fontweight="bold")
+
+    # -- Construct portion --
+    cx0 = contig_to_x(const_contig_start)
+    cx1 = contig_to_x(const_contig_end)
+    ax_contig.barh(bar_y, cx1 - cx0, left=cx0, height=bar_h,
+                   color=CONSTRUCT_COLOR, alpha=0.75, edgecolor=CONSTRUCT_COLOR,
+                   linewidth=1.2, zorder=5)
+    const_mid = (cx0 + cx1) / 2
+    ax_contig.text(const_mid, bar_y + 0.02,
+                   f"Construct\n{element_name}",
+                   ha="center", va="center", fontsize=7.5, fontweight="bold",
+                   color="white", zorder=6)
+    # Construct length label below with arrow
+    ax_contig.annotate(
+        "", xy=(cx0, bar_y - bar_h / 2 - 0.15),
+        xytext=(cx1, bar_y - bar_h / 2 - 0.15),
+        arrowprops=dict(arrowstyle="<->", color=CONSTRUCT_COLOR, lw=1.5),
+        zorder=8)
+    ax_contig.text(const_mid, bar_y - bar_h / 2 - 0.30,
+                   f"{_fmt_kb(construct_aln_len)} inserted",
+                   ha="center", va="top", fontsize=8, color=CONSTRUCT_COLOR,
+                   fontweight="bold", zorder=8)
+
+    # -- Funnel/wedge from gene track junction to contig junction --
+    junc_x = junction_pos  # same in both tracks (aligned by design)
+    funnel_top = 1.8
+    funnel_bot = bar_y + bar_h / 2
+    funnel_narrow = win_width * 0.003  # narrow end at top
+
+    # The funnel widens from the junction line toward the construct side
+    if junction_type in ("LB", "5prime"):
+        # Construct is LEFT of junction
+        funnel_verts = [
+            (junc_x - funnel_narrow, funnel_top),
+            (junc_x + funnel_narrow, funnel_top),
+            (junc_x, funnel_bot),
+            (cx0, funnel_bot),
+            (junc_x - funnel_narrow, funnel_top),
+        ]
+    else:
+        # Construct is RIGHT of junction
+        funnel_verts = [
+            (junc_x - funnel_narrow, funnel_top),
+            (junc_x + funnel_narrow, funnel_top),
+            (cx1, funnel_bot),
+            (junc_x, funnel_bot),
+            (junc_x - funnel_narrow, funnel_top),
+        ]
+
+    funnel_poly = Polygon(funnel_verts, closed=True,
+                          facecolor=CONSTRUCT_COLOR, alpha=0.10,
+                          edgecolor=CONSTRUCT_COLOR, linewidth=0.8,
+                          linestyle="--", zorder=2)
+    ax_contig.add_patch(funnel_poly)
+
+    # Junction line (vertically aligned with gene track)
+    ax_contig.axvline(x=junction_pos, color=JUNCTION_COLOR, linewidth=2.5,
+                      linestyle="-", zorder=20, alpha=0.9)
+    ax_contig.plot(junction_pos, funnel_top, marker="v", markersize=8,
+                   color=JUNCTION_COLOR, zorder=25, clip_on=False)
+
+    # -- Sequence around junction --
     if contig_seq:
-        # Show ~20bp around junction
-        jx = min(junction_on_contig, len(contig_seq) - 1)
-        jx = max(0, jx)
-        seq_start = max(0, jx - 15)
-        seq_end = min(len(contig_seq), jx + 15)
-        seq_around = contig_seq[seq_start:seq_end]
-
-        # Color-code: host side green, construct side red
-        host_side_len = jx - seq_start
-        host_part = seq_around[:host_side_len]
-        const_part = seq_around[host_side_len:]
-
-        ax_contig.text(junction_on_contig, -0.5,
+        jx = min(max(0, junction_on_contig), len(contig_seq) - 1)
+        seq_s = max(0, jx - 15)
+        seq_e = min(len(contig_seq), jx + 15)
+        host_part = contig_seq[seq_s:jx]
+        const_part = contig_seq[jx:seq_e]
+        ax_contig.text(junction_pos, bar_y - bar_h / 2 - 0.65,
                        f"...{host_part}|{const_part}...",
-                       ha="center", va="top", fontsize=7,
+                       ha="center", va="top", fontsize=7.5,
                        fontfamily="monospace",
-                       bbox=dict(facecolor="white", edgecolor="#ccc",
-                                 pad=2, boxstyle="round"))
+                       bbox=dict(facecolor="white", edgecolor="#999",
+                                 pad=3, boxstyle="round,pad=0.3"),
+                       zorder=10)
 
-    ax_contig.set_ylabel("Contig", fontsize=8)
-    ax_contig.set_xlabel(f"Contig position (bp) — {contig_name}", fontsize=8)
+    # Contig info
+    ax_contig.text(win_start + win_width * 0.01, -1.55,
+                   f"Contig: {contig_name}  ({_fmt_kb(contig_len)} total)",
+                   fontsize=7.5, va="top", color="#555", style="italic")
+
+    # Contig scale bar
+    ctg_sb_len = _pick_scale_bar(int(contig_len))
+    ctg_sb_x0 = contig_to_x(contig_len - ctg_sb_len - 5)
+    ctg_sb_x1 = contig_to_x(contig_len - 5)
+    sb_y2 = -1.3
+    ax_contig.plot([ctg_sb_x0, ctg_sb_x1], [sb_y2, sb_y2],
+                   color="black", linewidth=2, zorder=10)
+    ax_contig.plot([ctg_sb_x0, ctg_sb_x0], [sb_y2 - 0.05, sb_y2 + 0.05],
+                   color="black", linewidth=1.5, zorder=10)
+    ax_contig.plot([ctg_sb_x1, ctg_sb_x1], [sb_y2 - 0.05, sb_y2 + 0.05],
+                   color="black", linewidth=1.5, zorder=10)
+    ax_contig.text((ctg_sb_x0 + ctg_sb_x1) / 2, sb_y2 - 0.12,
+                   f"{_fmt_kb(ctg_sb_len)} (contig scale)",
+                   fontsize=6.5, ha="center", va="top", color="#555")
+
     ax_contig.set_yticks([])
-    ax_contig.spines["left"].set_visible(False)
+    ax_contig.tick_params(labelbottom=False, bottom=False)
+    for spine in ax_contig.spines.values():
+        spine.set_visible(False)
 
-    # ---- Panel: Legend ----
-    ax_leg = fig.add_subplot(gs[2 + n_genes])
+    # ==== ROW 3: Legend ====
+    ax_leg = fig.add_subplot(gs[2])
     ax_leg.axis("off")
 
     legend_patches = [
-        mpatches.Patch(color=HOST_COLOR, alpha=0.6, label="Host genome"),
-        mpatches.Patch(color=CONSTRUCT_COLOR, alpha=0.6, label="Construct/T-DNA"),
+        mpatches.Patch(color=HOST_COLOR, alpha=0.7, label="Host genome"),
+        mpatches.Patch(color=CONSTRUCT_COLOR, alpha=0.7, label="Construct/T-DNA"),
         mpatches.Patch(color=CDS_COLOR, alpha=0.85, label="CDS"),
         mpatches.Patch(color=UTR_COLOR, label="Exon/UTR"),
         plt.Line2D([0], [0], color=INTRON_COLOR, linewidth=1.5, label="Intron"),
         plt.Line2D([0], [0], color=JUNCTION_COLOR, linewidth=2.5, label="Junction site"),
     ]
     ax_leg.legend(handles=legend_patches, loc="center", ncol=6,
-                  fontsize=8, framealpha=0.9)
+                  fontsize=8.5, framealpha=0.9, edgecolor="#ccc")
 
     plt.savefig(output_path, dpi=200, bbox_inches="tight", facecolor="white")
     plt.close()
     log(f"Saved: {output_path}")
 
+
+def _pick_scale_bar(win_width: int) -> int:
+    """Pick a nice round scale bar length (~10-25% of window)."""
+    candidates = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
+    for c in candidates:
+        if c >= win_width * 0.08 and c <= win_width * 0.30:
+            return c
+    # Fallback: pick closest to 15% of width
+    target = int(win_width * 0.15)
+    return min(candidates, key=lambda c: abs(c - target))
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -488,6 +579,9 @@ def main() -> None:
     parser.add_argument("--outdir", type=Path, required=True)
     parser.add_argument("--flank", type=int, default=10000,
                         help="Flanking region for gene search (default: 10kb)")
+    parser.add_argument("--confidence-filter", type=str, default=None,
+                        help="Only plot junctions with this confidence or higher "
+                             "(Low/Medium/High). Default: plot all.")
     args = parser.parse_args()
 
     out_dir = args.outdir / args.sample_name / "s06_junction"
@@ -504,7 +598,14 @@ def main() -> None:
         log("No junctions found")
         return
 
-    # Read contigs if available
+    # Filter by confidence if requested
+    conf_order = {"Low": 0, "Medium": 1, "High": 2}
+    if args.confidence_filter:
+        min_conf = conf_order.get(args.confidence_filter, 0)
+        junctions = [j for j in junctions
+                     if conf_order.get(j.get("confidence", "Low"), 0) >= min_conf]
+
+    # Read contigs
     contig_seqs = {}
     if args.contigs and args.contigs.exists():
         contig_seqs = read_contigs(args.contigs)
@@ -519,37 +620,25 @@ def main() -> None:
 
         log(f"  Junction {i+1}: {host_chr}:{junction_pos}")
 
-        # Get gene info from GFF3
         gene_info = parse_gff3_region(
             args.gff, host_chr, junction_pos, junction_pos,
             flank=args.flank,
         )
 
         n_genes = len(gene_info.get("genes", []))
-        log(f"    Found {n_genes} gene(s) in ±{args.flank}bp")
+        log(f"    Found {n_genes} gene(s) in +/-{args.flank}bp")
 
-        # Get contig sequence
         contig_seq = contig_seqs.get(contig_name)
 
-        out_png = out_dir / f"junction_gene_{i+1}_{host_chr}_{junction_pos}.png"
-        out_pdf = out_dir / f"junction_gene_{i+1}_{host_chr}_{junction_pos}.pdf"
-
-        plot_junction_with_gene(
-            junction=junc,
-            gene_info=gene_info,
-            contig_seq=contig_seq,
-            sample_name=args.sample_name,
-            output_path=out_png,
-        )
-
-        # Also save PDF
-        plot_junction_with_gene(
-            junction=junc,
-            gene_info=gene_info,
-            contig_seq=contig_seq,
-            sample_name=args.sample_name,
-            output_path=out_pdf,
-        )
+        for ext in ("png", "pdf"):
+            out_path = out_dir / f"junction_gene_{i+1}_{host_chr}_{junction_pos}.{ext}"
+            plot_junction_with_gene(
+                junction=junc,
+                gene_info=gene_info,
+                contig_seq=contig_seq,
+                sample_name=args.sample_name,
+                output_path=out_path,
+            )
 
     log("All junction gene context plots generated.")
 
