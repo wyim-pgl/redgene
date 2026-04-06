@@ -96,22 +96,25 @@ def run_mapping(r1: Path, r2: Path, construct_ref: Path, outdir: Path,
         "-",
     ]
 
+    # Redirect BWA stderr to file to avoid pipe buffer deadlock on large datasets
+    bwa_stderr_file = step_dir / f"{sample_name}_bwa.log"
     print(f"[s02_construct_map] Running bwa mem | samtools sort",
           file=sys.stderr)
-    bwa_proc = subprocess.Popen(bwa_cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
-    sort_proc = subprocess.Popen(sort_cmd, stdin=bwa_proc.stdout,
-                                 stderr=subprocess.PIPE)
-    # Allow bwa_proc to receive SIGPIPE if sort_proc exits
-    bwa_proc.stdout.close()
-    sort_stdout, sort_stderr = sort_proc.communicate()
-    bwa_proc.wait()
+    with open(bwa_stderr_file, "w") as bwa_err_fh:
+        bwa_proc = subprocess.Popen(bwa_cmd, stdout=subprocess.PIPE,
+                                    stderr=bwa_err_fh)
+        sort_proc = subprocess.Popen(sort_cmd, stdin=bwa_proc.stdout,
+                                     stderr=subprocess.PIPE)
+        # Allow bwa_proc to receive SIGPIPE if sort_proc exits
+        bwa_proc.stdout.close()
+        sort_stdout, sort_stderr = sort_proc.communicate()
+        bwa_proc.wait()
 
     if bwa_proc.returncode != 0:
-        bwa_stderr = bwa_proc.stderr.read().decode() if bwa_proc.stderr else ""
+        bwa_stderr = bwa_stderr_file.read_text()
         print(f"ERROR: bwa mem failed (exit {bwa_proc.returncode})",
               file=sys.stderr)
-        print(bwa_stderr, file=sys.stderr)
+        print(bwa_stderr[-2000:], file=sys.stderr)
         sys.exit(1)
     if sort_proc.returncode != 0:
         print(f"ERROR: samtools sort failed (exit {sort_proc.returncode})",

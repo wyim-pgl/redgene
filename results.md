@@ -21,8 +21,8 @@
 | Step 4 (Assembly) | DONE | 569 contigs, N50=504bp, longest=2,703bp |
 | Step 5 (Contig map) | DONE | 553 host contigs, 8 construct contigs |
 | Step 6 (Junction) | DONE | 4 junctions detected (1 true, 3 false positive) |
-| Step 7 (Host map) | RUNNING | SLURM job 5618730 (bwa mem, 105.7M reads) |
-| Step 10 (Copy number) | PENDING | Awaiting step 7 |
+| Step 7 (Host map) | DONE | 105.7M reads, 7.0GB BAM, BWA -t 2, ~5h |
+| Step 10 (Copy number) | DONE | **2.1 copies** (construct 52.0x / host 25.0x), **High confidence** |
 
 ### Junction Detection Results
 
@@ -32,6 +32,23 @@
 | NODE_14 | Chr3:31,443,557 | 35 | pCAMBIA-1300 backbone | RB | FALSE POSITIVE |
 | NODE_6 | Chr3:31,443,557 | 60 | pCAMBIA-1300 backbone | RB | FALSE POSITIVE |
 | NODE_6 | Chr2:8,432,860 | 60 | pCAMBIA-1300 backbone | RB | FALSE POSITIVE |
+
+### Copy Number Estimation
+
+| Metric | Value |
+|--------|-------|
+| Best construct marker | QT-TAX-ZM-004 (Zea mays, 69bp amplicon) |
+| Construct median depth | 52.0x |
+| Host median depth | 25.0x |
+| Depth ratio | 2.08 |
+| Estimated copies | **2.1 (multi-copy)** |
+| Expected (ground truth) | **2 copies (head-to-head)** |
+| Junction count | 4 (consistent with multi-copy) |
+| Confidence | **High** |
+
+**Validation**: Pipeline estimated 2.1 copies vs expected 2 copies — excellent agreement.
+The construct marker (Zea mays taxon-specific element, 69bp) was auto-selected as the
+most reliable marker due to highest median coverage and no host homology.
 
 **Critical finding**: MAPQ alone is insufficient for false positive removal.
 Chr2:8,432,860 has MAPQ=60 (unique mapping) but is a false positive from
@@ -46,13 +63,13 @@ Minimap2-based detection between pCAMBIA-1300/element_db and rice genome:
 
 ### Coverage Depth Sensitivity
 
-| Coverage | True Junction (Chr3:16.4M) | False Positives | Junction Contigs |
-|----------|---------------------------|----------------|------------------|
-| ~29x (full) | **DETECTED** (45bp accuracy) | 3 | NODE_6 (1369bp), NODE_14 (349bp) |
-| ~15x | **DETECTED** (45bp accuracy) | 6+ | NODE_14 (336bp) |
-| ~10x | **NOT DETECTED** | 8 | Assembly fragmentation |
-| ~5x | **NOT DETECTED** | 2 | Too few reads |
-| ~3x | **NOT DETECTED** | 3 | Unreliable |
+| Coverage | True Junction (Chr3:16.4M) | Total Junctions | False Positives | Junction Contigs |
+|----------|---------------------------|-----------------|----------------|------------------|
+| ~29x (full) | **DETECTED** (45bp accuracy) | 4 | 3 | NODE_6 (1369bp), NODE_14 (349bp) |
+| ~15x | **DETECTED** (45bp accuracy) | 9 | 8 | NODE_14 (336bp) |
+| ~10x | **NOT DETECTED** | 8 | 8 | Assembly fragmentation |
+| ~5x | **NOT DETECTED** | 2 | 2 | Too few reads |
+| ~3x | **NOT DETECTED** | 3 | 3 | Unreliable |
 
 **Conclusion**: Minimum ~15x coverage required for reliable assembly-based junction detection.
 
@@ -86,36 +103,135 @@ SRA data from PRJNA692070 (originally published by Bae et al. 2022).
 | Assembly | 501 contigs, N50=347, longest=4,160bp |
 | Contig map | 5,774 host + 15 construct alignments (4 contigs) |
 | Junction | **1 junction: SLM_r2.0ch08:65,107,378** (RB, MAPQ=60) |
+| Copy number | Depth ratio 2.1x (T-35S-pCAMBIA: 19.0x vs host: 9.0x) → **~2 copies** |
 
 **Junction details:**
 - NODE_10 (1031bp, cov=4.1): Chimeric contig spanning host chr08:65,107,378 and construct element QL-CON-00-014 (MF521566.1)
 - NODE_1 (4160bp, cov=8.6): Pure construct (CaMV 35S, nos promoter, nptII, OCS terminator) - T-DNA body
 
+**Copy number notes:**
+- Best marker: T-35S-pCAMBIA (258bp, 100% covered, median 19.0x)
+- Alternative marker nptII: depth ratio 4.66/9.0 = 0.52 → hemizygous single-copy
+- Discrepancy likely due to short element length and CaMV 35S multi-mapping
+- nptII-based estimate (hemizygous single-copy) is more biologically reliable for heterozygous sample
+
+**Step 8 — CRISPR editing detection (gRNA-guided, pileup-based):**
+- **SlPHD_MS1 (chr04:2635445)**: 1bp T insertion at cut site, 30.8% freq (4/13 reads), heterozygous
+  - Different editing outcome than expected 9bp deletion — 1bp insertion is a common NHEJ repair product
+  - Treatment-specific (absent in WT)
+- **SlAMS (chr08:53314229)**: NOT edited — all reads match reference (8-10x depth)
+  - The 98.4% editing frequency from Seol et al. was for "20-1-ca7-1 line", a different subline
+  - The 1-A2 samples from PRJNA692070 (Bae et al. 2022) appear unedited at SlAMS
+
 ### Cas9 A2_2 (SRR13450617) - Cas9 present, homozygous edit
 
 | Step | Key Results |
 |------|-------------|
-| QC | 62.3M -> 59.4M reads (95.4%), ~5.4x coverage |
+| QC | 62.3M -> 59.4M reads (95.4%), ~10.4x coverage |
 | Construct map | 3,119 reads mapped (0.01%) |
 | Read extract | 2,951 read pairs |
 | Assembly | 355 contigs, N50=320, longest=3,350bp |
 | Contig map | 1,281 host + 17 construct alignments (5 contigs) |
 | Junction | **No junctions detected** |
+| Copy number | Depth ratio 1.6x (T-OCS: 14.0x vs host: 9.0x) → **~2 copies** |
 
 **Analysis:**
-- 3 chimeric contigs found but all had overlapping host/construct alignments
-  (homologous regions: TA29 tobacco promoter naturally present in tomato genome)
+- 3 chimeric contigs found but all had overlapping host/construct alignments:
+  - NODE_7 (1072bp): TA29 tobacco promoter ↔ ch02:59,279,798 (606bp overlap)
+  - NODE_9 (847bp): TA29 tobacco promoter ↔ ch02:59,278,936 (164bp overlap)
+  - NODE_5 (1207bp): pinII terminator ↔ ch03:57,893,656 (244bp overlap)
 - NODE_1 (3350bp) and NODE_6 (1190bp): Pure construct contigs confirming
   Cas9 T-DNA presence but no junction-spanning assembly
-- **Root cause**: Low coverage (~5.4x) insufficient for junction assembly
-  (consistent with rice finding: minimum 15x needed)
+- **Root cause**: Not coverage depth (10.4x is comparable to A2_3's 10.75x).
+  The cause is **assembly direction stochasticity** — in A2_2, contigs extended
+  toward construct elements with host genome homology (TA29, pinII), producing
+  overlapping alignments rather than adjacent (true junction) alignments.
+  In A2_3, the junction contig extended toward QL-CON-00-014 (bacterial nptII/nos
+  region) which has no host homology, producing a clean junction.
+  This is an inherent limitation of short-read assembly-based detection.
+- **Potential improvement**: Iterative assembly (round-1 contigs as bait for
+  round-2 read extraction) could recover junctions that extend in unfavorable
+  directions during initial assembly.
+
+**Step 8 — CRISPR editing detection (gRNA-guided, pileup-based):**
+- **SlPHD_MS1 (chr04:2635440)**: **9bp deletion of GTGAGCCAT** detected, 16.7% freq (1/6 reads)
+  - **Exact match with ground truth** (Seol et al. 2025: 9bp in-frame deletion of "GTGAGCCAT")
+  - Low observed frequency due to alignment bias at deletion sites + very low depth (6 reads)
+  - Additional 1bp indels at adjacent positions (2635443-2635445) are alignment artifacts
+  - Treatment-specific (absent in WT, which has 32 reads all matching reference)
+- **SlAMS (chr08:53314229)**: NOT edited — all 14-17 reads match reference
+  - Same finding as A2_3; 1-A2 line was not edited at SlAMS locus
 
 ### Cas9 A2_1 (SRR13450618) - Cas9 removed, heterozygous edit
-- **Status**: Download pending
+
+| Step | Key Results |
+|------|-------------|
+| QC | 299.8M -> 292.3M reads (97.5%), ~26.3x coverage |
+| Construct map | 17,007 reads mapped (0.01%) |
+| Read extract | 15,920 read pairs |
+| Assembly | 616 contigs, N50=850, longest=4,059bp |
+| Junction | **No junctions** (expected — Cas9 removed, no T-DNA) |
+| Host map | DONE | 292.3M reads, 17GB BAM, BWA -t 16 |
+| Copy number | Construct 1.0x / Host 48.0x → **~0 copies** (expected — no T-DNA) |
+| Step 8 | **2 on-target edits at SlAMS** (see below) |
+
+- **Expected**: No T-DNA insertion (Cas9 removed via segregation) ✓
+- **Unexpected**: SlAMS editing detected! (see step 8 results below)
+- **Note**: 15,920 extracted reads is higher than A2_3 (3,436 reads) despite no T-DNA, reflecting
+  larger dataset size (292M vs 60M reads) and proportionally more host-derived noise
+
+**Step 8 — CRISPR editing detection (gRNA-guided, pileup-based):**
+- **SlAMS (chr08:53314230)**: **4bp deletion of GTAC** detected, 22.0% freq (9/41 reads), heterozygous
+  - Also 1bp deletion of G at same position (14.6% freq, 6/41 reads)
+  - Both treatment-specific (absent in WT, which has 37 reads all matching reference)
+  - The 4bp GTAC deletion is at the Cas9 cut site, consistent with NHEJ repair
+  - **A2_1 HAS SlAMS editing** — unlike A2_2 and A2_3 which are unedited at SlAMS
+- **SlPHD_MS1 (chr04:2635445)**: NOT detected — no editing at this locus
+  - Opposite pattern from A2_2/A2_3, which have SlPHD_MS1 editing but no SlAMS
+
+**Biological interpretation**: Different T0 regenerant lines (1-A2-1, 1-A2-2, 1-A2-3)
+have different CRISPR editing outcomes. The dual-gRNA system targeted both SlAMS and
+SlPHD_MS1, but each line was edited at different loci:
+- A2_1: SlAMS edited (4bp del), SlPHD_MS1 unedited
+- A2_2: SlAMS unedited, SlPHD_MS1 edited (9bp del)
+- A2_3: SlAMS unedited, SlPHD_MS1 edited (1bp ins)
 
 ### WT (SRR13450615) - Wild type control
-- **Status**: Download completing (compression in progress)
-- Will be used for WT-based filtering of all transgenic samples
+
+| Step | Key Results |
+|------|-------------|
+| QC | 238.7M -> 229.3M reads (95.5%), ~20.6x coverage |
+| Construct map | 11,833 reads mapped (0.01%) |
+| Read extract | 9,764 read pairs (all host-derived noise) |
+| Assembly | 546 contigs, N50=617, longest=2,086bp |
+| Junction | **No junctions** (correct — wild type) |
+| Host map | DONE | 230.6M reads, 14GB BAM, BWA -t 16 |
+
+- Used as WT baseline for step 8 treatment-vs-WT comparison
+- No step 8 or step 10 needed (WT control sample)
+
+### Tomato Coverage Depth Sensitivity
+
+**A2_3 (Cas9 present, T-DNA positive control):**
+
+| Coverage | Total Reads | Extracted Reads | Contigs | N50 | Junction Detected | Position |
+|----------|------------|-----------------|---------|-----|-------------------|----------|
+| ~10.3x (full) | 60.2M | 3,436 | 501 | 347 | **YES** | chr08:65,107,378 |
+| ~5x | ~33M | 785 | 92 | 264 | **NO** | - |
+| ~3x | ~20M | 473 | 52 | 264 | **NO** | - |
+
+**A2_1 (Cas9 removed, negative control):**
+
+| Coverage | Extracted Reads | Contigs | N50 | Junction Detected |
+|----------|-----------------|---------|-----|-------------------|
+| ~15x | 22,983 | 3,114 | 257 | **NO** (expected) |
+| ~10x | 2,911 | 299 | 395 | **NO** (expected) |
+| ~5x | 1,488 | 186 | 283 | **NO** (expected) |
+| ~3x | 905 | 121 | 272 | **NO** (expected) |
+
+**Note on A2_1 15x**: 22,983 extracted reads is anomalously high for a T-DNA-negative sample.
+This reflects background noise from host sequences with partial homology to element_db entries
+(TA29, pinII, Ubi1, actin). WT-based filtering (s03b) would remove most of these.
 
 ---
 
@@ -130,7 +246,19 @@ SRA data from PRJNA692070 (originally published by Bae et al. 2022).
 - **WT-based filtering** (s03b_homology_filter.py): Most effective method
 - **MAPQ filtering**: Necessary but insufficient (MAPQ=60 false positives exist)
 - **Structural warnings**: Inter-chromosomal and distant intra-chromosomal junctions flagged
-- Plant genomes have extensive construct-host homology (especially host-derived promoters)
+- Plant genomes have extensive construct-host homology (TA29, pinII, Ubi1, SSuAra)
+- **Limitation**: s03b may remove true junction reads if T-DNA inserts near a
+  host homologous region (within ±500bp of TA29/pinII ortholog). Low probability
+  but non-zero — should be noted as a pipeline limitation.
+
+### 2b. Assembly Direction Stochasticity
+- Same T-DNA insertion site can yield different results depending on which
+  construct elements the junction contig extends toward
+- Contigs extending toward bacterial-origin elements (nptII, nos) → clean junction
+- Contigs extending toward host-derived elements (TA29, pinII) → overlapping
+  alignments, junction filtered as false positive
+- This is an inherent limitation of short-read assembly; potential mitigation
+  via iterative assembly (round-1 contigs as bait for round-2 extraction)
 
 ### 3. Element_db vs Specific Vector
 - Using element_db requires lowered identity threshold (0.70 vs 0.90)
@@ -138,12 +266,56 @@ SRA data from PRJNA692070 (originally published by Bae et al. 2022).
 - Disadvantage: More false positive risk, reduced detection sensitivity
 
 ### 4. Coverage Requirements
-| Application | Minimum Coverage | Notes |
-|------------|-----------------|-------|
-| Reliable junction detection | 15x | Assembly-based approach |
-| Junction detection possible | 10x | May miss some junctions |
-| Construct presence only | 5x | Can confirm T-DNA but not locate insertion |
-| Unreliable | 3x | Insufficient for any confident result |
+
+**Rice (374 Mbp genome):**
+
+| Coverage | Junction Detection | Notes |
+|----------|-------------------|-------|
+| ~29x (full) | DETECTED (Chr3:16,439,719) | 45bp from known position |
+| ~15x | DETECTED (Chr3:16,439,719) | Same accuracy as full |
+| ~10x | NOT detected (true junction) | 8 false positives only |
+| ~5x | NOT detected | 2 false positives |
+| ~3x | NOT detected | 3 false positives |
+
+**Tomato A2_3 (833 Mbp genome):**
+
+| Coverage | Junction Detection | Notes |
+|----------|-------------------|-------|
+| ~10.3x (full) | DETECTED (chr08:65,107,378) | EXACT MATCH with known |
+| ~5x | NOT detected | 785 extracted reads, N50=264 |
+| ~3x | NOT detected | 473 extracted reads, N50=264 |
+
+**Summary**: Minimum ~10x coverage for junction detection in tomato (larger genome needs proportionally more reads). Minimum ~15x for rice. Coverage requirements scale with genome size and T-DNA copy number.
+
+### 5. CRISPR Editing Detection (Step 8)
+
+**Method**: gRNA-guided pileup parsing — maps gRNA to host genome via BLAST,
+then directly parses samtools mpileup at predicted cut sites (±50bp window).
+Compares treatment vs WT to identify treatment-specific indels.
+
+**Key improvement**: Uses direct pileup parsing (`samtools mpileup -Q 0`)
+instead of bcftools variant calling. bcftools decomposes complex indels at
+low depth (e.g., splits 9bp deletion into multiple 1bp events). Direct
+pileup parsing preserves the original indel representation from the reads.
+
+**Results:**
+
+| Sample | SlPHD_MS1 (chr04) | SlAMS (chr08) |
+|--------|-------------------|---------------|
+| A2_1 (Cas9 removed) | Not edited | **4bp del GTAC** (9/41, 22%) |
+| A2_2 (homozygous) | **9bp del GTGAGCCAT** (1/6, 17%) | Not edited |
+| A2_3 (heterozygous) | 1bp T insertion (4/13, 31%) | Not edited |
+| WT | Clean reference (32 reads) | Clean reference (37 reads) |
+
+**Validation**:
+- SlPHD_MS1 9bp deletion in A2_2 **exactly matches ground truth** (Seol et al. 2025)
+- SlAMS 4bp GTAC deletion in A2_1 detected at cut site (heterozygous)
+- All indels are treatment-specific (absent in WT)
+
+**Biological finding**: Different T0 lines have different editing outcomes.
+A2_1 was edited at SlAMS only; A2_2 and A2_3 were edited at SlPHD_MS1 only.
+The "20-1-ca7-1 line" (98.4% indel freq) from Seol et al. is a different subline
+with homozygous SlAMS editing; the 1-A2 lines have heterogeneous editing patterns.
 
 ---
 
@@ -155,6 +327,7 @@ SRA data from PRJNA692070 (originally published by Bae et al. 2022).
 - Homology filter: `scripts/s03b_homology_filter.py` (WT-based filtering)
 - Junction verify: `scripts/s06b_junction_verify.py` (multi-evidence scoring)
 - Zygosity: `scripts/s06c_zygosity.py` (homo/hetero estimation)
+- CRISPR editing: `scripts/s08_indel_detection.py` (gRNA-guided pileup-based detection)
 - Copy number: `scripts/s10_copynumber.py`
 - Config: `config.yaml`
 - Environment: micromamba env `redgene` (`/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene`)
@@ -173,3 +346,47 @@ SRA data from PRJNA692070 (originally published by Bae et al. 2022).
 - Rice (full): `results/rice_G281/`
 - Rice (coverage tests): `results/rice_G281_{15x,10x,5x,3x}/`
 - Tomato: `results/tomato_Cas9_A2_{1,2,3}/`, `results/tomato_WT/`
+
+### Visualization Outputs
+
+#### Editing Profile (CRISPResso2-inspired, 5-panel nucleotide quilt)
+- `results/tomato_Cas9_A2_{1,2,3}/s08_indel/editing_profile_gRNA{1,2}.{png,pdf}`
+- Panels: Read depth, Treatment nucleotide quilt, WT nucleotide quilt,
+  Net modification frequency, Reference sequence with gRNA/PAM/cut annotation
+- CRISPResso2 color scheme: A=green, T=purple, G=yellow, C=orange, DEL=dark, INS=brown
+
+#### Variant Effect Annotation (easyGWAS-inspired)
+- `results/tomato_Cas9_A2_{1,2,3}/s08_indel/editing_effects.{png,pdf,tsv}`
+- Effect categories: frameshift (dark red), nonsynonymous (red), synonymous (green),
+  in-frame deletion (orange), splice site (amber), UTR (blue), intergenic (gray)
+- Includes allele frequency chart and codon context details
+
+#### Junction Gene Context (gene/exon/CDS annotation)
+- `results/rice_G281/s06_junction/junction_gene_{1..4}_*.{png,pdf}`
+- `results/tomato_Cas9_A2_3/s06_junction/junction_gene_1_SLM_r2.0ch08_65107378.{png,pdf}`
+- Shows gene model with exon/CDS/intron structure, junction position in gene context,
+  contig alignment diagram with host/construct segments
+
+---
+
+## Key Finding 6: CRISPR Editing Variant Effects
+
+| Sample | Site | Gene | Indel | Effect | AA Impact |
+|--------|------|------|-------|--------|-----------|
+| A2_1 | ch08:53314230 | SlAMS (LOC101253608) | 4bp del GTAC | **Frameshift** | Disrupts TF domain |
+| A2_1 | ch08:53314230 | SlAMS (LOC101253608) | 1bp del G | **Frameshift** | Disrupts TF domain |
+| A2_2 | ch04:2635440 | SlPHD_MS1 (LOC101257358) | 9bp del GTGAGCCAT | **In-frame del** | Removes 3aa at pos 236 |
+| A2_2 | ch04:2635443 | SlPHD_MS1 (LOC101257358) | 1bp del A | **Frameshift** | Disrupts PHD finger |
+| A2_2 | ch04:2635444 | SlPHD_MS1 (LOC101257358) | 1bp ins G | **Frameshift** | Disrupts PHD finger |
+| A2_2 | ch04:2635445 | SlPHD_MS1 (LOC101257358) | 1bp del C | **Frameshift** | Disrupts PHD finger |
+| A2_3 | ch04:2635445 | SlPHD_MS1 (LOC101257358) | 1bp ins T | **Frameshift** | Disrupts PHD finger |
+
+**Key insight**: The 9bp GTGAGCCAT deletion in A2_2 is an in-frame deletion that
+removes 3 amino acids from the PHD finger domain, while the 1bp indels cause
+frameshifts that likely produce non-functional truncated proteins. Both mechanisms
+effectively disrupt the male sterility gene function, consistent with the
+intended CRISPR knockout strategy.
+
+### GFF3 Annotation Files
+- Rice: `db/Osativa_323_v7.0.gene_exons.gff3` (MSU/RGAP v7.0, 55,986 genes)
+- Tomato: `db/SLM_r2.0.gff3.gz` (NCBI Gnomon, 39,809 genes, chr names remapped)

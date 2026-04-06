@@ -66,8 +66,12 @@
 - **Event**: CRISPR/Cas9 gene-editing for male sterility
 - **Editing targets**:
   - **SlAMS** (Solyc08g062780) - Aborted Microspores homolog
+    - gRNA+PAM: `GGTGTGCTATAAGTACTGAACGG`
+    - Known edit: 6bp homozygous deletion "GTACTT"
   - **SlPHD_MS1** (Solyc04g008420) - PHD-finger MS1 homolog
-- **Construct**: Contains Cas9, nptII, CaMV 35S promoter
+    - gRNA+PAM: `CATTAGCCTATGGTGAGCCATGG`
+    - Known edit: 9bp homozygous deletion "GTGAGCCAT"
+- **Construct**: pAGM4723 binary vector with Cas9, nptII, CaMV 35S promoter, AtU6 promoter
 - **Our finding**: T-DNA insertion at chr08:65,107,378 (A2_3 sample)
 
 ### Ground Truth Status

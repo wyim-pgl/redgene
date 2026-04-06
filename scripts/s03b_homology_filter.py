@@ -121,7 +121,6 @@ def is_in_homologous_region(
 
 
 def filter_reads_by_homology(
-    construct_bam: Path,
     host_ref: Path,
     r1: Path,
     r2: Path,
@@ -325,7 +324,6 @@ def main() -> None:
 
     # Step 2: Filter reads
     total, retained, discarded = filter_reads_by_homology(
-        construct_bam=None,  # Not used in current implementation
         host_ref=args.host_ref,
         r1=args.r1,
         r2=args.r2,

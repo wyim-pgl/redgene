@@ -88,6 +88,13 @@ Parse chimeric contigs: contigs that have partial alignment to host AND
 partial alignment to construct. The boundary between the two alignments
 is the junction coordinate.
 
+### Step 8 (CRISPR editing detection)
+
+Two modes: gRNA-guided (recommended) and de novo.
+gRNA-guided mode uses direct pileup parsing (NOT bcftools call) to avoid
+variant decomposition at low depth. Uses `-Q 0` base quality threshold
+to catch indels near cut sites where anchor bases may have borderline quality.
+
 ### Step 10 (copy number)
 
 ```python
@@ -120,6 +127,8 @@ Three plots per sample:
 - Kraken2 MUST NOT be used as a filter (see DESIGN.md Section 3.4)
 - Host-derived elements (Ubi1, Act1) cause multi-mapping; use unique bacterial
   markers (nptII, bar) for reliable copy number estimation
+- BWA mem with >2 threads causes futex deadlock on Pronghorn HPC (GPFS).
+  Use --threads 1 or 2 for reliable mapping. This affects both s02 and s07.
 
 ## Development priority
 

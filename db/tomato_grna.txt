@@ -1,0 +1,11 @@
+# gRNA sequences for tomato CRISPR/Cas9 editing (Seol et al. 2025)
+# From: CRISPR/Cas9-mediated mutagenesis of SlAMS and SlPHD_MS1 for male sterility in tomato
+# DOI: 10.1007/s11816-025-00952-0 / PMCID: PMC11897730
+# Format: 20bp protospacer sequences (without PAM)
+#
+# MS1-like (SlPHD_MS1, Solyc04g008420) - sgRNA+PAM: CATTAGCCTATGGTGAGCCATGG
+# Known edit: 9bp homozygous deletion of "GTGAGCCAT"
+CATTAGCCTATGGTGAGCCA
+# AMS-like (SlAMS, Solyc08g062780) - sgRNA+PAM: GGTGTGCTATAAGTACTGAACGG
+# Known edit: 6bp homozygous deletion of "GTACTT"
+GGTGTGCTATAAGTACTGAA

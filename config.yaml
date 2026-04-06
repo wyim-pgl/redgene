@@ -90,6 +90,8 @@ samples:
     name: "Micro-Tom Cas9 1-A2-1 (Cas9 removed, heterozygous edit)"
     host_reference: db/SLM_r2.0.pmol.fasta
     construct_reference: element_db/gmo_combined_db.fa
+    wt_control: tomato_WT
+    grna: db/tomato_grna.txt
     reads:
       r1: test_data/tomato/SRR13450618_1.fastq.gz
       r2: test_data/tomato/SRR13450618_2.fastq.gz
@@ -106,6 +108,8 @@ samples:
     name: "Micro-Tom Cas9 1-A2-2 (Cas9 present, homozygous edit)"
     host_reference: db/SLM_r2.0.pmol.fasta
     construct_reference: element_db/gmo_combined_db.fa
+    wt_control: tomato_WT
+    grna: db/tomato_grna.txt
     reads:
       r1: test_data/tomato/SRR13450617_1.fastq.gz
       r2: test_data/tomato/SRR13450617_2.fastq.gz
@@ -123,6 +127,8 @@ samples:
     name: "Micro-Tom Cas9 1-A2-3 (Cas9 present, heterozygous edit)"
     host_reference: db/SLM_r2.0.pmol.fasta
     construct_reference: element_db/gmo_combined_db.fa
+    wt_control: tomato_WT
+    grna: db/tomato_grna.txt
     reads:
       r1: test_data/tomato/SRR13450616_1.fastq.gz
       r2: test_data/tomato/SRR13450616_2.fastq.gz
@@ -136,6 +142,74 @@ samples:
           locus: Solyc08g062780
         - gene: SlPHD_MS1
           locus: Solyc04g008420
+
+  # Tomato A2_1 subsampled for coverage depth testing
+  tomato_A2_1_15x:
+    name: "Tomato A2_1 - 15x coverage"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/subsampled/tomato_A2_1_15x_R1.fq.gz
+      r2: test_data/tomato/subsampled/tomato_A2_1_15x_R2.fq.gz
+    expected:
+      cas9_present: false
+      edit_type: heterozygous
+
+  tomato_A2_1_10x:
+    name: "Tomato A2_1 - 10x coverage"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/subsampled/tomato_A2_1_10x_R1.fq.gz
+      r2: test_data/tomato/subsampled/tomato_A2_1_10x_R2.fq.gz
+    expected:
+      cas9_present: false
+      edit_type: heterozygous
+
+  tomato_A2_1_5x:
+    name: "Tomato A2_1 - 5x coverage"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/subsampled/tomato_A2_1_5x_R1.fq.gz
+      r2: test_data/tomato/subsampled/tomato_A2_1_5x_R2.fq.gz
+    expected:
+      cas9_present: false
+      edit_type: heterozygous
+
+  tomato_A2_1_3x:
+    name: "Tomato A2_1 - 3x coverage"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/subsampled/tomato_A2_1_3x_R1.fq.gz
+      r2: test_data/tomato/subsampled/tomato_A2_1_3x_R2.fq.gz
+    expected:
+      cas9_present: false
+      edit_type: heterozygous
+
+  # Tomato A2_3 coverage sensitivity tests (Cas9 present, T-DNA positive control)
+  tomato_A2_3_5x:
+    name: "Tomato A2_3 - 5x coverage"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/subsampled/tomato_A2_3_5x_R1.fq.gz
+      r2: test_data/tomato/subsampled/tomato_A2_3_5x_R2.fq.gz
+    expected:
+      cas9_present: true
+      edit_type: heterozygous
+
+  tomato_A2_3_3x:
+    name: "Tomato A2_3 - 3x coverage"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: test_data/tomato/subsampled/tomato_A2_3_3x_R1.fq.gz
+      r2: test_data/tomato/subsampled/tomato_A2_3_3x_R2.fq.gz
+    expected:
+      cas9_present: true
+      edit_type: heterozygous
 
 # Output directory
 output_dir: results

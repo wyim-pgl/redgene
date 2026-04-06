@@ -162,18 +162,25 @@ filtering is the only reliable method for these cases.
 
 ## CRISPR Editing Detection (Step 8)
 
-For Cas9/CRISPR-edited samples, step 8 detects editing-induced indels:
+Two modes for detecting CRISPR editing-induced indels:
 
-1. **Genome-wide variant calling** in both treatment and WT
+### Mode 1: gRNA-guided (recommended)
+1. **BLAST gRNA** to host genome to find on-target and off-target sites
+2. **Direct pileup parsing** at predicted cut sites (±50bp window)
+3. **Treatment vs WT subtraction**: Keep only treatment-specific indels
+4. **Allele frequency** from read counts (avoids bcftools decomposition issues)
+
+### Mode 2: De novo (no gRNA)
+1. **Genome-wide variant calling** in both treatment and WT (bcftools)
 2. **Subtraction**: Keep only treatment-specific indels (>= 2bp)
 3. **PAM motif check**: Look for NGG within 3-8bp of indel
-4. **NHEJ signature**: Filter for typical CRISPR editing patterns
-   - Deletions 1-20bp (most common)
-   - Insertions 1-5bp
-5. **Zygosity**: Homozygous, heterozygous, or biallelic
+4. **NHEJ signature**: Deletions 1-20bp, insertions 1-5bp
 
-Note: CRISPR editing sites are typically at the guide RNA target gene,
-NOT at the T-DNA insertion site. The search is genome-wide by default.
+### Key design choice
+gRNA-guided mode uses `samtools mpileup -Q 0` (no base quality filter)
+to avoid losing CRISPR indels where the anchor base has borderline quality.
+bcftools variant calling decomposes complex indels at low depth — the
+pileup parser preserves the original indel representation from reads.
 
 ## Environment
 
@@ -208,6 +215,7 @@ micromamba create -n redgene -c conda-forge -c bioconda \
 ### Tomato Micro-Tom Cas9 (CRISPR editing, PRJNA692070)
 - **T-DNA insertion**: SLM_r2.0ch08:65,107,378 detected (A2_3 sample, ~10x)
 - **Cas9 construct**: CaMV 35S + nos + nptII + OCS identified in assembled contigs
+- **CRISPR editing**: 9bp deletion of GTGAGCCAT at SlPHD_MS1 (chr04) matches ground truth
 - **Coverage minimum**: 10x for junction detection with element_db
 
 ### Coverage Sensitivity

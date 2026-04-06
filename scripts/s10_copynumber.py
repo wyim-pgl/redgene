@@ -47,31 +47,65 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def get_construct_median_depth(bam: Path) -> tuple[float, int]:
-    """Calculate median depth across all positions in the construct BAM.
+def get_construct_median_depth(bam: Path) -> tuple[float, int, dict[str, list[int]]]:
+    """Calculate median depth across covered construct elements.
+
+    When using element_db (many reference sequences), most positions have
+    0 coverage. We calculate per-element depth and use the element with
+    the highest median coverage for copy number estimation.
 
     Returns:
-        (median_depth, total_positions)
+        (median_depth, total_covered_positions, per_element_depths)
     """
     result = subprocess.run(
         ["samtools", "depth", "-a", str(bam)],
         capture_output=True, text=True, check=True,
     )
 
-    depths: list[int] = []
+    # Group depths by reference element
+    element_depths: dict[str, list[int]] = {}
     for line in result.stdout.strip().splitlines():
         if not line:
             continue
         parts = line.split("\t")
         if len(parts) >= 3:
-            depths.append(int(parts[2]))
+            ref_name = parts[0]
+            depth = int(parts[2])
+            if ref_name not in element_depths:
+                element_depths[ref_name] = []
+            element_depths[ref_name].append(depth)
 
-    if not depths:
-        return 0.0, 0
+    if not element_depths:
+        return 0.0, 0, {}
 
-    depths.sort()
-    median = depths[len(depths) // 2]
-    return float(median), len(depths)
+    # Find element with highest median depth (best marker for copy number)
+    best_element = None
+    best_median = 0.0
+    for elem, depths in element_depths.items():
+        # Only consider elements with >50% positions covered
+        covered = sum(1 for d in depths if d > 0)
+        if covered < len(depths) * 0.5:
+            continue
+        depths_sorted = sorted(depths)
+        median = depths_sorted[len(depths_sorted) // 2]
+        if median > best_median:
+            best_median = float(median)
+            best_element = elem
+
+    # If no element has >50% coverage, use all covered positions
+    if best_element is None:
+        all_covered = [d for depths in element_depths.values()
+                       for d in depths if d > 0]
+        if not all_covered:
+            return 0.0, 0, element_depths
+        all_covered.sort()
+        median = all_covered[len(all_covered) // 2]
+        return float(median), len(all_covered), element_depths
+
+    total_covered = sum(1 for d in element_depths[best_element] if d > 0)
+    log(f"  Best marker element: {best_element} "
+        f"(median={best_median:.1f}x, {total_covered} covered positions)")
+    return best_median, len(element_depths[best_element]), element_depths
 
 
 def get_host_median_depth(bam: Path, max_positions: int = 1_000_000) -> tuple[float, int]:
@@ -232,7 +266,7 @@ def run_copynumber(
 
     # Calculate construct median depth
     log("Calculating construct median depth...")
-    construct_median, construct_positions = get_construct_median_depth(construct_bam)
+    construct_median, construct_positions, _ = get_construct_median_depth(construct_bam)
     log(f"  Construct median depth: {construct_median:.1f}x "
         f"({construct_positions:,} positions)")
 

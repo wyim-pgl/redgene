@@ -1,6 +1,7 @@
 # Data files (large)
 test_data/
 db/
+!db/tomato_grna.txt
 element_db/*.fa
 element_db/*.fa.*
 results/

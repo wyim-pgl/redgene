@@ -93,8 +93,7 @@ def run_spades(
     log(f"Output directory: {step_dir}")
 
     # Count input reads to adapt k-mer sizes
-    import subprocess as _sp
-    count_result = _sp.run(
+    count_result = subprocess.run(
         ["seqkit", "stats", "-T", str(r1)],
         capture_output=True, text=True,
     )

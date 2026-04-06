@@ -204,6 +204,34 @@ def build_step_cmd(
                 "--outdir", str(outdir),
                 "--threads", str(threads),
                 "--sample-name", sname]
+    elif step == "8":
+        # Step 8 needs a WT BAM for comparison - look for it in config
+        wt_sample = sample_cfg.get("wt_control")
+        if wt_sample is None:
+            # Try to auto-detect WT sample from config
+            log.warning("No wt_control specified for %s; step 8 may fail", sname)
+            wt_bam = Path("/dev/null")  # placeholder
+        else:
+            wt_bam = outdir / wt_sample / "s07_host_map" / f"{wt_sample}_host.bam"
+
+        cmd = [sys.executable, script,
+               "--treatment-bam", str(s07 / f"{sname}_host.bam"),
+               "--wt-bam", str(wt_bam),
+               "--host-ref", host_ref,
+               "--outdir", str(outdir),
+               "--sample-name", sname]
+
+        # Add gRNA if specified in config
+        grna = sample_cfg.get("grna")
+        if grna:
+            cmd.extend(["--grna", grna])
+
+        # Add junctions if available
+        junctions = s06 / "junctions.tsv"
+        if junctions.exists():
+            cmd.extend(["--junctions", str(junctions)])
+
+        return cmd
     elif step == "10":
         return [sys.executable, script,
                 "--construct-bam", str(s02 / f"{sname}_construct.bam"),

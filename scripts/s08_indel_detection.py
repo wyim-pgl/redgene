@@ -58,12 +58,22 @@ def find_grna_targets(
     host_ref: Path,
     max_mismatches: int = 4,
 ) -> list[dict]:
-    """Find on-target and off-target sites for gRNA sequences using minimap2.
+    """Find on-target and off-target sites for gRNA sequences using BLAST.
 
-    Maps gRNA+PAM (23bp) to host genome with relaxed parameters to find
-    sites with up to max_mismatches mismatches.
+    Uses blastn-short to find sites with up to max_mismatches mismatches.
+    BLAST is used instead of minimap2 because 20bp gRNA sequences are too
+    short for minimap2's default seed parameters.
     """
     import tempfile
+
+    # Ensure BLAST db exists
+    nhr = host_ref.parent / f"{host_ref.name}.nhr"
+    if not nhr.exists():
+        log("Creating BLAST database for host genome...")
+        subprocess.run(
+            ["makeblastdb", "-in", str(host_ref), "-dbtype", "nucl"],
+            check=True, capture_output=True,
+        )
 
     targets = []
 
@@ -72,16 +82,19 @@ def find_grna_targets(
         if len(grna) < 17 or len(grna) > 25:
             log(f"WARNING: gRNA {i+1} length {len(grna)} unusual (expected 17-25bp)")
 
-        # Create temp FASTA with gRNA + PAM (NGG)
-        # We search for the gRNA itself; PAM will be checked at hit positions
+        # Create temp FASTA with gRNA sequence
         with tempfile.NamedTemporaryFile(mode="w", suffix=".fa", delete=False) as f:
             f.write(f">gRNA_{i+1}\n{grna}\n")
             query_fa = f.name
 
-        # Use minimap2 with short-read preset for sensitive gRNA mapping
+        # Use blastn-short for sensitive mapping of short sequences
         result = subprocess.run(
-            ["minimap2", "-x", "sr", "-N", "1000", "--secondary=yes",
-             "-c", str(host_ref), query_fa],
+            ["blastn", "-query", query_fa,
+             "-db", str(host_ref),
+             "-task", "blastn-short",
+             "-evalue", "100",
+             "-word_size", "7",
+             "-outfmt", "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore"],
             capture_output=True, text=True,
         )
 
@@ -94,18 +107,30 @@ def find_grna_targets(
             if len(fields) < 12:
                 continue
 
-            q_len = int(fields[1])
-            strand = fields[4]
-            t_name = fields[5]
-            t_start = int(fields[7])
-            t_end = int(fields[8])
-            matching = int(fields[9])
-            block_len = int(fields[10])
-            mapq = int(fields[11])
+            pident = float(fields[2])
+            aln_len = int(fields[3])
+            n_mismatch = int(fields[4])
+            q_start = int(fields[6])
+            q_end = int(fields[7])
+            s_start = int(fields[8])
+            s_end = int(fields[9])
+            t_name = fields[1]
 
-            mismatches = block_len - matching
-            if mismatches > max_mismatches:
+            # Only consider near-full-length alignments
+            if aln_len < len(grna) - max_mismatches:
                 continue
+            if n_mismatch > max_mismatches:
+                continue
+
+            # Determine strand
+            if s_start < s_end:
+                strand = "+"
+                t_start = s_start - 1  # Convert to 0-based
+                t_end = s_end
+            else:
+                strand = "-"
+                t_start = s_end - 1
+                t_end = s_start
 
             # Check for PAM (NGG) at the expected position
             # For + strand: PAM is immediately after the gRNA (3' end)
@@ -115,7 +140,7 @@ def find_grna_targets(
 
             pam_check = subprocess.run(
                 ["samtools", "faidx", str(host_ref),
-                 f"{t_name}:{max(1,pam_start)}-{pam_end}"],
+                 f"{t_name}:{max(1, pam_start + 1)}-{pam_end}"],
                 capture_output=True, text=True,
             )
             pam_seq = "".join(pam_check.stdout.strip().split("\n")[1:]).upper()
@@ -126,6 +151,7 @@ def find_grna_targets(
             elif strand == "-" and len(pam_seq) >= 3 and pam_seq[0:2] == "CC":
                 has_pam = True
 
+            mismatches = n_mismatch + (len(grna) - aln_len)  # count unaligned bases
             site_type = "on-target" if mismatches == 0 and has_pam else "off-target"
             if mismatches == 0 and not has_pam:
                 site_type = "on-target-no-PAM"
@@ -144,7 +170,7 @@ def find_grna_targets(
                 "end": t_end,
                 "strand": strand,
                 "mismatches": mismatches,
-                "mapq": mapq,
+                "mapq": 60,  # BLAST doesn't report MAPQ; use 60 for exact matches
                 "has_pam": has_pam,
                 "pam_seq": pam_seq,
                 "site_type": site_type,
@@ -171,9 +197,11 @@ def call_variants_at_sites(
     window: int = 50,
     min_indel_size: int = 1,
 ) -> list[dict]:
-    """Call variants at predicted gRNA target sites.
+    """Call variants at predicted gRNA target sites using direct pileup parsing.
 
-    Includes both indels and SNVs for comprehensive editing detection.
+    Uses samtools mpileup directly instead of bcftools call to avoid
+    variant decomposition issues at low depth. Parses indel strings
+    (+N/-N) from pileup to accurately capture CRISPR editing events.
     """
     results = []
 
@@ -182,94 +210,165 @@ def call_variants_at_sites(
         cut = target["cut_pos"]
         region = f"{chrom}:{max(1,cut-window)}-{cut+window}"
 
-        # Call variants in treatment
-        t_vars = _call_all_variants(treatment_bam, host_ref, region)
-        # Call variants in WT
-        wt_vars = _call_all_variants(wt_bam, host_ref, region)
+        # Parse pileup for treatment and WT
+        t_indels = _parse_pileup_indels(treatment_bam, host_ref, region)
+        wt_indels = _parse_pileup_indels(wt_bam, host_ref, region)
 
-        wt_set = {f"{v['chrom']}:{v['pos']}:{v['ref']}:{v['alt']}" for v in wt_vars}
+        # Build WT set for filtering (key = chrom:pos:type:seq)
+        wt_set = set()
+        for indel in wt_indels:
+            key = f"{indel['chrom']}:{indel['pos']}:{indel['type']}:{indel['indel_seq']}"
+            wt_set.add(key)
 
-        for var in t_vars:
-            key = f"{var['chrom']}:{var['pos']}:{var['ref']}:{var['alt']}"
+        for indel in t_indels:
+            key = f"{indel['chrom']}:{indel['pos']}:{indel['type']}:{indel['indel_seq']}"
             if key in wt_set:
                 continue  # Present in WT, skip
 
-            # Determine variant type
-            ref_len = len(var["ref"])
-            alt_len = len(var["alt"])
-            if ref_len == alt_len == 1:
-                var["type"] = "SNV"
-                var["size"] = 1
-            elif ref_len > alt_len:
-                var["type"] = "deletion"
-                var["size"] = ref_len - alt_len
-            else:
-                var["type"] = "insertion"
-                var["size"] = alt_len - ref_len
-
-            if var["type"] != "SNV" and var["size"] < min_indel_size:
+            if indel["size"] < min_indel_size:
                 continue
 
-            var["grna_idx"] = target["grna_idx"]
-            var["grna_seq"] = target["grna_seq"]
-            var["site_type"] = target["site_type"]
-            var["mismatches"] = target["mismatches"]
-            var["distance_to_cut"] = abs(var["pos"] - cut)
+            indel["grna_idx"] = target["grna_idx"]
+            indel["grna_seq"] = target["grna_seq"]
+            indel["site_type"] = target["site_type"]
+            indel["mismatches"] = target["mismatches"]
+            indel["distance_to_cut"] = abs(indel["pos"] - cut)
 
-            # Zygosity from genotype
-            gt = var.get("gt", ".")
-            if gt in ("1/1", "1|1"):
-                var["zygosity"] = "homozygous"
-            elif gt in ("0/1", "0|1", "1/0", "1|0"):
-                var["zygosity"] = "heterozygous"
-            else:
-                var["zygosity"] = "unknown"
-
-            results.append(var)
+            results.append(indel)
 
     return results
 
 
-def _call_all_variants(bam: Path, host_ref: Path, region: str) -> list[dict]:
-    """Call all variants (indels + SNVs) in a region."""
-    cmd = ["bcftools", "mpileup", "-f", str(host_ref),
-           "-r", region, "-d", "500", "-q", "10", "-Q", "20", str(bam)]
-    mpileup = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def _parse_pileup_indels(
+    bam: Path, host_ref: Path, region: str, min_freq: float = 0.1,
+) -> list[dict]:
+    """Parse indels directly from samtools mpileup output.
 
-    call_cmd = ["bcftools", "call", "-mv", "--ploidy", "2", "-Ov"]
-    call_proc = subprocess.Popen(call_cmd, stdin=mpileup.stdout,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  text=True)
-    mpileup.stdout.close()
-    stdout, _ = call_proc.communicate()
-    mpileup.wait()
+    This avoids bcftools variant decomposition that can split complex
+    indels into multiple smaller variants at low depth.
+    """
+    # Use low base quality threshold for gRNA-guided mode to avoid
+    # filtering out indel-supporting reads with borderline quality
+    cmd = [
+        "samtools", "mpileup", "-f", str(host_ref),
+        "-r", region, "-d", "500", "-q", "10", "-Q", "0",
+        str(bam),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
 
-    variants = []
-    for line in stdout.strip().split("\n"):
-        if not line or line.startswith("#"):
+    indels = []  # list of {chrom, pos, type, size, indel_seq, dp, count, freq, ref}
+    seen = {}  # deduplicate: (chrom, pos, type, seq) -> index
+
+    for line in result.stdout.strip().split("\n"):
+        if not line:
             continue
         fields = line.split("\t")
-        if len(fields) < 8:
+        if len(fields) < 6:
             continue
 
-        info = fields[7]
-        dp = 0
-        if "DP=" in info:
-            dp = int(info.split("DP=")[1].split(";")[0])
+        chrom = fields[0]
+        pos = int(fields[1])
+        ref_base = fields[2].upper()
+        dp = int(fields[3])
+        pileup = fields[4]
 
-        gt_data = fields[9] if len(fields) > 9 else ""
+        if dp == 0:
+            continue
 
-        variants.append({
-            "chrom": fields[0],
-            "pos": int(fields[1]),
-            "ref": fields[3],
-            "alt": fields[4],
-            "qual": float(fields[5]) if fields[5] != "." else 0,
-            "dp": dp,
-            "gt": gt_data.split(":")[0] if gt_data else ".",
-        })
+        # Parse indels from pileup string
+        pos_indels = _extract_indels_from_pileup(pileup)
 
-    return variants
+        for indel_type, indel_seq in pos_indels:
+            indel_seq_upper = indel_seq.upper()
+            count = pos_indels.count((indel_type, indel_seq))
+            freq = count / dp
+
+            if freq < min_freq:
+                continue
+
+            key = (chrom, pos, indel_type, indel_seq_upper)
+            if key in seen:
+                continue
+            seen[key] = True
+
+            size = len(indel_seq)
+
+            # Determine zygosity from allele frequency
+            if freq >= 0.85:
+                gt = "1/1"
+                zygosity = "homozygous"
+            elif freq >= 0.2:
+                gt = "0/1"
+                zygosity = "heterozygous"
+            else:
+                gt = "0/0"
+                zygosity = "low-frequency"
+
+            # Build ref/alt in VCF-like format
+            if indel_type == "deletion":
+                ref_allele = ref_base + indel_seq_upper
+                alt_allele = ref_base
+            else:  # insertion
+                ref_allele = ref_base
+                alt_allele = ref_base + indel_seq_upper
+
+            indels.append({
+                "chrom": chrom,
+                "pos": pos,
+                "ref": ref_allele,
+                "alt": alt_allele,
+                "type": indel_type,
+                "size": size,
+                "indel_seq": indel_seq_upper,
+                "qual": min(freq * dp * 10, 999),  # Approximate quality
+                "dp": dp,
+                "count": count,
+                "freq": freq,
+                "gt": gt,
+                "zygosity": zygosity,
+            })
+
+    return indels
+
+
+def _extract_indels_from_pileup(pileup: str) -> list[tuple[str, str]]:
+    """Extract all indels from a pileup string.
+
+    Returns list of (type, sequence) tuples where type is 'insertion'
+    or 'deletion' and sequence is the indel bases.
+    """
+    indels = []
+    i = 0
+    while i < len(pileup):
+        c = pileup[i]
+        if c == "^":
+            i += 2  # skip ^ and mapping quality char
+            continue
+        elif c == "$":
+            i += 1
+            continue
+        elif c in "+-":
+            indel_type = "insertion" if c == "+" else "deletion"
+            i += 1
+            # Read the length digits
+            num_str = ""
+            while i < len(pileup) and pileup[i].isdigit():
+                num_str += pileup[i]
+                i += 1
+            if num_str:
+                n = int(num_str)
+                seq = pileup[i:i+n]
+                i += n
+                indels.append((indel_type, seq))
+            continue
+        elif c == "*":
+            # Deleted base placeholder
+            i += 1
+            continue
+        else:
+            i += 1
+            continue
+    return indels
 
 
 # ---------------------------------------------------------------------------
@@ -497,8 +596,9 @@ def main() -> None:
         # Write results
         output_tsv = step_dir / "editing_sites.tsv"
         with open(output_tsv, "w") as f:
-            header = ["chrom", "pos", "ref", "alt", "type", "size", "qual",
-                      "dp", "gt", "zygosity", "grna_idx", "site_type",
+            header = ["chrom", "pos", "ref", "alt", "type", "size",
+                      "indel_seq", "qual", "dp", "count", "freq",
+                      "gt", "zygosity", "grna_idx", "site_type",
                       "mismatches", "distance_to_cut"]
             f.write("\t".join(header) + "\n")
             for v in variants:
@@ -517,9 +617,9 @@ def main() -> None:
             log("\nOn-target editing events:")
             for v in on_target_edits:
                 log(f"  gRNA {v['grna_idx']}: {v['chrom']}:{v['pos']} "
-                    f"{v['type']} {v['size']}bp "
-                    f"(QUAL={v['qual']:.0f}, GT={v['gt']}, {v['zygosity']}, "
-                    f"dist={v['distance_to_cut']}bp from cut)")
+                    f"{v['type']} {v['size']}bp ({v.get('indel_seq', '')}) "
+                    f"freq={v.get('freq', 0):.1%} ({v.get('count', 0)}/{v['dp']}), "
+                    f"{v['zygosity']}, dist={v['distance_to_cut']}bp from cut")
 
         if off_target_edits:
             log(f"\nOff-target edits ({len(off_target_edits)} total):")
