@@ -2,6 +2,8 @@
 test_data/
 db/
 !db/tomato_grna.txt
+!db/corn_border_db.fa
+!db/corn_border_db.fa.fai
 element_db/*.fa
 element_db/*.fa.*
 results/

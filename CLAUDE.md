@@ -106,6 +106,7 @@ Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5-7h per sample). 
 | `SLM_r2.0.pmol.fasta` | Tomato Micro-Tom genome (Kazusa, 833 Mbp) |
 | `SLM_r2.0.gff3.gz` | NCBI Gnomon annotation (chr names remapped to SLM_r2.0ch\*) |
 | `element_db/gmo_combined_db.fa` | 131 GMO elements from EUginius |
+| `corn_border_db.fa` | 62 LB/RB border sequences for 31 corn events (Table S1, Sci Rep 2025, DOI:10.1038/s41598-025-18593-8) |
 
 ## Coding Conventions
 
