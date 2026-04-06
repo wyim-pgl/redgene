@@ -341,6 +341,53 @@ with homozygous SlAMS editing; the 1-A2 lines have heterogeneous editing pattern
 
 ---
 
+## Corn ND207 (Zea mays, pest/herbicide-resistant)
+
+### Dataset
+- **Archive**: GSA CRA026358 (BioProject PRJCA041092)
+- **Paper**: "Efficient transgenic maize detection using low-depth NGS" (Sci Rep 2025, DOI:10.1038/s41598-025-18593-8)
+- **Sample**: ND207 PCR-Free rep1 (CRR1883221), pest/herbicide-resistant GM variety, homozygous
+- **Platform**: BGISEQ-1000, PE150
+- **Total reads**: ~35M pairs (~5x coverage on 2.1 Gbp genome)
+- **Host reference**: Zm-B73-REFERENCE-NAM-5.0 (GCF_902167145.1, 2.18 Gbp, 687 scaffolds)
+- **Construct reference**: `db/corn_border_db.fa` (62 LB/RB border sequences for 31 corn events, Table S1)
+
+### Method
+- **Border sequence approach**: Unlike rice (vector-specific pCAMBIA-1300) or tomato (131-element GMO DB),
+  corn uses **event-specific LB/RB border sequences** from Table S1 of the paper. Each border sequence
+  (~100-200bp) spans the host genome–T-DNA junction, containing both flanking genomic DNA and
+  exogenous gene sequence. This allows event-specific identification via split-read alignment.
+- **Pipeline**: Steps 1-6 (QC → construct map → read extract → assembly → contig map → junction detection)
+- **Key challenge**: 2.25M reads extracted at step 3 (vs 6K rice, 3.4K tomato) — border sequences
+  contain maize genomic flanking regions that recruit massive numbers of host-derived reads.
+  SPAdes assembly of 2.25M reads is computationally intensive (~2h for K77).
+- **Expected result per paper**: ≥20bp overlap with both genome and exogenous gene needed for positive
+  read classification. At 5x depth, ND207 LB detected with 4-8 reads, RB with 5-7 reads.
+
+### Pipeline Progress (in progress)
+
+| Step | Status | Notes |
+|------|--------|-------|
+| QC (fastp) | DONE | ~35M PE150 reads |
+| Construct map (bwa) | DONE | Mapped to 62 border sequences |
+| Read extract | DONE | **2,256,639 read pairs** (unusually high — border seqs contain host flanking) |
+| Assembly (SPAdes) | **RUNNING** | K77 stage, 2.25M reads, ~2h estimated |
+| Contig map (minimap2) | PENDING | Host: Zm_B73_v5.fa (BWA indexed) |
+| Junction detection | PENDING | Expected: ND207 LB/RB sites |
+
+### Analysis Notes
+- **Border sequence DB vs element DB**: The corn approach uses junction-spanning sequences
+  (host+T-DNA boundary) rather than individual construct elements. This is more specific
+  (event-level identification) but requires prior knowledge of the insertion site.
+- **High extracted read count**: The 2.25M reads are expected because border sequences include
+  ~100bp of native maize genome flanking. Any read from these genomic regions will map to the
+  border DB even without T-DNA. True T-DNA-spanning reads (split reads) will be a small subset.
+- **Comparison with paper**: The paper reports reliable detection at 5x depth for homozygous ND207
+  and 5x for heterozygous DBN9936. Our pipeline uses assembly-based junction detection rather
+  than simple read alignment, which may provide different sensitivity characteristics.
+
+---
+
 ## File Locations
 
 ### Pipeline Scripts
@@ -355,19 +402,23 @@ with homozygous SlAMS editing; the 1-A2 lines have heterogeneous editing pattern
 - Environment: micromamba env `redgene` (`/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene`)
 
 ### Reference Data
-- Rice genome: `db/Osativa_323_v7.0.fa`
-- Tomato genome: `db/SLM_r2.0.pmol.fasta`
-- Element DB: `element_db/gmo_combined_db.fa` (131 sequences)
+- Rice genome: `db/Osativa_323_v7.0.fa` (374 Mbp, Phytozome)
+- Tomato genome: `db/SLM_r2.0.pmol.fasta` (833 Mbp, Kazusa Micro-Tom)
+- Corn genome: `db/Zm_B73_v5.fa` (2.18 Gbp, NCBI B73 RefGen_v5)
+- Element DB: `element_db/gmo_combined_db.fa` (131 GMO elements, EUginius)
+- Corn border DB: `db/corn_border_db.fa` (62 LB/RB sequences, 31 events, Sci Rep 2025)
 
 ### Test Data
 - Rice: `test_data/rice_G281_R{1,2}.fastq.gz`
 - Rice subsampled: `test_data/subsampled/rice_G281_{15x,10x,5x,3x}_R{1,2}.fq.gz`
 - Tomato: `test_data/tomato/SRR134506{15,16,17,18}_{1,2}.fastq.gz`
+- Corn: `data/corn_ND207/ND207_PCRFree_R{1,2}.fq.gz` (GSA CRR1883221)
 
 ### Results
 - Rice (full): `results/rice_G281/`
 - Rice (coverage tests): `results/rice_G281_{15x,10x,5x,3x}/`
 - Tomato: `results/tomato_Cas9_A2_{1,2,3}/`, `results/tomato_WT/`
+- Corn: `results/corn_ND207/` (in progress)
 
 ### Visualization Outputs
 
