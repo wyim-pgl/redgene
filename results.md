@@ -103,17 +103,19 @@ SRA data from PRJNA692070 (originally published by Bae et al. 2022).
 | Assembly | 501 contigs, N50=347, longest=4,160bp |
 | Contig map | 5,774 host + 15 construct alignments (4 contigs) |
 | Junction | **1 junction: SLM_r2.0ch08:65,107,378** (RB, MAPQ=60) |
-| Copy number | Depth ratio 2.1x (T-35S-pCAMBIA: 19.0x vs host: 9.0x) → **~2 copies** |
+| Copy number | **Hemizygous single-copy** (nptII 4.7x / host 9.0x ≈ 0.5x) — element_db 2.1x is artifact |
 
 **Junction details:**
 - NODE_10 (1031bp, cov=4.1): Chimeric contig spanning host chr08:65,107,378 and construct element QL-CON-00-014 (MF521566.1)
 - NODE_1 (4160bp, cov=8.6): Pure construct (CaMV 35S, nos promoter, nptII, OCS terminator) - T-DNA body
 
-**Copy number notes:**
-- Best marker: T-35S-pCAMBIA (258bp, 100% covered, median 19.0x)
-- Alternative marker nptII: depth ratio 4.66/9.0 = 0.52 → hemizygous single-copy
-- Discrepancy likely due to short element length and CaMV 35S multi-mapping
-- nptII-based estimate (hemizygous single-copy) is more biologically reliable for heterozygous sample
+**Copy number — element_db artifact analysis:**
+- element_db aggregate depth ratio: 19.0x / 9.0x = 2.1x → **misleading (NOT dual insertion)**
+- Host-derived elements inflate construct depth: SSuAra 35.3x, TA29 7.7x (tomato genome homologs)
+- Bacterial-origin markers give true T-DNA depth: nptII 4.7x, cp4-epsps 31.5x
+- **Correct estimate**: nptII 4.7x / host 9.0x = **0.52x → hemizygous single-copy**
+- cp4-epsps 31.5x is inflated by multi-mapping (short element, common in GMO constructs)
+- Consistent with heterozygous Cas9 T-DNA insertion in T0 hemizygous plant
 
 **Step 8 — CRISPR editing detection (gRNA-guided, pileup-based):**
 - **SlPHD_MS1 (chr04:2635445)**: 1bp T insertion at cut site, 30.8% freq (4/13 reads), heterozygous
@@ -133,7 +135,7 @@ SRA data from PRJNA692070 (originally published by Bae et al. 2022).
 | Assembly | 355 contigs, N50=320, longest=3,350bp |
 | Contig map | 1,281 host + 17 construct alignments (5 contigs) |
 | Junction | **No junctions detected** |
-| Copy number | Depth ratio 1.6x (T-OCS: 14.0x vs host: 9.0x) → **~2 copies** |
+| Copy number | **Hemizygous single-copy** (element_db 1.6x is artifact; see A2_3 analysis) |
 
 **Analysis:**
 - 3 chimeric contigs found but all had overlapping host/construct alignments:
@@ -264,6 +266,11 @@ This reflects background noise from host sequences with partial homology to elem
 - Using element_db requires lowered identity threshold (0.70 vs 0.90)
 - Advantage: No prior knowledge of vector sequence needed
 - Disadvantage: More false positive risk, reduced detection sensitivity
+- **Copy number artifact**: element_db contains host-derived elements (SSuAra, TA29,
+  Ubi1, actin) that map to the host genome at high depth, inflating aggregate
+  construct depth ratios (e.g., 2.1x artifact for actual single-copy insertion).
+  For reliable copy number, use bacterial-origin markers only (nptII, bar, hph).
+  Rice G281 with pCAMBIA-1300 reference is unaffected (vector-specific, no host elements).
 
 ### 4. Coverage Requirements
 
