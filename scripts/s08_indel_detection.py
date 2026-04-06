@@ -33,6 +33,7 @@ Usage:
 """
 
 import argparse
+from collections import Counter
 import re
 import subprocess
 import sys
@@ -278,9 +279,12 @@ def _parse_pileup_indels(
         # Parse indels from pileup string
         pos_indels = _extract_indels_from_pileup(pileup)
 
-        for indel_type, indel_seq in pos_indels:
-            indel_seq_upper = indel_seq.upper()
-            count = pos_indels.count((indel_type, indel_seq))
+        # Aggregate counts case-insensitively
+        indel_counts = Counter(
+            (t, s.upper()) for t, s in pos_indels
+        )
+
+        for (indel_type, indel_seq_upper), count in indel_counts.items():
             freq = count / dp
 
             if freq < min_freq:

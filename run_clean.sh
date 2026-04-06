@@ -112,6 +112,14 @@ python scripts/viz/plot_junction_gene.py \
 
 echo "Visualizations complete at $(date)"
 
+# ---------------------------------------------------------------------------
+# Phase 5: MultiQC Report
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Phase 5: MultiQC Report ==="
+python scripts/s11_multiqc.py --outdir $OUTDIR --title "RedGene Pipeline Report" 2>&1
+echo "MultiQC report complete at $(date)"
+
 echo ""
 echo "=== Clean Re-run COMPLETE at $(date) ==="
 echo "Check results in: $OUTDIR/"

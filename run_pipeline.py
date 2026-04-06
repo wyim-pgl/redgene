@@ -30,6 +30,7 @@ STEP_SCRIPTS: dict[str, str] = {
     "7": "scripts/s07_host_map.py",
     "8": "scripts/s08_indel_detection.py",
     "10": "scripts/s10_copynumber.py",
+    "11": "scripts/s11_multiqc.py",
 }
 
 STEP_NAMES: dict[str, str] = {
@@ -42,6 +43,7 @@ STEP_NAMES: dict[str, str] = {
     "7": "Map all reads to host (bwa mem)",
     "8": "CRISPR indel detection (treatment vs WT)",
     "10": "Copy number estimation",
+    "11": "MultiQC report generation",
 }
 
 # ---------------------------------------------------------------------------
@@ -241,6 +243,11 @@ def build_step_cmd(
                 "--outdir", str(outdir),
                 "--sample-name", sname,
                 "--junctions", str(s06 / "junctions.tsv")]
+    elif step == "11":
+        return [sys.executable, script,
+                "--outdir", str(outdir),
+                "--sample-name", sname,
+                "--title", f"RedGene Report — {sname}"]
     else:
         sys.exit(f"ERROR: No command builder for step {step}")
 

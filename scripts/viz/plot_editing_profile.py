@@ -122,21 +122,15 @@ def parse_pileup_at_region(
                 counts["DEL"] += 1
                 i += 1
             elif c in "+-":
-                is_ins = c == "+"
+                # Indel notation without preceding base (shouldn't happen
+                # in valid pileup, but skip the indel length + sequence)
                 i += 1
                 num_str = ""
                 while i < len(pileup_str) and pileup_str[i].isdigit():
                     num_str += pileup_str[i]
                     i += 1
                 if num_str:
-                    n = int(num_str)
-                    seq = pileup_str[i:i + n].upper()
-                    i += n
-                    if is_ins:
-                        counts["INS"] += 1
-                        ins_seqs[seq] = ins_seqs.get(seq, 0) + 1
-                    else:
-                        del_seqs[seq] = del_seqs.get(seq, 0) + 1
+                    i += int(num_str)
                 continue
             else:
                 i += 1

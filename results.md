@@ -28,7 +28,7 @@
 
 | Contig | Host Position | MAPQ | Element | Type | Verdict |
 |--------|--------------|------|---------|------|---------|
-| NODE_14 | **Chr3:16,439,719** | 10 | pCAMBIA-1300 backbone | RB | **TRUE** (45bp from known) |
+| NODE_14 | **Chr3:16,439,719** | 10 | pCAMBIA-1300 backbone | RB | **TRUE** (45bp from known, MAPQ=10 is low) |
 | NODE_14 | Chr3:31,443,557 | 35 | pCAMBIA-1300 backbone | RB | FALSE POSITIVE |
 | NODE_6 | Chr3:31,443,557 | 60 | pCAMBIA-1300 backbone | RB | FALSE POSITIVE |
 | NODE_6 | Chr2:8,432,860 | 60 | pCAMBIA-1300 backbone | RB | FALSE POSITIVE |
@@ -273,7 +273,7 @@ This reflects background noise from host sequences with partial homology to elem
 |----------|-------------------|-------|
 | ~29x (full) | DETECTED (Chr3:16,439,719) | 45bp from known position |
 | ~15x | DETECTED (Chr3:16,439,719) | Same accuracy as full |
-| ~10x | NOT detected (true junction) | 8 false positives only |
+| ~10x | NOT detected (Chr3:16,439,719) | 8 junctions found but known site missing |
 | ~5x | NOT detected | 2 false positives |
 | ~3x | NOT detected | 3 false positives |
 
@@ -285,7 +285,15 @@ This reflects background noise from host sequences with partial homology to elem
 | ~5x | NOT detected | 785 extracted reads, N50=264 |
 | ~3x | NOT detected | 473 extracted reads, N50=264 |
 
-**Summary**: Minimum ~10x coverage for junction detection in tomato (larger genome needs proportionally more reads). Minimum ~15x for rice. Coverage requirements scale with genome size and T-DNA copy number.
+**Summary**: Minimum ~15x for rice, ~10x for tomato for the *specific known junction*.
+Note: Rice at 10x still finds 8 junction candidates (including Chr3:31,443,557 and
+Chr2:8,432,860 seen at full coverage) — it only misses the Chr3:16,439,719 site.
+The tomato coverage sensitivity is based on a single sample (A2_3) with a single
+junction, so the threshold is not statistically robust.
+
+**Caveat**: The 15x rice data produces "High" confidence at Chr3:16,439,719 while
+the full 29x data produces "Medium" with MAPQ=10 — an example of assembly
+stochasticity where more reads can produce different (sometimes worse) contigs.
 
 ### 5. CRISPR Editing Detection (Step 8)
 
@@ -308,9 +316,16 @@ pileup parsing preserves the original indel representation from the reads.
 | WT | Clean reference (32 reads) | Clean reference (37 reads) |
 
 **Validation**:
-- SlPHD_MS1 9bp deletion in A2_2 **exactly matches ground truth** (Seol et al. 2025)
-- SlAMS 4bp GTAC deletion in A2_1 detected at cut site (heterozygous)
+- SlPHD_MS1 9bp deletion in A2_2 **matches ground truth sequence** (Seol et al. 2025)
+- SlAMS 4bp GTAC deletion in A2_1 detected at cut site (heterozygous, high-confidence: dp=41)
 - All indels are treatment-specific (absent in WT)
+
+**Reliability caveat**: A2_2 9bp deletion is called from dp=6, count=1 (17%, qual=10).
+This is the weakest call — a single supporting read at low quality. The sample is labeled
+"homozygous" but observed frequency is far below 50%, suggesting either severe
+under-sampling at ~5x coverage, alignment bias at deletion sites, or chimeric editing.
+A2_1 results (dp=41) are much more reliable. Re-sequencing A2_2 at higher depth
+is recommended for confirmation.
 
 **Biological finding**: Different T0 lines have different editing outcomes.
 A2_1 was edited at SlAMS only; A2_2 and A2_3 were edited at SlPHD_MS1 only.

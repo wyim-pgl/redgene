@@ -262,6 +262,11 @@ def predict_effect(
     if strand == "-":
         cds_positions = cds_positions[::-1]
 
+    # Adjust for reading frame phase (GFF3 phase field on first CDS exon)
+    first_phase = cds_list[0][2] if strand == "+" else cds_list[-1][2]
+    if first_phase > 0:
+        cds_positions = cds_positions[first_phase:]
+
     # Find position in CDS
     try:
         cds_idx = cds_positions.index(pos)

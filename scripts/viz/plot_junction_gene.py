@@ -420,7 +420,7 @@ def plot_junction_with_gene(
                    fontweight="bold", color="white")
 
     # Junction point on contig
-    junction_on_contig = host_contig_end if junction_type in ("LB", "5prime") else host_contig_end
+    junction_on_contig = host_contig_start if junction_type in ("LB", "5prime") else host_contig_end
     ax_contig.axvline(x=junction_on_contig, color=JUNCTION_COLOR,
                       linewidth=2.5, zorder=10)
     ax_contig.annotate("Junction", xy=(junction_on_contig, 0.25),

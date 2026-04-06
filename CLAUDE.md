@@ -1,149 +1,137 @@
 # CLAUDE.md
 
-## Project: GMO Positive Control Characterization Pipeline
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Read DESIGN.md first. It contains the full architecture, all design decisions,
-and rationale from extensive discussion.
+## Project Overview
 
-## What this project does
+RedGene is an assembly-based Illumina WGS pipeline for characterizing transgenic plant insertions. It finds transgene insertion sites (bp resolution), estimates copy number, determines zygosity, and detects CRISPR/Cas9 editing events. Designed for Korean quarantine GMO/LMO detection assays.
 
-Illumina PE150 sequencing-based pipeline to characterize transgenic plant
-positive control materials for Korean quarantine GMO detection assays.
+**Repository**: [wyim-pgl/redgene](https://github.com/wyim-pgl/redgene)
 
-Input: Illumina PE150 reads (10-15x WGS) from transgenic plants
-Output: Insertion site coordinates, copy number, event-specific primers,
-        validation reports, and publication-ready plots
+## Running the Pipeline
 
-## Tech stack
+```bash
+# Activate environment
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate redgene
 
-- Python 3.11 wrapper with SLURM job submission
-- bwa mem (read mapping), minimap2 (contig mapping), samtools (BAM processing)
-- fastp (QC), SPAdes (assembly), Kraken2 (annotation), Primer3 (primers)
-- matplotlib (visualization), pysam (BAM parsing), biopython (sequence handling)
-- Conda/Mamba for environment management
-- Runs on Pronghorn HPC (SLURM scheduler)
+# Run all steps for one sample
+python run_pipeline.py --sample rice_G281 --steps 1-6 --threads 16
+
+# Run specific steps
+python run_pipeline.py --sample rice_G281 --steps 7,8,10 --threads 16
+
+# Dry run (preview commands)
+python run_pipeline.py --sample rice_G281 --steps 1-6 --dry-run
+
+# Run individual step scripts directly
+python scripts/s01_qc.py --r1 reads_R1.fq.gz --r2 reads_R2.fq.gz \
+  --outdir results --sample-name my_sample --threads 16
+```
+
+### SLURM batch run
+```bash
+sbatch run_clean.sh   # Runs rice + all tomato samples end-to-end including visualization
+```
+
+### Visualization scripts (run after pipeline steps complete)
+```bash
+# CRISPResso2-style editing profile
+python scripts/viz/plot_editing_profile.py \
+  --treatment-bam results/{sample}/s07_host_map/{sample}_host.bam \
+  --wt-bam results/tomato_WT/s07_host_map/tomato_WT_host.bam \
+  --host-ref db/SLM_r2.0.pmol.fasta \
+  --grna-targets results/{sample}/s08_indel/grna_targets.tsv \
+  --editing-sites results/{sample}/s08_indel/editing_sites.tsv \
+  --sample-name {sample} --outdir results
+
+# Variant effect annotation (easyGWAS-style)
+python scripts/viz/plot_editing_effects.py \
+  --editing-sites results/{sample}/s08_indel/editing_sites.tsv \
+  --gff db/SLM_r2.0.gff3.gz --host-ref db/SLM_r2.0.pmol.fasta \
+  --sample-name {sample} --outdir results
+
+# Junction gene context
+python scripts/viz/plot_junction_gene.py \
+  --junctions results/{sample}/s06_junction/junctions.tsv \
+  --gff db/SLM_r2.0.gff3.gz \
+  --contigs results/{sample}/s04_assembly/contigs.fasta \
+  --sample-name {sample} --outdir results
+```
 
 ## Architecture
 
-13-step pipeline. See DESIGN.md Section 2 for the full step list and
-dependency graph. Key design principles:
+`run_pipeline.py` orchestrates 10 analysis steps by calling standalone scripts in `scripts/` via subprocess. Config is loaded from `config.yaml` (YAML with per-sample settings). Each step script accepts `--outdir`, `--sample-name`, and step-specific arguments. Inter-step dependencies are wired in `build_step_cmd()` in run_pipeline.py.
 
-1. Assembly-based junction detection (NOT depth-gap; depth-gap is for long reads)
-2. Extract construct-hitting reads + mates -> local assembly -> BLAST contigs to host
-3. Kraken2 is used as ANNOTATION (label reads), never as FILTER (would remove bacterial-origin transgene CDS)
-4. Copy number from read depth ratio only (no Southern blot, no ddPCR)
-5. Three matplotlib visualizations: construct coverage, junction structure, copy number
-
-## File organization
-
+### Pipeline flow and step dependencies
 ```
-gmo-positive-control/
-├── CLAUDE.md              <- you are here
-├── DESIGN.md              <- full design document (READ THIS)
-├── environment.yml        <- conda environment
-├── config.yaml            <- sample sheet
-├── run_pipeline.py        <- main entry point
-├── scripts/               <- per-step scripts (s01 through s11)
-│   ├── viz/               <- matplotlib visualization scripts
-│   └── utils/             <- SLURM helper, BAM/BLAST parsers
-├── db/                    <- reference databases
-└── results/               <- per-sample output
+[1] fastp QC → [2] bwa → construct BAM → [3] extract reads + mates
+  → [3b] WT homology filter (optional) → [4] SPAdes assembly
+  → [5] minimap2 contigs → host+construct PAF → [6] junction detection
+  → [7] bwa → host BAM (bottleneck: ~5-7h) → [8] CRISPR indel detection
+  → [10] copy number (depth ratio)
 ```
 
-## Coding conventions
+Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5-7h per sample). Steps 8 and 10 require step 7 output. Step 8 also requires a WT sample BAM for comparison.
+
+### Key scripts
+| Script | Purpose |
+|--------|---------|
+| `scripts/s03_extract_reads.py` | Most critical — extracts construct-hitting reads + mates |
+| `scripts/s03b_homology_filter.py` | WT-based filtering of host-derived false positives |
+| `scripts/s06_junction.py` | Chimeric contig detection → junction coordinates |
+| `scripts/s08_indel_detection.py` | CRISPR editing detection (pileup-based, NOT bcftools) |
+| `scripts/viz/plot_editing_profile.py` | CRISPResso2-style nucleotide quilt |
+| `scripts/viz/plot_editing_effects.py` | Variant effect annotation (frameshift/synonymous/etc.) |
+| `scripts/viz/plot_junction_gene.py` | Junction with gene/exon/CDS context from GFF3 |
+
+## Critical Design Decisions
+
+1. **Assembly-based junction detection**, not depth-gap (depth-gap requires long reads)
+2. **Direct pileup parsing for CRISPR** (`samtools mpileup -Q 0`), not `bcftools call`. bcftools decomposes complex indels at low depth (e.g., splits 9bp deletion into 1bp events)
+3. **-Q 0 base quality** in gRNA-guided mode: CRISPR indel anchor bases sometimes have Q18, below the Q20 default threshold
+4. **WT-based homology filtering** is essential: plant T-DNA constructs contain host-derived promoters (Ubi1, Act1, TA29) that create MAPQ=60 false positives
+5. **Element database** (131 EUginius elements) instead of requiring exact vector sequence — needs lower identity threshold (0.70 vs 0.90)
+
+## Config Format
+
+`config.yaml` defines samples with: `host_reference`, `construct_reference`, `reads.r1/r2`, optional `wt_control` (sample key for WT BAM), optional `grna` (path to gRNA file for step 8). See existing entries for examples.
+
+## Reference Data (in db/, gitignored)
+
+| File | Source |
+|------|--------|
+| `Osativa_323_v7.0.fa` | Rice genome (Phytozome, 374 Mbp) |
+| `Osativa_323_v7.0.gene_exons.gff3` | MSU/RGAP v7.0 annotation (55,986 genes) |
+| `SLM_r2.0.pmol.fasta` | Tomato Micro-Tom genome (Kazusa, 833 Mbp) |
+| `SLM_r2.0.gff3.gz` | NCBI Gnomon annotation (chr names remapped to SLM_r2.0ch\*) |
+| `element_db/gmo_combined_db.fa` | 131 GMO elements from EUginius |
+
+## Coding Conventions
 
 - Python 3.11, type hints preferred
-- Each step is a standalone script callable with --sample and --config args
-- SLURM jobs submitted via scripts/utils/slurm.py helper
-- All file paths use pathlib.Path
-- Logging to stderr, results to stdout or files
-- Config in YAML format
-- Output directories created automatically per sample
+- Each step script is standalone with argparse CLI
+- All file paths use `pathlib.Path`
+- Logging to stderr (`print(..., file=sys.stderr)` or `logging` module)
+- Output directories: `results/{sample}/s{NN}_{step_name}/`
 
-## SLURM settings
+## Known Pitfalls
 
-- Partition: cpu-s2-core-0
-- Account: cpu-s5-bch709-0
-- Default: 8 CPUs, 32G RAM, 4 hours
-- Phase 3 (unmapped analysis): 8 CPUs, 64G RAM, 8 hours
+- **MAPQ=60 false positives**: In plant genomes, unique mapping to a host-derived promoter region is still a false positive. Only WT-based filtering (s03b) reliably removes these.
+- **Assembly stochasticity**: SPAdes contig extension direction affects junction detection. Contigs extending toward host-derived elements (TA29, pinII) produce overlapping alignments → false positive. Extending toward bacterial-origin elements (nptII, nos) → clean junction.
+- **Coverage requirements**: ≥15x for rice (374 Mbp), ≥10x for tomato (833 Mbp) for reliable junction detection.
+- **BWA threading**: Earlier versions used `-t 2` due to futex deadlock on Pronghorn GPFS. Now uses `-t 16` successfully.
 
-## Key implementation details
+## SLURM Settings
 
-### Step 3 (read extraction) -- most critical step
+- Partition: `cpu-s1-pgl-0`, Account: `cpu-s1-pgl-0`
+- Resources: 16 CPUs, 64G RAM, 24h (for full pipeline with step 7)
+- See `run_clean.sh` for sbatch configuration
+
+## Environment
 
 ```bash
-samtools view -F 4 construct.bam | cut -f1 > names.txt
-samtools view -f 2048 construct.bam | cut -f1 >> names.txt
-sort -u names.txt > hit_names.txt
-samtools sort -n construct.bam -o nsort.bam
-samtools view -N hit_names.txt nsort.bam \
-  | samtools fastq -1 R1.fq -2 R2.fq -s singles.fq -n
+micromamba create -n redgene -c conda-forge -c bioconda \
+  python=3.11 bwa minimap2 samtools fastp spades bcftools \
+  sra-tools pysam matplotlib biopython seqkit pigz
 ```
-
-This handles all read name formats and guarantees mate extraction.
-
-### Step 6 (junction detection)
-
-Parse chimeric contigs: contigs that have partial alignment to host AND
-partial alignment to construct. The boundary between the two alignments
-is the junction coordinate.
-
-### Step 8 (CRISPR editing detection)
-
-Two modes: gRNA-guided (recommended) and de novo.
-gRNA-guided mode uses direct pileup parsing (NOT bcftools call) to avoid
-variant decomposition at low depth. Uses `-Q 0` base quality threshold
-to catch indels near cut sites where anchor bases may have borderline quality.
-
-### Step 10 (copy number)
-
-```python
-copy_number = construct_median_depth / genome_median_depth
-# ~0.5 = hemizygous single-copy
-# ~1.0 = homozygous single-copy
-```
-
-Cross-validate with junction contig count (2 = single-copy, >2 = multi-copy).
-
-### Confidence scoring
-
-- High: both LB and RB junction contigs found, bp-level resolution
-- Medium: one junction contig only
-- Low: discordant pair evidence but no junction contig
-
-## Visualization (matplotlib)
-
-Three plots per sample:
-1. **Construct coverage profile**: depth along construct, color-coded by element
-2. **Junction structure diagram**: linear diagram of chimeric contig with host/transgene annotation
-3. **Copy number depth plot**: normalized depth comparison, reference line at 1.0x
-
-## Things to watch out for
-
-- manual_sequences.fa contains PLACEHOLDER sequences for some Bt genes
-  (cry2Ab2, cry34Ab1, etc.) -- these must be replaced with actual construct sequences
-- element_master_list.tsv coordinates for CaMV V00141.1 need verification
-- SPAdes on ~3000 read pairs finishes in <1 min, do not over-allocate resources
-- Kraken2 MUST NOT be used as a filter (see DESIGN.md Section 3.4)
-- Host-derived elements (Ubi1, Act1) cause multi-mapping; use unique bacterial
-  markers (nptII, bar) for reliable copy number estimation
-- BWA mem with >2 threads causes futex deadlock on Pronghorn HPC (GPFS).
-  Use --threads 1 or 2 for reliable mapping. This affects both s02 and s07.
-
-## Development priority
-
-Round 1 (core): Steps 1-6 + Plot 1 + Plot 2
-  - Get one Arabidopsis event through the pipeline end-to-end first
-
-Round 2 (backbone): Steps 7-9
-  - Run on Round 1 data, assess necessity
-
-Round 3 (validation): Steps 10-13 + Plot 3
-  - Wet lab coordination needed for Steps 12-13
-
-## Related resources
-
-- GMO element DB builder: see element_db/ directory
-  (gmo_db.py + element.list + manual_sequences.fa)
-- TgIF reference: https://github.com/jhuapl-bio/TgIF
-  (ONT-based tool; we borrowed visualization and primer3 integration concepts)
