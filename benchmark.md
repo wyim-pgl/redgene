@@ -96,7 +96,7 @@ cd /data/gpfs/assoc/pgl/develop/redgene
 | RedGene | Yes | Chr3:16,439,719 | 45 bp | 2 (head-to-head) | Medium | ~15 min |
 | TDNAscan | — | — | — | — | — | — |
 | T-DNAreader | — | — | — | — | — | — |
-| TC-hunter | — | — | — | — | — | — |
+| TC-hunter | Yes | Chr3:16,439,675 + Chr3:31,443,564 | 1 bp | 2 (head-to-head) | 3+22 reads | ~35 min (BWA) |
 
 ### Cucumber Line 224 (Chr2, G6936 promoter)
 
@@ -146,7 +146,7 @@ cd /data/gpfs/assoc/pgl/develop/redgene
 | ~5x (full) | Yes (High) | — | — | — |
 | 5x subsampled | (pending) | — | — | — |
 | 3x subsampled | (pending) | — | — | — |
-| 1x subsampled | (pending) | — | — | — |
+| 1x subsampled | Yes (Medium, 1 true + 1 FP, MAPQ 36) | — | — | — |
 
 ### Cucumber Line 224
 
