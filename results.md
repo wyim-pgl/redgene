@@ -588,3 +588,123 @@ Subsampled from ~36x to test minimum coverage for junction detection (332 Mbp ge
 - **Problem**: Default `--min-identity 0.90` in s06_junction.py silently filtered genuine chimeric contigs where minimap2 alignment identity was 0.84-0.85 (common with fragmented element references)
 - **Fix**: `run_pipeline.py` auto-detects element_db/combined_db and passes `--min-identity 0.70`
 - **Impact**: Corn ND207 went from 1 junction (Ubi1 false positive) → 7 junctions including genuine ND207-LB insertion at Chr3:181,367,276
+
+### Coverage Sensitivity (Corn ND207 Subsampling)
+
+Original coverage is ~5x. Subsampled to 3x and 1x with seqtk sample (fixed random seeds).
+
+| Coverage | Assembly Contigs | N50 | Max Contig | Junctions | Key Junction (181,367,276) | Confidence | MAPQ |
+|----------|-----------------|-----|------------|-----------|---------------------------|------------|------|
+| ~5x (full) | 14,708 | 258bp | 3,664bp | 7 (2 contigs) | Detected (NODE_10, 2,485bp) | High | 60 |
+| 3x | 101,689 | 95bp | 2,522bp | 11 (3 contigs) | Detected (NODE_361, 434bp) | High | 60 |
+| 1x | 6,082 | 143bp | 2,349bp | 5 (2 contigs) | Detected (NODE_341, 283bp) | Medium | 36 |
+
+**3x results (11 junctions, 3 contigs)**:
+- NODE_361 (434bp): **NC_050098.1:181,367,276** (High, MAPQ 60) — key ND207 junction confirmed. Same contig also hits NC_050105.1:151,759,818 with ND207-LB, IE09S034-RB, GAB-3-LB, DP4114-RB border elements
+- NODE_26 (1,100bp): NC_050103.1:179,124,602 (High, MAPQ 60) — Ubi1 promoter match (endogenous false positive)
+- NODE_14210 (129bp): NW_023366718.1:73,322 (High, MAPQ 17) — Bt11-RB border match on unplaced scaffold
+
+**1x results (5 junctions, 2 contigs)**:
+- NODE_341 (283bp): **NC_050098.1:181,367,276** (Medium, MAPQ 36) — key junction still detected but with reduced MAPQ and shorter contig
+- NODE_295 (299bp): NC_050098.1:209,320,873 (Medium, MAPQ 60) — Ubi1 promoter match (endogenous false positive)
+
+**Key observations**:
+- The ND207 junction at 181,367,276 was detected at all coverages (5x, 3x, 1x) with identical coordinates
+- At 3x, more junctions are called due to assembly fragmentation (more short chimeric contigs)
+- At 1x, MAPQ drops from 60 to 36 and confidence from High to Medium, but junction coordinate is unchanged
+- Event-specific border sequences in the database enable detection even at 1x by providing direct junction-spanning matches
+
+---
+
+## Soybean UGT72E3 (Glycine max cv. Kwangan)
+
+### Dataset
+- **SRA**: PRJNA627303
+- **Paper**: Kim et al., 2021, Plant Biotechnol Rep - drought tolerance soybean overexpressing UGT72E3
+- **Construct**: pB7WG2-UGT72E3 (bar + UGT72E3) - **not deposited in GenBank**
+- **Platform**: Illumina, PE150
+- **Total reads**: 197.2M reads (98.6M pairs, ~29x coverage)
+- **Host reference**: Gmax_v4.0.fa (Wm82.a4.v1, 1.1 Gbp)
+- **Construct DB**: gmo_combined_db.fa (131 EUginius elements, element_db mode)
+- **Known insertion**: Chr18, Glyma.18g226800 CDS (first exon)
+
+### Pipeline Results (Steps 1-6)
+
+| Step | Status | Key Results |
+|------|--------|-------------|
+| Step 1 (QC) | DONE | 197.2M -> 194.8M reads (98.8% pass), Q30: 93.0% |
+| Step 2 (Construct map) | DONE | 21,115 reads mapped (0.01%) |
+| Step 3 (Read extract) | DONE | 19,451 read pairs extracted |
+| Step 4 (Assembly) | DONE | 1,606 contigs, N50=586bp, max=10,431bp |
+| Step 5 (Contig map) | DONE | Host + construct PAF generated |
+| Step 6 (Junction) | DONE | **8 junctions** (2 contigs), High confidence |
+
+### Junction Detection Results
+
+**NODE_13 (1683bp, cov=5.4x)** - NC_038254.2 (Chr18):51,882,903 - **High confidence, MAPQ=60**
+
+| Construct Element | Type | Position on Construct | Junction Type |
+|-------------------|------|----------------------|---------------|
+| T-35S (CaMV terminator) | Terminator | pos 74-257 | LB |
+| QL-CON-00-014 (multi-event construct) | Construct body | pos 1606-1789 | LB |
+| QL-CON-00-015 (Bt-type construct) | Construct body | pos 16-179 | LB |
+
+**NODE_4 (3512bp, cov=9.7x)** - NC_038254.2 (Chr18):51,882,860 - **High confidence, MAPQ=60**
+
+| Construct Element | Type | Position on Construct | Junction Type |
+|-------------------|------|----------------------|---------------|
+| QL-CON-00-015 (Bt-type construct) | Construct body | pos 219-745 | LB |
+| QL-CON-00-014 (multi-event construct) | Construct body | pos 1917-2181 | RB |
+| P-nos (Agrobacterium) | Promoter | pos 10-252 | RB |
+| Cry1Ac (B. thuringiensis) | CDS | pos 5-208 | LB |
+| OXY-235 (event-specific) | Event border | pos 282-476 | RB |
+
+### Ground Truth Validation
+- **Expected**: Insertion in Glyma.18g226800 (= LOC102669442), Chr18 first exon
+- **Detected**: NC_038254.2:51,882,860 and 51,882,903 (High confidence, MAPQ 60)
+- **CDS coordinates**: 51,880,693 to 51,883,761
+- Both junctions fall within the first exon CDS, confirming disruption of the target gene (Kim et al., 2021)
+
+---
+
+## Soybean AtYUCCA6 (Glycine max cv. Kwangan)
+
+### Dataset
+- **SRA**: PRJNA627303
+- **Paper**: Kim et al., 2021, Plant Biotechnol Rep - drought tolerance soybean overexpressing AtYUCCA6
+- **Construct**: pB7WG2-AtYUCCA6 (bar + AtYUCCA6) - **not deposited in GenBank**
+- **Platform**: Illumina, PE150
+- **Total reads**: 190.7M reads (95.4M pairs, ~28x coverage)
+- **Host reference**: Gmax_v4.0.fa (Wm82.a4.v1, 1.1 Gbp)
+- **Construct DB**: gmo_combined_db.fa (131 EUginius elements, element_db mode)
+- **Known insertions** (Kim et al., 2021):
+  - **Site I**: Chr18, Glyma.18g235800 - 5+ tandem copies (multi-copy insertion)
+  - **Site II**: Chr19, Glyma.19g245800
+
+### Pipeline Results (Steps 1-6)
+
+| Step | Status | Key Results |
+|------|--------|-------------|
+| Step 1 (QC) | DONE | 190.7M -> 187.6M reads (98.4% pass), Q30: 91.9% |
+| Step 2 (Construct map) | DONE | 20,345 reads mapped (0.01%) |
+| Step 3 (Read extract) | DONE | 18,280 read pairs extracted |
+| Step 4 (Assembly) | DONE | 1,296 contigs, N50=594bp, max=8,563bp |
+| Step 5 (Contig map) | DONE | Host + construct PAF generated |
+| Step 6 (Junction) | DONE | **5 junctions** (1 contig), Medium confidence |
+
+### Junction Detection Results
+
+**NODE_142 (929bp, cov=3.1x)** - NC_038255.2 (Chr19):49,789,752 - **Medium confidence, MAPQ=60**
+
+| Construct Element | Type | Position on Construct | Junction Type |
+|-------------------|------|----------------------|---------------|
+| Cry1Ac (B. thuringiensis) | CDS | pos 110-160 | LB |
+| T-nos / P-nos amplicon | Terminator/Promoter | pos 20-70 | LB |
+| P-nos (Agrobacterium) | Promoter | pos 58-108 | LB |
+| T-nos amplicon | Terminator | pos 6-56 | LB |
+| OXY-235 (event-specific) | Event border | pos 282-332 | LB |
+
+### Ground Truth Validation
+- **Site II (Chr19)**: NC_038255.2:49,789,752 detected (Medium confidence, MAPQ 60) at Glyma.19g245800. **Confirmed.**
+- **Site I (Chr18)**: NOT detected. This locus contains 5+ identical tandem T-DNA copies (Kim et al., 2021). SPAdes collapses identical repeats into a single contig, preventing chimeric junction formation. This is a known limitation of short-read assembly for multi-copy tandem insertions.
+- Medium confidence (vs High for UGT72E3) because only one contig with unidirectional (all LB) element matches was assembled, lacking a paired RB junction.
