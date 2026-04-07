@@ -225,6 +225,17 @@ def find_chimeric_contigs(
         if not h_alns or not c_alns:
             continue
 
+        # Compute union of all construct alignment intervals on this contig
+        # (element_db has many small reference sequences, so we merge them)
+        c_intervals = sorted([(a.query_start, a.query_end) for a in c_alns])
+        c_merged: list[tuple[int, int]] = []
+        for start, end in c_intervals:
+            if c_merged and start <= c_merged[-1][1]:
+                c_merged[-1] = (c_merged[-1][0], max(c_merged[-1][1], end))
+            else:
+                c_merged.append((start, end))
+        total_construct_cov = sum(e - s for s, e in c_merged)
+
         # For each pair of host/construct alignments, check if they cover
         # complementary portions of the contig (i.e., non-overlapping regions)
         for h_aln in h_alns:
@@ -238,10 +249,16 @@ def find_chimeric_contigs(
                     # Too much overlap -- these alignments cover the same region
                     continue
 
-                # Check combined coverage of the contig
+                # Check combined coverage using union of all construct alignments
+                # + this specific host alignment (not just the single c_aln)
                 h_len = h_aln.query_end - h_aln.query_start
-                c_len = c_aln.query_end - c_aln.query_start
-                combined_coverage = (h_len + c_len - max(0, overlap)) / h_aln.query_len
+                # Subtract overlap between host and merged construct intervals
+                h_construct_overlap = 0
+                for cs, ce in c_merged:
+                    ov = min(h_aln.query_end, ce) - max(h_aln.query_start, cs)
+                    if ov > 0:
+                        h_construct_overlap += ov
+                combined_coverage = (h_len + total_construct_cov - h_construct_overlap) / h_aln.query_len
                 if combined_coverage < min_coverage_frac:
                     log(f"  FILTERED: {contig_name} - low combined coverage "
                         f"({combined_coverage:.1%} < {min_coverage_frac:.0%})")

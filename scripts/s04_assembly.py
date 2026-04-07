@@ -125,6 +125,7 @@ def run_spades(
         "-o", str(spades_workdir),
         "-t", str(threads),
         "-k", kmers,
+        "-m", "60",
     ]
 
     log(f"Running: {' '.join(cmd)}")

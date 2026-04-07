@@ -464,3 +464,127 @@ intended CRISPR knockout strategy.
 ### GFF3 Annotation Files
 - Rice: `db/Osativa_323_v7.0.gene_exons.gff3` (MSU/RGAP v7.0, 55,986 genes)
 - Tomato: `db/SLM_r2.0.gff3.gz` (NCBI Gnomon, 39,809 genes, chr names remapped)
+
+---
+
+## Cucumber Thaumatin II Lines (Cucumis sativus B10)
+
+### Dataset
+- **BioProject**: PRJNA638559
+- **Paper**: Szwacka et al. (2021) PMC8139995 — Thaumatin II transgenic cucumber
+- **Construct**: pRUR528 (thaumatin II under 35S CaMV + nptII under nos promoter)
+- **Platform**: Illumina HiSeq 2000, PE100
+- **Host reference**: CucSat-B10v3 (GCA_001483825.3, 332 Mbp, 8035 contigs)
+- **Construct DB**: element_db/gmo_combined_db.fa (131 elements incl. thaumatin II)
+
+### Ground Truth (from paper)
+| Line | Chr | Region | T-DNA copies | Host deletion |
+|------|-----|--------|-------------|---------------|
+| 212  | Chr6 (contig 1402) | Intergenic | 1 | 1,304 bp |
+| 224  | Chr2 (contig 1522) | Promoter of G6936 | 1 | 361 bp |
+| 225  | Chr2 (contig 2178) | Intergenic | 2 + backbone | 95 bp |
+
+### Pipeline Results (Steps 1-6, ~37x coverage)
+
+| Step | Line 212 | Line 224 | Line 225 |
+|------|----------|----------|----------|
+| Reads (post-QC) | 120M | 120M | 121M |
+| Mapped to DB | 2,103 hits | 2,233 hits | 3,101 hits |
+| Contigs | 67 (N50=544) | 57 (N50=568) | 71 (N50=598) |
+| Junctions | 3 (Medium) | 9 (**High**) | 2 (**High**) |
+
+### Junction Detection Results
+
+**Line 212** — LKUO03001392.1:2,751,693 (LB, Medium confidence)
+- NODE_1 (5717bp): thaumatin_II + P-e35S-CaMV + P-nos + QL-CON-00-014
+- Single junction side found (LB only) — RB contig may not extend into host
+
+**Line 224** — LKUO03001512.1:580,628–581,332 (LB+RB, **High confidence**)
+- NODE_1 (4538bp): RB junction with QL-CON-00-014 at position 580,943
+- NODE_5 (1042bp): LB junction with P-nos/KMD1 at position 581,332
+- T-DNA span: ~389 bp between junction boundaries
+
+**Line 225** — LKUO03002166.1:547,987 (LB+RB, **High confidence**)
+- NODE_5 (881bp): Both LB and RB detected on same contig
+- Construct elements: KMD1 event-specific + Huafan_No_1 event-specific
+
+### Coverage Sensitivity Test (Cucumber Line 224)
+
+Subsampled from ~36x to test minimum coverage for junction detection (332 Mbp genome):
+
+| Coverage | Extracted Reads | Contigs | Chimeric | Junctions | Confidence | Both Sides? |
+|----------|----------------|---------|----------|-----------|------------|-------------|
+| **~36x** | 1,117 pairs | 57 | 3 | 9 | **High** | Yes (LB+RB) |
+| **~15x** | 573 pairs | 25 | 1 | 14 | **High** | Yes (LB+RB) |
+| **~10x** | 367 pairs | 22 | 1 | 14 | **High** | Yes (LB+RB) |
+| **~5x** | ~180 pairs | 18 | 1 | 1 | Medium | No (LB only) |
+| **~3x** | ~100 pairs | 11 | 0 | **0** | — | **FAILED** |
+
+**Key findings**:
+- **≥10x is reliable** for junction detection in cucumber (332 Mbp genome)
+- 15x and 10x produced a single spanning contig (2927-2934bp) covering both junction sides — **better** than full coverage which used two separate contigs
+- At 5x: only one junction side detected (LB, Medium confidence)
+- At 3x: complete failure — no chimeric contigs assembled
+
+**Extrapolation by genome size**:
+- Cucumber (332 Mbp): ≥10x reliable
+- Rice (374 Mbp): ≥15x reliable (from prior tests)
+- Tomato (833 Mbp): ≥10x reliable (from prior tests)
+- Corn (2.18 Gbp): TBD (only full coverage tested so far)
+
+### Code Fix: Element DB Coverage Calculation (s06_junction.py)
+- **Problem**: Junction detection used single construct alignment coverage, not union of all construct alignments. With element_db (131 separate sequences), each element covered <26% of chimeric contigs → filtered as "low combined coverage"
+- **Fix**: Merge all construct alignment intervals into union before checking coverage threshold (50%)
+- **Impact**: Line 212 went from 0 → 3 junctions; Line 224 from 1 → 9 junctions
+
+---
+
+## Corn ND207 (Zea mays B73)
+
+### Dataset
+- **Source**: GSA CRA026358 (PCR-free library)
+- **Paper**: Sci Rep 2025, DOI:10.1038/s41598-025-18593-8 — Border-specific PCR for GM corn events
+- **Platform**: Illumina, PE150
+- **Host reference**: B73 RefGen_v5 (GCF_902167145.1, 2.18 Gbp, 10 chr)
+- **Construct DB**: gmo_corn_combined_db.fa (192 seqs: 130 EUginius elements + 62 corn border sequences)
+
+### Pipeline Results (Steps 1-6)
+
+| Step | Status | Key Results |
+|------|--------|-------------|
+| Step 1 (QC) | DONE | Post-QC reads available |
+| Step 2 (Construct map) | DONE | Reads mapped to combined DB |
+| Step 3 (Read extract) | DONE | **2.25M read pairs** (high due to ~100bp native maize flanking in border seqs) |
+| Step 4 (Assembly) | DONE | **14,708 contigs**, N50=258bp, max=3,664bp (large assembly from 2.25M reads) |
+| Step 5 (Contig map) | DONE | 6,841 host contigs (89,760 alns), 324 construct contigs (360 alns) |
+| Step 6 (Junction) | DONE | **7 junctions** (2 contigs), High confidence |
+
+### Junction Detection Results
+
+**NODE_10 (2485bp, cov=3.1x)** — **NC_050098.1 (Chr3):181,367,276** — **High confidence, MAPQ=60**
+
+| Construct Element | Type | Position on Construct | Junction Type |
+|-------------------|------|----------------------|---------------|
+| ND207-LB (event-specific border) | Border | pos 1-123 | LB |
+| QL-CON-00-015 (Bt-type construct) | Construct body | pos 16-972 | LB |
+| P-e35S-CaMV (Cauliflower mosaic virus) | Promoter | pos 368-751 | RB |
+| P-35S-CaMV | Promoter | pos 136-519 | RB |
+| P-nos (Agrobacterium) | Promoter | pos 10-236 | RB |
+| CS-cry1Ac (Bacillus thuringiensis) | CDS | pos 5-208 | LB |
+
+**Interpretation**: Clear T-DNA insertion with bacterial-origin elements (P-nos, P-e35S-CaMV, Cry1Ac) and the ND207-specific border sequence. The construct architecture matches a typical Bt corn event with CaMV 35S-driven insecticidal gene (Cry1Ac) + nos promoter for selection marker.
+
+**NODE_77 (1128bp, cov=1.9x)** — NC_050101.1 (Chr6):146,056,838 — **Likely false positive**
+- Ubi1 maize promoter hit — endogenous gene (13 contigs map to Chr5:84.4M Ubi1 locus)
+- Assembly chimera joining Ubi1 region with unrelated Chr6 sequence
+
+### Challenges: Maize-Specific False Positives
+- 78 chimeric contigs found, but most are **endogenous maize gene matches**: Ubi1 (ubiquitin promoter, 13 contigs), zSSIIb (starch synthase), wx012 (waxy), ZM-004 (taxon-specific)
+- These are legitimate host genes that also appear in the GMO element DB as commonly used construct promoters
+- Border sequences contain ~100bp native flanking → 2.25M extracted reads (vs 6K rice, 3.4K tomato)
+- **Fix**: `run_pipeline.py` now passes `--min-identity 0.70` for element_db/combined_db (default 0.90 silently filtered real junctions)
+
+### Code Fix: Identity Threshold for Element DB (run_pipeline.py)
+- **Problem**: Default `--min-identity 0.90` in s06_junction.py silently filtered genuine chimeric contigs where minimap2 alignment identity was 0.84-0.85 (common with fragmented element references)
+- **Fix**: `run_pipeline.py` auto-detects element_db/combined_db and passes `--min-identity 0.70`
+- **Impact**: Corn ND207 went from 1 junction (Ubi1 false positive) → 7 junctions including genuine ND207-LB insertion at Chr3:181,367,276

@@ -223,5 +223,117 @@ samples:
       insertion_type: T-DNA
       zygosity: homozygous
 
+  # Cucumber thaumatin II lines (PRJNA638559, Szwacka et al. 2021)
+  cucumber_line212:
+    name: "Cucumber thaumatin line 212 (single T-DNA, Chr6)"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/cucumber/SRR12081227_1.fastq.gz
+      r2: data/cucumber/SRR12081227_2.fastq.gz
+    expected:
+      insertion_chr: Chr6
+      insertion_type: T-DNA
+      copy_number: 1
+
+  cucumber_line224:
+    name: "Cucumber thaumatin line 224 (single T-DNA, Chr2, disrupts G6838)"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/cucumber/SRR12081931_1.fastq.gz
+      r2: data/cucumber/SRR12081931_2.fastq.gz
+    expected:
+      insertion_chr: Chr2
+      insertion_type: T-DNA
+      copy_number: 1
+
+  cucumber_line225:
+    name: "Cucumber thaumatin line 225 (2 T-DNA copies + backbone, Chr2)"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/cucumber/SRR12082195_1.fastq.gz
+      r2: data/cucumber/SRR12082195_2.fastq.gz
+    expected:
+      insertion_chr: Chr2
+      insertion_type: T-DNA
+      copy_number: 2
+
+  # Coverage sensitivity tests (cucumber line 224 subsampled)
+  cucumber_line224_15x:
+    name: "Cucumber line 224 subsampled to ~15x"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/cucumber/subsampled/line224_15x_R1.fq.gz
+      r2: data/cucumber/subsampled/line224_15x_R2.fq.gz
+
+  cucumber_line224_10x:
+    name: "Cucumber line 224 subsampled to ~10x"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/cucumber/subsampled/line224_10x_R1.fq.gz
+      r2: data/cucumber/subsampled/line224_10x_R2.fq.gz
+
+  cucumber_line224_5x:
+    name: "Cucumber line 224 subsampled to ~5x"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/cucumber/subsampled/line224_5x_R1.fq.gz
+      r2: data/cucumber/subsampled/line224_5x_R2.fq.gz
+
+  cucumber_line224_3x:
+    name: "Cucumber line 224 subsampled to ~3x"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/cucumber/subsampled/line224_3x_R1.fq.gz
+      r2: data/cucumber/subsampled/line224_3x_R2.fq.gz
+
+  # Soybean transgenic events (PRJNA627303, Mol Breeding 2023)
+  soybean_AtYUCCA6:
+    name: "Soybean Kwangan AtYUCCA6-#5 (drought tolerance, bar marker)"
+    host_reference: db/Gmax_v4.0.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/soybean/SRR11585834_1.fastq.gz
+      r2: data/soybean/SRR11585834_2.fastq.gz
+
+  soybean_UGT72E3:
+    name: "Soybean Kwangan 35S-UGT72E3/E2-#7 (syringin, bar marker)"
+    host_reference: db/Gmax_v4.0.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/soybean/SRR11585833_1.fastq.gz
+      r2: data/soybean/SRR11585833_2.fastq.gz
+
+  # Coverage sensitivity tests (corn ND207 subsampled)
+  corn_ND207_5x:
+    name: "Corn ND207 subsampled to ~5x"
+    host_reference: db/Zm_B73_v5.fa
+    construct_reference: db/gmo_corn_combined_db.fa
+    reads:
+      r1: data/corn_ND207/subsampled/ND207_5x_R1.fq.gz
+      r2: data/corn_ND207/subsampled/ND207_5x_R2.fq.gz
+
+  corn_ND207_3x:
+    name: "Corn ND207 subsampled to ~3x"
+    host_reference: db/Zm_B73_v5.fa
+    construct_reference: db/gmo_corn_combined_db.fa
+    reads:
+      r1: data/corn_ND207/subsampled/ND207_3x_R1.fq.gz
+      r2: data/corn_ND207/subsampled/ND207_3x_R2.fq.gz
+
+  corn_ND207_1x:
+    name: "Corn ND207 subsampled to ~1x"
+    host_reference: db/Zm_B73_v5.fa
+    construct_reference: db/gmo_corn_combined_db.fa
+    reads:
+      r1: data/corn_ND207/subsampled/ND207_1x_R1.fq.gz
+      r2: data/corn_ND207/subsampled/ND207_1x_R2.fq.gz
+
 # Output directory
 output_dir: results

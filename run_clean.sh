@@ -8,8 +8,9 @@
 #SBATCH --output=results/clean_rerun_%j.log
 
 # RedGene Pipeline - Clean Re-run Script
-# Runs the full pipeline on rice G281 + tomato samples from scratch.
-# Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5h per sample).
+# Runs the full pipeline on all validated species from scratch:
+#   Rice G281, Tomato Micro-Tom (WT + 3 Cas9), Cucumber thaumatin (3 lines), Corn ND207
+# Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5-7h per sample).
 #
 # Usage:
 #   sbatch run_clean.sh              # submit to SLURM
@@ -113,10 +114,32 @@ python scripts/viz/plot_junction_gene.py \
 echo "Visualizations complete at $(date)"
 
 # ---------------------------------------------------------------------------
-# Phase 5: MultiQC Report
+# Phase 5: Cucumber thaumatin lines (steps 1-6)
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Phase 5: MultiQC Report ==="
+echo "=== Phase 5: Cucumber Thaumatin Lines ==="
+for SAMPLE in cucumber_line212 cucumber_line224 cucumber_line225; do
+    echo "--- $SAMPLE ---"
+    python run_pipeline.py --sample $SAMPLE --steps 1-6 --threads $THREADS 2>&1
+    echo "$SAMPLE steps 1-6 complete at $(date)"
+done
+
+# ---------------------------------------------------------------------------
+# Phase 6: Corn ND207 (steps 1-6)
+# Note: Step 4 (SPAdes) takes ~2h due to 2.25M extracted reads
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Phase 6: Corn ND207 ==="
+SAMPLE=corn_ND207
+
+python run_pipeline.py --sample $SAMPLE --steps 1-6 --threads $THREADS 2>&1
+echo "Corn ND207 steps 1-6 complete at $(date)"
+
+# ---------------------------------------------------------------------------
+# Phase 7: MultiQC Report
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Phase 7: MultiQC Report ==="
 python scripts/s11_multiqc.py --outdir $OUTDIR --title "RedGene Pipeline Report" 2>&1
 echo "MultiQC report complete at $(date)"
 

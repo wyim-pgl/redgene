@@ -105,8 +105,11 @@ Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5-7h per sample). 
 | `Osativa_323_v7.0.gene_exons.gff3` | MSU/RGAP v7.0 annotation (55,986 genes) |
 | `SLM_r2.0.pmol.fasta` | Tomato Micro-Tom genome (Kazusa, 833 Mbp) |
 | `SLM_r2.0.gff3.gz` | NCBI Gnomon annotation (chr names remapped to SLM_r2.0ch\*) |
-| `element_db/gmo_combined_db.fa` | 131 GMO elements from EUginius |
-| `corn_border_db.fa` | 62 LB/RB border sequences for 31 corn events (Table S1, Sci Rep 2025, DOI:10.1038/s41598-025-18593-8) |
+| `CucSat_B10v3.fa` | Cucumber B10v3 genome (GCA_001483825.3, 332 Mbp, 8035 contigs) |
+| `Zm_B73_v5.fa` | Corn B73 RefGen_v5 (GCF_902167145.1, 2.18 Gbp, 10 chr) |
+| `Gmax_v4.0.fa` | Soybean Wm82.a4.v1 (GCF_000004515.6, 1.1 Gbp) |
+| `element_db/gmo_combined_db.fa` | 131 GMO elements from EUginius (incl. thaumatin II) |
+| `gmo_corn_combined_db.fa` | 192 seqs: 130 EUginius + 62 corn LB/RB borders (Sci Rep 2025) |
 
 ## Coding Conventions
 
@@ -120,7 +123,9 @@ Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5-7h per sample). 
 
 - **MAPQ=60 false positives**: In plant genomes, unique mapping to a host-derived promoter region is still a false positive. Only WT-based filtering (s03b) reliably removes these.
 - **Assembly stochasticity**: SPAdes contig extension direction affects junction detection. Contigs extending toward host-derived elements (TA29, pinII) produce overlapping alignments → false positive. Extending toward bacterial-origin elements (nptII, nos) → clean junction.
-- **Coverage requirements**: ≥15x for rice (374 Mbp), ≥10x for tomato (833 Mbp) for reliable junction detection.
+- **Coverage requirements**: ≥10x for cucumber (332 Mbp), ≥15x for rice (374 Mbp), ≥10x for tomato (833 Mbp). At 5x only partial detection (one junction side). At 3x complete failure.
+- **Identity threshold for element_db**: Default `--min-identity 0.90` silently filters genuine junctions when using element_db (minimap2 alignment identity ~0.84). `run_pipeline.py` auto-detects element_db/combined_db and uses 0.70.
+- **Maize-specific false positives**: When host IS maize, endogenous genes (Ubi1, zSSIIb, wx012) match construct elements. Border sequences contain ~100bp native flanking → 2.25M extracted reads vs 6K for rice.
 - **BWA threading**: Earlier versions used `-t 2` due to futex deadlock on Pronghorn GPFS. Now uses `-t 16` successfully.
 
 ## SLURM Settings

@@ -192,12 +192,16 @@ def build_step_cmd(
                 "--threads", str(threads),
                 "--sample-name", sname]
     elif step == "6":
-        return [sys.executable, script,
+        cmd = [sys.executable, script,
                 "--host-paf", str(s05 / f"{sname}_contigs_to_host.paf"),
                 "--construct-paf", str(s05 / f"{sname}_contigs_to_construct.paf"),
                 "--contigs", str(s04 / "contigs.fasta"),
                 "--outdir", str(outdir),
                 "--sample-name", sname]
+        # Lower identity threshold for element_db (fragmented references)
+        if "element_db" in construct_ref or "_combined_db" in construct_ref:
+            cmd.extend(["--min-identity", "0.70"])
+        return cmd
     elif step == "7":
         return [sys.executable, script,
                 "--r1", str(s01 / f"{sname}_R1.fq.gz"),
