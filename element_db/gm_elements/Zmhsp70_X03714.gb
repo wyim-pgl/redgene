@@ -1,0 +1,66 @@
+LOCUS       X03714                   858 bp    DNA     linear   PLN 24-JUL-2016
+DEFINITION  Maize gene for heat shock protein 70 exon 1 (clone 9508).
+ACCESSION   X03714
+VERSION     X03714.1
+KEYWORDS    heat shock protein; heat shock protein 70.
+SOURCE      Zea mays
+  ORGANISM  Zea mays
+            Eukaryota; Viridiplantae; Streptophyta; Embryophyta; Tracheophyta;
+            Spermatophyta; Magnoliopsida; Liliopsida; Poales; Poaceae; PACMAD
+            clade; Panicoideae; Andropogonodae; Andropogoneae; Tripsacinae;
+            Zea.
+REFERENCE   1  (bases 1 to 858)
+  AUTHORS   Rochester,D.E., Winer,J.A. and Shah,D.M.
+  TITLE     The structure and expression of maize genes encoding the major heat
+            shock protein, hsp70
+  JOURNAL   EMBO J. 5 (3), 451-458 (1986)
+   PUBMED   16453670
+COMMENT     Data kindly reviewed (05-AUG-1986) by D. Rochester.
+FEATURES             Location/Qualifiers
+     source          1..858
+                     /organism="Zea mays"
+                     /mol_type="genomic DNA"
+                     /strain="Hybrid line 3780A"
+                     /db_xref="taxon:4577"
+     misc_feature    55..70
+                     /note="heat shock promoter consensus element"
+     misc_feature    101..115
+                     /note="heat shock promoter consensus element"
+     regulatory      130..136
+                     /regulatory_class="promoter"
+                     /note="put. TATA box"
+     precursor_RNA   164..>858
+                     /note="primary transcript"
+     exon            164..>481
+                     /number=1
+     CDS             271..>481
+                     /note="unnamed protein product; hsp 70 (aa 1-70) (481 is
+                     1st base in codon)"
+                     /codon_start=1
+                     /protein_id="CAA27340.1"
+                     /db_xref="GOA:P11143"
+                     /db_xref="InterPro:IPR001023"
+                     /db_xref="InterPro:IPR013126"
+                     /db_xref="InterPro:IPR018181"
+                     /db_xref="UniProtKB/Swiss-Prot:P11143"
+                     /translation="MAKGEGPAIGIDLETTYSCVGVWQHDRVEIIANDXGNRTTPSYV
+                     AFTDTERLIGDAAKNXVAMNPTNTVF"
+     intron          482..>858
+                     /note="intron"
+ORIGIN      
+        1 gtcgaaacac ggtttcctct aactcattcg gttcaaccaa caccctccac tcctccagag
+       61 ccttccagaa ccccaatcta acggccaagg tcgccccgtg cccgaatctt ctggacgcgc
+      121 catctcctca ataaaacctc ctcggctcct ccagtgtccc tcgtctctcg cctgagaaaa
+      181 aaaatccacg aaccaatttc tcagcaacca gcagcacgac ctgtgagggt tcgaaggaag
+      241 tagcagtgtt ttttgttcct agaggaagag atggcaaagg gggaggggcc ggcgatcggg
+      301 atcgacctng aaacaacgta ctcgtgtgtc ggcgtgtggc agcacgaccg cgtcgagatc
+      361 atcgccaacg accangggaa ccgcaccacg ccgtcctacg ttgccttcac cgacaccgag
+      421 cggctcatcg gcgatgccgc caagaacnag gtcgccatga accccaccaa caccgtattt
+      481 ggtacgtgtc agatgacatc ctcttcactt ctgtttcctt tcatttcact gaacttagaa
+      541 tgcccaatta gcagtctagc actaaggttg tttgattcca tgctgcggga ttttccacta
+      601 ataatcgatg atgcagagtt ttacttaatc atttgctgca tagtttcaca ttgatgtcga
+      661 tgcttcagat gcttgtagat ctatcgaaat ttgtttcagt gagcgacttc tgctctgttt
+      721 ctatggcaac atgagcagca ctaaacttgg agatctgatt tgttcagtgt gagcagtagc
+      781 tgcttgttta tgttctagat ttgagtagga tcggatagga ttaacgatta ggtggatgcg
+      841 agctgatttg tggaattc
+//

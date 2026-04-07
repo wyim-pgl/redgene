@@ -1,0 +1,44 @@
+LOCUS       SUSTRNA                  911 bp    DNA     linear   INV 15-JUN-1993
+DEFINITION  Sea urchin ISTU4 Tsp transposable element.
+ACCESSION   M11594
+VERSION     M11594.1
+KEYWORDS    transposon.
+SOURCE      Strongylocentrotus purpuratus (purple sea urchin)
+  ORGANISM  Strongylocentrotus purpuratus
+            Eukaryota; Metazoa; Echinodermata; Eleutherozoa; Echinozoa;
+            Echinoidea; Euechinoidea; Echinacea; Camarodonta; Echinidea;
+            Strongylocentrotidae; Strongylocentrotus.
+REFERENCE   1  (bases 1 to 911)
+  AUTHORS   Cohen,J.B., Hoffman-Liebermann,B. and Kedes,L.
+  TITLE     Structure and unusual characteristics of a new family of
+            transposable elements in the sea urchin Strongylocentrotus
+            purpuratus
+  JOURNAL   Mol. Cell. Biol. 5 (10), 2804-2813 (1985)
+   PUBMED   3016515
+COMMENT     Original source text: Strongylocentrotus purpuratus DNA, transposon
+            ISTU4.
+FEATURES             Location/Qualifiers
+     source          1..911
+                     /organism="Strongylocentrotus purpuratus"
+                     /mol_type="genomic DNA"
+                     /db_xref="taxon:7668"
+     misc_feature    31..881
+                     /note="ISTU4 Tsp transposon"
+ORIGIN      
+        1 cactaaacac tcattacatg tcatgggaag tttttatgcc tccgttacga agtagccgga
+       61 ggcattatgt tttcgggttg tccgtccgtc cgtacgtccg tacgtccgta cgtacgtacg
+      121 tctgtacgta cgtacgtccc gttctcgtga tcgcgttatc tgaagaactg gttgatggat
+      181 tcctgccaaa ctttggtcat gtatgtatct tgtagagcca atgaactgat tagattttgg
+      241 ggtcacgagg tcaaaggtca aaggtcacag ggctcattat gtatgcaaaa cgagctcgtg
+      301 atcgcgttat ctgaagaacc gattgatgga ttgctgccaa acttaggtca tgtatgttac
+      361 ttgcaaagcc gaaaaactga ttagattttg aggtcacaag gtcaaagatc aaaggccaca
+      421 gggctcatta tgtatgcaaa atgagcttgt gatcgcgtta tctgaagaac cgattgatgg
+      481 attgctgcca aacttaggtc atgtatgtta cttgcagagc cgatgaactg attagatgta
+      541 ggggtcacaa ggtcaaaggt caaaggccac agggcacatt atgtatgcaa aaacagctcg
+      601 tgatcgcgtt atctcaagaa ccgattgatg gattcctgcc aacttaggtc atgtatgttt
+      661 cttgcagagc caatgaactg agtagattct tggttcataa ggtcaaaggt catgggctca
+      721 ttatgtatgc aaaaatagct tgtaatcaca atattctgag aacctgttaa tggattacaa
+      781 ttgaacttga attcgaaaaa tttcttctgt tttggtttgt aaaattgctc tatgacggag
+      841 gcatcatttt cgactgcgcg cagtcgaagt tccatctagt ttttttttaa agtagagcag
+      901 caagccacat t
+//

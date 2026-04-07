@@ -1,0 +1,71 @@
+LOCUS       ECOHAG                  1667 bp    DNA     linear   BCT 26-APR-1993
+DEFINITION  E.coli hag gene encoding flagellin, complete cds.
+ACCESSION   M14358
+VERSION     M14358.1
+KEYWORDS    flagellin; hag gene.
+SOURCE      Escherichia coli
+  ORGANISM  Escherichia coli
+            Bacteria; Pseudomonadati; Pseudomonadota; Gammaproteobacteria;
+            Enterobacterales; Enterobacteriaceae; Escherichia.
+REFERENCE   1  (bases 1 to 1667)
+  AUTHORS   Kuwajima,G., Asaka,J., Fujiwara,T., Fujiwara,T., Node,K. and
+            Kondo,E.
+  TITLE     Nucleotide sequence of the hag gene encoding flagellin of
+            Escherichia coli
+  JOURNAL   J. Bacteriol. 168 (3), 1479-1483 (1986)
+   PUBMED   3536885
+COMMENT     Original source text: E.coli K12 DNA, clone lambda-pflaH-2.
+            Draft entry and computer-readable sequence for [1] kindly provided
+            by G.Kuwajima, 02-FEB-1987.
+FEATURES             Location/Qualifiers
+     source          1..1667
+                     /organism="Escherichia coli"
+                     /mol_type="genomic DNA"
+                     /db_xref="taxon:562"
+     gene            70..1566
+                     /gene="hag"
+     CDS             70..1566
+                     /gene="hag"
+                     /note="flagellin"
+                     /codon_start=1
+                     /transl_table=11
+                     /protein_id="AAA23950.1"
+                     /translation="MAQVINTNSLSLITQNNINKNQSALSSSIERLSSGLRINSAKDD
+                     AAGQAIANRFTSNIKGLTQAARNANDGISVAQTTEGALSEINNNLQRVRELTVQATTG
+                     TNSESDLSSIQDEIKSRLDEIDRVSGQTQFNGVNVLAKNGSMKIQVGANDNQTITIDL
+                     KQIDAKTLGLDGFSVKNNDTVTTSAPVTAFGATTTNNIKLTGITLSTEAATDTGGTNP
+                     ASIEGVYTDNGNDYYAKITGGDNDGKYYAVTVANDGTVTMATGATANATVTDANTTKA
+                     TTITSGGTPVQIDNTAGSATANLGAVSLVKLQDSKGNDTDTYALKDTNGNLYAADVNE
+                     TTGAVSVKTITYTDSSGAASSPTAVKLGGDDGKTEVVDIDGKTYDSADLNGGNLQTGL
+                     TAGGEALTAVANGKTTDPLKALDDAIASVDKFRSSLGAVQNRLDSAVTNLNNTTTNLS
+                     EAQSRIQDADYATEVSNMSKAQIIQQAGNSVLAKANQVPQQVLSLLQG"
+ORIGIN      104 bp upstream of Sau3A site.
+        1 gacggcgatt gagccgacgg gtggaaaccc aatacgtaat caacgacttg caatatagga
+       61 taacgaatca tggcacaagt cattaatacc aacagcctct cgctgatcac tcaaaataat
+      121 atcaacaaga accagtctgc gctgtcgagt tctatcgagc gtctgtcttc tggcttgcgt
+      181 attaacagcg cgaaggatga cgcagcgggt caggcgattg ctaaccgttt cacctctaac
+      241 attaaaggcc tgactcaggc ggcccgtaac gccaacgacg gtatctccgt tgcgcagacc
+      301 accgaaggcg cgctgtccga aatcaacaac aacttacagc gtgtgcgtga actgacggta
+      361 caggccacta ccggtactaa ctctgagtct gatctgtctt ctatccagga cgaaattaaa
+      421 tcccgtctgg atgaaattga ccgcgtatct ggtcagaccc agttcaacgg cgtgaacgtg
+      481 ctggcaaaaa atggctccat gaaaatccag gttggcgcaa atgataacca gactatcact
+      541 atcgatctga agcagattga tgctaaaact cttggccttg atggttttag cgttaaaaat
+      601 aacgatacag ttaccactag tgctccagta actgcttttg gtgctaccac cacaaacaat
+      661 attaaactta ctggaattac cctttctacg gaagcagcca ctgatactgg cggaactaac
+      721 ccagcttcaa ttgagggtgt ttatactgat aatggtaatg attactatgc gaaaatcacc
+      781 ggtggtgata acgatgggaa gtattacgca gtaacagttg ctaatgatgg tacagtgaca
+      841 atggcgactg gagcaacggc aaatgcaact gtaactgatg caaatactac taaagctaca
+      901 actatcactt caggcggtac acctgttcag attgataata ctgcaggttc cgcaactgcc
+      961 aaccttggtg ctgttagctt agtaaaactg caggattcca agggtaatga taccgataca
+     1021 tatgcgctta aagatacaaa tggcaatctt tacgctgcgg atgtgaatga aactactggt
+     1081 gctgtttctg ttaaaactat tacctatact gactcttccg gtgccgccag ttctccaacc
+     1141 gcggtcaaac tgggcggaga tgatggcaaa acagaagtgg tcgatattga tggtaaaaca
+     1201 tacgattctg ccgatttaaa tggcggtaat ctgcaaacag gtttgactgc tggtggtgag
+     1261 gctctgactg ctgttgcaaa tggtaaaacc acggatccgc tgaaagcgct ggacgatgct
+     1321 atcgcatctg tagacaaatt ccgttcttcc ctcggtgcgg tgcaaaaccg tctggattcc
+     1381 gcggttacca acctgaacaa caccactacc aacctgtctg aagcgcagtc ccgtattcag
+     1441 gacgccgact atgcgaccga agtgtccaat atgtcgaaag cgcagatcat ccagcaggcc
+     1501 ggtaactccg tgttggcaaa agctaaccag gtaccgcagc aggttctgtc tctgctgcag
+     1561 ggttaatcgt tgtaacctga ttaactgaga ctgacggcaa cgccaaattg cctgatgcgc
+     1621 tgcgcttatc aggcctacaa gttgaattgc aatttattga atttgca
+//

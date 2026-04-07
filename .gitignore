@@ -6,8 +6,11 @@ db/
 !db/corn_border_db.fa.fai
 !db/gmo_corn_combined_db.fa
 !db/gmo_corn_combined_db.fa.fai
+!db/gmo_all_combined_db.fa
+!db/gmo_all_combined_db.fa.fai
 element_db/*.fa
 element_db/*.fa.*
+!element_db/gm_new_elements.fa
 results/
 *.bam
 *.bam.bai

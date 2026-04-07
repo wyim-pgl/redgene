@@ -1,0 +1,86 @@
+LOCUS       PETAROA                 1944 bp    mRNA    linear   PLN 27-APR-1993
+DEFINITION  P.hybrida 5-enolpyruvylshikimate 3-phosphate synthase mRNA,
+            complete cds.
+ACCESSION   M21084 J03227
+VERSION     M21084.1
+KEYWORDS    5-enolpyruvylshikimate-3-phosphate synthase.
+SOURCE      Petunia x hybrida
+  ORGANISM  Petunia x hybrida
+            Eukaryota; Viridiplantae; Streptophyta; Embryophyta; Tracheophyta;
+            Spermatophyta; Magnoliopsida; eudicotyledons; Gunneridae;
+            Pentapetalae; asterids; lamiids; Solanales; Solanaceae;
+            Petunioideae; Petunia.
+REFERENCE   1  (bases 1 to 1944)
+  AUTHORS   Gasser,C.S., Winter,J.A., Hironaka,C.M. and Shah,D.M.
+  TITLE     Structure, expression, and evolution of the
+            5-enolpyruvylshikimate-3-phosphate synthase genes of petunia and
+            tomato
+  JOURNAL   J. Biol. Chem. 263 (9), 4280-4287 (1988)
+   PUBMED   3346248
+COMMENT     Original source text: P.hybrida (strain Mitchell dipd)
+            glycophosate-resistant cell line MP4-G, cDNA to mRNA, clones
+            pMON[9531,9556].
+            Draft entry and computer-readable sequence for [1] kindly provided
+            by C.Grasser, 13-JUN-1988.
+FEATURES             Location/Qualifiers
+     source          1..1944
+                     /organism="Petunia x hybrida"
+                     /mol_type="mRNA"
+                     /db_xref="taxon:4102"
+     mRNA            <1..1944
+                     /product="AroA mRNA"
+     CDS             28..1578
+                     /note="5-enolpyruvylshikimate-3-phosphate synthase
+                     precursor"
+                     /codon_start=1
+                     /protein_id="AAA33699.1"
+                     /translation="MAQINNMAQGIQTLNPNSNFHKPQVPKSSSFLVFGSKKLKNSAN
+                     SMLVLKKDSIFMQKFCSFRISASVATAQKPSEIVLQPIKEISGTVKLPGSKSLSNRIL
+                     LLAALSEGTTVVDNLLSSDDIHYMLGALKTLGLHVEEDSANQRAVVEGCGGLFPVGKE
+                     SKEEIQLFLGNAGTAMRPLTAAVTVAGGNSRYVLDGVPRMRERPISDLVDGLKQLGAE
+                     VDCFLGTKCPPVRIVSKGGLPGGKVKLSGSISSQYLTALLMAAPLALGDVEIEIIDKL
+                     ISVPYVEMTLKLMERFGISVEHSSSWDRFFVRGGQKYKSPGKAFVEGDASSASYFLAG
+                     AAVTGGTITVEGCGTNSLQGDVKFAEVLEKMGAEVTWTENSVTVKGPPRSSSGRKHLR
+                     AIDVNMNKMPDVAMTLAVVALYADGPTAIRDVASWRVKETERMIAICTELRKLGATVE
+                     EGPDYCIITPPEKLNVTDIDTYDDHRMAMAFSLAACADVPVTINDPGCTRKTFPNYFD
+                     VLQQYSKH"
+     sig_peptide     28..243
+                     /note="5-enolpyruvylshikimate-3-phosphate synthase signal
+                     peptide"
+     mat_peptide     244..1575
+                     /product="5-enolpyruvylshikimate-3-phosphate synthase"
+ORIGIN      1 bp upstream of EcoRI site.
+        1 gaattccctc aatctttact ttcaagaatg gcacaaatta acaacatggc tcaagggata
+       61 caaaccctta atcccaattc caatttccat aaaccccaag ttcctaaatc ttcaagtttt
+      121 cttgtttttg gatctaaaaa actgaaaaat tcagcaaatt ctatgttggt tttgaaaaaa
+      181 gattcaattt ttatgcaaaa gttttgttcc tttaggattt cagcatcagt ggctacagca
+      241 cagaagcctt ctgagatagt gttgcaaccc attaaagaga tttcaggcac tgttaaattg
+      301 cctggctcta aatcattatc taatagaatt ctccttcttg ctgccttatc tgaaggaaca
+      361 actgtggttg acaatttact aagtagtgat gatattcatt acatgcttgg tgccttgaaa
+      421 acacttggac tgcatgtaga agaagatagt gcaaaccaac gagctgttgt tgaaggttgt
+      481 ggtgggcttt tccctgttgg taaagagtcc aaggaagaaa ttcaactgtt ccttggaaat
+      541 gcaggaacag caatgcggcc actaacagca gcagttactg tagctggtgg aaattcaagg
+      601 tatgtacttg atggagttcc tcgaatgaga gagagaccaa ttagtgattt ggttgatggt
+      661 cttaaacagc ttggtgcaga ggttgattgt ttccttggta cgaaatgtcc tcctgttcga
+      721 attgtcagca agggaggtct tcctggaggg aaggtcaagc tctctggatc cattagcagc
+      781 caatacttga ctgctctgct tatggctgct ccactggctt taggagatgt ggagattgaa
+      841 atcattgaca aactaattag tgtaccttat gtcgagatga cattgaagtt gatggagcga
+      901 tttggtattt ctgtggagca cagtagtagc tgggacaggt tctttgtccg aggaggtcag
+      961 aaatacaagt ctcctggaaa agcttttgtc gaaggtgatg cttcaagtgc tagctacttc
+     1021 ttggctggtg cagcagtcac aggtggaact atcactgttg aaggttgtgg gacaaacagt
+     1081 ttacaggggg atgtcaaatt tgctgaggta cttgaaaaaa tgggagctga agttacgtgg
+     1141 acagagaaca gtgtcacagt caaaggacct ccaaggagtt cttctgggag gaagcatttg
+     1201 cgtgccattg atgtgaacat gaataaaatg cctgatgttg ccatgacact tgctgttgtt
+     1261 gcactttatg ctgatggtcc cacagctata agagatgttg ctagctggag agtcaaggaa
+     1321 actgagcgca tgatcgccat atgcacagaa cttaggaagt taggagcaac cgttgaagaa
+     1381 ggaccagact actgcataat caccccaccg gagaaactaa atgtgaccga tattgataca
+     1441 tacgatgatc acaggatggc catggctttt tctcttgctg cttgtgcaga tgttcccgtc
+     1501 accatcaatg accctggctg cacgcggaaa accttcccta actactttga tgtacttcag
+     1561 cagtactcca agcattgaac cgcttcccta tattgcagaa tgtaagtaag aatatgtgaa
+     1621 gagtttagtt cttgtacaag acaggctacg actgcctggt atcagaacca caatgggttc
+     1681 catttcagtt cagaagggca ttccaaggct tcgaactctt tacttatttg cgagtgatga
+     1741 aatgtatttg ttagagttga gcttcttttt gtctttaagg aatgtacact aatagagtta
+     1801 agaattacta gtatgggcca gtgtaaggag tactattact ctttgcttat tttattgatt
+     1861 gagttttgtc aaggatctgg ctttgtcaag aattactggt taattttatt gacaatctca
+     1921 tgtgtctaaa tgaaattgtt tgat
+//

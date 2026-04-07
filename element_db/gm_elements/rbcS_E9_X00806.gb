@@ -1,0 +1,90 @@
+LOCUS       X00806                  2351 bp    DNA     linear   PLN 14-NOV-2006
+DEFINITION  Pea gene for rib-1,5-bisphospate carboxylase (rbcS) small subunit
+            (EC 4.1.1.39).
+ACCESSION   X00806
+VERSION     X00806.1
+KEYWORDS    ribulose bisphosphate carboxylase; signal peptide.
+SOURCE      Lathyrus oleraceus (garden pea)
+  ORGANISM  Lathyrus oleraceus
+            Eukaryota; Viridiplantae; Streptophyta; Embryophyta; Tracheophyta;
+            Spermatophyta; Magnoliopsida; eudicotyledons; Gunneridae;
+            Pentapetalae; rosids; fabids; Fabales; Fabaceae; Papilionoideae; 50
+            kb inversion clade; NPAAA clade; Hologalegina; IRL clade; Fabeae;
+            Lathyrus.
+REFERENCE   1  (bases 1 to 2351)
+  AUTHORS   Coruzzi,G., Broglie,R., Edwards,C. and Chua,N.H.
+  TITLE     Tissue-specific and light-regulated expression of a pea nuclear
+            gene encoding the small subunit of ribulose-1,5-bisphosphate
+            carboxylase
+  JOURNAL   EMBO J. 3 (8), 1671-1679 (1984)
+   PUBMED   6479146
+COMMENT     Data kindly reviewed (09-MAY-1985) by G. Coruzzi.
+FEATURES             Location/Qualifiers
+     source          1..2351
+                     /organism="Lathyrus oleraceus"
+                     /mol_type="genomic DNA"
+                     /db_xref="taxon:3888"
+     regulatory      1021..1026
+                     /regulatory_class="minus_35_signal"
+     gene            order(1086..1262,1342..1476,1563..1793)
+                     /gene="rbcS"
+     CDS             join(1086..1262,1342..1476,1563..1793)
+                     /gene="rbcS"
+                     /codon_start=1
+                     /product="ribulose bisphosphate carboxylase"
+                     /protein_id="CAA25390.1"
+                     /db_xref="GOA:P00869"
+                     /db_xref="InterPro:IPR000894"
+                     /db_xref="UniProtKB/Swiss-Prot:P00869"
+                     /translation="MASMISSSAVTTVSRASRGQSAAVAPFGGLKSMTGFPVKKVNTD
+                     ITSITSNGGRVKCMQVWPPIGKKKFETLSYLPPLTRDQLLKEVEYLLRKGWVPCLEFE
+                     LEKGFVYREHNKSPGYYDGRYWTMWKLPMFGTTDASQVLKELDEVVAAYPQAFVRIIG
+                     FDNVRQVQCISFIAHTPESY"
+     sig_peptide     1086..1256
+                     /gene="rbcS"
+     intron          1263..1341
+                     /number=1
+     intron          1477..1562
+                     /number=2
+ORIGIN      
+        1 gtacttcaac attgactatt actagtttta caactcagac tagggagcat gtccaaccac
+       61 tagaaggtct ataataggat ttaccttttt ccttggaagc aatttaatca actaaaaatc
+      121 aaagaagcaa aatgtagtgt ctagatcttc atcagaagca aagtatagag ccctaacaaa
+      181 cacctcatgt gaggcacgat ggttgctata cttgcttcag gatctccatg tttcccacac
+      241 acagtctgtc actatctttc gtgacaatat gagttattcc acgaaagaac aaagcacatt
+      301 gaaattgatt gtcacctcgt tcgtgacaaa ttgcaagcca aactcataca tttgatgccc
+      361 ataaattctt ataaccaggt tgcacacctc ttcatcaaaa ctcttcatct tgatcctttc
+      421 ttctctcttg ttcataaact atgaattatt aactttcatt ctagtttgcg gggactgtta
+      481 caacttaatg tatttttaat tatttgtatt ctcttaattt tcttttttaa tttgtttgtt
+      541 agatagttaa gatatttggg ctaatctatt agagatagtt tctctaacaa acttgtaact
+      601 ttgggtctat attagctaat gatccatctt atattttttc aaatgaatca ttaataaaac
+      661 tttccacttt tatttaattt tttcaattca gtttcatcat caaagcaaat gtttccctgc
+      721 catctatctg tcaacactaa catcgaatgt acttatctca ttagtttaaa ttattgtttg
+      781 atcatgttta atccttatac tgttgttagt tttttcagtt agcttagtgg gcatcttaca
+      841 cgtggcatta ttatcctatt ggtggctaat gataaggtta gcacacaaaa cttttcaatc
+      901 ttgtgtggtt aatatgactg caaagtttat cattttcaca atccaacaaa ctggttctag
+      961 gcagtggcca actaccacaa ttttaagacc ataatattgg aaatagaaaa atcaatacat
+     1021 tatataaagc aagttttagt acaagctttg caattcaacc acaagaacta agaaagtcag
+     1081 aaaaaatggc ttctatgata tcctcttccg ctgtgacaac agtcagccgt gcctctaggg
+     1141 ggcaatccgc cgcagtggct ccattcggcg gcctcaaatc catgactgga ttcccagtga
+     1201 agaaggtcaa cactgacatt acttccatta caagcaatgg tggaagagta aagtgcatgc
+     1261 aggtgacaga aacatataca tatatatagt tgaatatcag taatgattca agtttgttaa
+     1321 ccgttattgt tgaatattta ggtgtggcct ccaattggaa agaagaagtt tgagactctt
+     1381 tcctatttgc caccattgac cagagatcag ttgttgaaag aagttgaata ccttctcaga
+     1441 aagggatggg ttccttgctt ggaatttgag ttggaggttt catattcatt ccttttttca
+     1501 atgattatat aaatactttt gtttgaaacc ctaatgagtt gattttgact gtttggttgc
+     1561 agaaaggatt tgtgtaccgt gagcacaaca agtcaccagg atactatgat ggaagatact
+     1621 ggacaatgtg gaagcttcct atgtttggta ccactgatgc ttctcaagtc ttgaaggagc
+     1681 ttgatgaagt tgttgccgct tacccccaag ctttcgttcg tatcatcggt ttcgacaacg
+     1741 ttcgtcaagt tcaatgcatc agtttcattg cgcacacacc agaatcctac tgagttcgag
+     1801 tattatggca ttgggaaaac tgtttttctt gtaccatttg ttgtgcttgt aatttactgt
+     1861 gttttttatt cggttttcgc tatcgaactg tgaaatggaa atggatggag aagagttaat
+     1921 gaatgatatg gtccttttgt tcattctcaa attaatatta tttgtttttt ctcttatttg
+     1981 ttgtgtgttg aatttgaaat tataagagat atgcaaacat tttgttttga gtaaaaatgt
+     2041 gtcaaatcgt ggcctctaat gaccgaagtt aatatgagga gtaaaacact tgtagttgta
+     2101 ccattatgct tattcactag gcaacaaata tattttcaga cctagaaaag ctgcaaatgt
+     2161 tactgaatac aagtatgtcc tcttgtgttt tagacattta tgaactttcc tttatgtaat
+     2221 tttccagaat ccttgtcaga ttctaatcat tgctttataa ttatagttat actcatggat
+     2281 ttgtagttga gtatgaaaat attttttaat gcattttatg acttgccaat tgattgacaa
+     2341 catgcatcaa t
+//

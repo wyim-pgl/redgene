@@ -1,0 +1,75 @@
+LOCUS       ECOLEXA                  952 bp    DNA     linear   BCT 15-NOV-2023
+DEFINITION  E.coli lexA gene coding for SOS function regulatory protein.
+ACCESSION   J01643 V00299 V00300
+VERSION     J01643.1
+KEYWORDS    SOS response; lexA gene; regulatory protein; repressor.
+SOURCE      Escherichia coli
+  ORGANISM  Escherichia coli
+            Bacteria; Pseudomonadati; Pseudomonadota; Gammaproteobacteria;
+            Enterobacterales; Enterobacteriaceae; Escherichia.
+REFERENCE   1  (bases 1 to 952)
+  AUTHORS   Horii,T., Ogawa,T. and Ogawa,H.
+  TITLE     Nucleotide sequence of the lexA gene of E. coli
+  JOURNAL   Cell 23 (3), 689-697 (1981)
+   PUBMED   7013987
+REFERENCE   2  (bases 1 to 170)
+  AUTHORS   Miki,T., Ebina,Y., Kishi,F. and Nakazawa,A.
+  TITLE     Organization of the lexA gene of Escherichia coli and nucleotide
+            sequence of the regulatory region
+  JOURNAL   Nucleic Acids Res. 9 (3), 529-543 (1981)
+   PUBMED   6261224
+REFERENCE   3  (bases 1 to 944)
+  AUTHORS   Markham,B.E., Little,J.W. and Mount,D.W.
+  TITLE     Nucleotide sequence of the lexA gene of Escherichia coli K-12
+  JOURNAL   Nucleic Acids Res. 9 (16), 4149-4161 (1981)
+   PUBMED   6272195
+REFERENCE   4  (bases 42 to 113)
+  AUTHORS   Little,J.W., Mount,D.W. and Yanisch-Perron,C.R.
+  TITLE     Purified lexA protein is a repressor of the recA and lexA genes
+  JOURNAL   Proc. Natl. Acad. Sci. U.S.A. 78 (7), 4199-4203 (1981)
+   PUBMED   7027255
+REFERENCE   5  (bases 306 to 407)
+  AUTHORS   Little,J.W. and Hill,S.A.
+  TITLE     Deletions within a hinge region of a specific DNA-binding protein
+  JOURNAL   Proc. Natl. Acad. Sci. U.S.A. 82 (8), 2301-2305 (1985)
+   PUBMED   3887398
+FEATURES             Location/Qualifiers
+     source          1..952
+                     /organism="Escherichia coli"
+                     /mol_type="genomic DNA"
+                     /db_xref="taxon:562"
+     regulatory      55..74
+                     /regulatory_class="other"
+                     /note="operator: lexa protein binding site (SOS box)"
+     regulatory      76..95
+                     /regulatory_class="other"
+                     /note="operator: lexa protein binding site (SOS box)"
+     CDS             102..710
+                     /note="SOS function regulatory protein (lexA)"
+                     /codon_start=1
+                     /transl_table=11
+                     /protein_id="AAA24067.1"
+                     /translation="MKALTARQQEVFDLIRDHISQTGMPPTRAEIAQRLGFRSPNAAE
+                     EHLKALARKGVIEIVSGASRGIRLLQEEEEGLPLVGRVAAGEPLLAQQHIEGHYQVDP
+                     SLFKPNADFLLRVSGMSMKDIGIMDGDLLAVHKTQDVRNGQVVVARIDDEVTVKRLKK
+                     QGNKVELLPENSEFKPIVVDLRQQSFTIEGLAVGVIRNGDWL"
+     variation       355
+                     /note="g in wild-type; a in lexA3"
+ORIGIN      
+        1 gaattcgata aatctctggt ttattgtgca gtttatggtt ccaaaatcgc cttttgctgt
+       61 atatactcac agcataactg tatatacacc cagggggcgg aatgaaagcg ttaacggcca
+      121 ggcaacaaga ggtgtttgat ctcatccgtg atcacatcag ccagacaggt atgccgccga
+      181 cgcgtgcgga aatcgcgcag cgtttggggt tccgttcccc aaacgcggct gaagaacatc
+      241 tgaaggcgct ggcacgcaaa ggcgttattg aaattgtttc cggcgcatca cgcgggattc
+      301 gtctgttgca ggaagaggaa gaagggttgc cgctggtagg tcgtgtggct gccggtgaac
+      361 cacttctggc gcaacagcat attgaaggtc attatcaggt cgatccttcc ttattcaagc
+      421 cgaatgctga tttcctgctg cgcgtcagcg ggatgtcgat gaaagatatc ggcattatgg
+      481 atggtgactt gctggcagtg cataaaactc aggatgtacg taacggtcag gtcgttgtcg
+      541 cacgtattga tgacgaagtt accgttaagc gcctgaaaaa acagggcaat aaagtcgaac
+      601 tgttgccaga aaatagcgag tttaaaccaa ttgtcgttga ccttcgtcag cagagcttca
+      661 ccattgaagg gctggcggtt ggggttattc gcaacggcga ctggctgtaa catatctctg
+      721 agaccgcgat gccgcctggc gtcgcggttt gtttttcatc tctcttcatc aggcttgtct
+      781 gcatggcatt cctcacttca tctgataaag cactctggca tctcgcctta cccatgattt
+      841 tctccaatat caccgttccg ttgctgggac tggtcgatac ggcggtaatt ggtcatcttg
+      901 atagcccggt ttatttgggc ggcgtggcgg ttggcgcaac ggcggaccag ct
+//
