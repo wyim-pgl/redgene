@@ -10,82 +10,44 @@
 | `db/gmo_all_combined_db.fa` | 196 | 196 total = all above combined (USE THIS) |
 | `db/gmo_corn_combined_db.fa` | 192 | 192 = EUginius + corn borders (legacy, corn-specific) |
 
-## Element Categories
+## Summary (196 total sequences, 131 kb)
 
-| Category | Count | Description |
-|----------|-------|-------------|
-| 3272-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| 3272-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| 5307-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| 5307-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| 59122-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| 59122-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| BFL4-2-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| BFL4-2-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| BT506-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| BT506-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| Bt11-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| Bt11-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| CBH351-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| CBH351-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| CM8101-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| CM8101-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DAS-40278-9-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DAS-40278-9-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DBN9501-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DBN9501-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DBN9858-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DBN9858-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DBN9936-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DBN9936-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DP4114-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| DP4114-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| GA21-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| GA21-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| GAB-3-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| GAB-3-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| IE09S034-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| IE09S034-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MIR098-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MIR098-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MIR162-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MIR162-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MIR604-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MIR604-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON810-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON810-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON87411-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON87411-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON87419-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON87419-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON87427-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON87427-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON87460-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON87460-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON88017-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON88017-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON89034-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| MON89034-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| ND207-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| ND207-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| RF125-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| RF125-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| T25-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| T25-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| TC1507-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| TC1507-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| ZZM030-LB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| ZZM030-RB corn_border Table_S1_Sci_Rep_2025_DOI:10.1038/s41598-025-18593-8 | 1 |  |
-| cds | 14 | Coding sequences (CP4-EPSPS, bar, pat, cry1Ab, etc.) |
-| construct-specific | 9 | Full or partial construct sequences (vector backbones) |
-| ctp | 1 | Chloroplast transit peptides (CTP2, CTP4) |
-| element-specific | 52 | EUginius element-specific detection targets |
-| event-specific | 23 | EUginius event-specific detection targets |
-| intron | 1 | Introns (hsp70 intron1) |
-| promoter | 11 | Promoters (P-35S, P-FMV, P-nos, P-Ubi1, P-Act1, etc.) |
-| regulatory | 2 |  |
-| taxon-specific | 17 | EUginius taxon-specific detection targets |
-| terminator | 4 | Terminators (T-nos, T-35S, T-E9, T-ocs, etc.) |
+### By Source
+
+| Source | Sequences | Total bp | File |
+|--------|-----------|----------|------|
+| EUginius DB | 131 | 121,190 bp | `element_db/gmo_combined_db.fa` |
+| Corn border DB (Sci Rep 2025) | 62 | 7,912 bp | `db/corn_border_db.fa` |
+| Custom GenBank additions | 3 | 2,037 bp | `element_db/gm_new_elements.fa` |
+| **Total (unified)** | **196** | **131,139 bp** | **`db/gmo_all_combined_db.fa`** |
+
+### By Category (EUginius 131 seqs)
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| Promoters | 10 | P-35S-CaMV, P-e35S, P-FMV, P-nos, P-ocs, P-Ubi1, P-Act1, P-TA29, P-SSuAra, P-CsVMV |
+| Terminators | 4 | T-nos, T-35S-CaMV, T-E9, T-35S-pCAMBIA |
+| Coding sequences | 14 | nptII, bar, pat, hpt, aadA, cp4-epsps, cry1Ab/Ac/F, cry3Bb1, gus, barnase, barstar, thaumatin |
+| Regulatory | 2 | LB-TDNA, RB-TDNA (border repeats) |
+| Construct-specific | 9 | Junction/amplicon targets spanning multiple GM events |
+| Element-specific | 52 | qPCR amplicon targets for individual elements |
+| Event-specific | 23 | Event-junction qPCR targets (KMD1, DAS1507, MON87419, etc.) |
+| Taxon-specific | 17 | Species ID targets (rice, corn, wheat, canola, salmon, etc.) |
+
+### Corn Border Sequences (62 seqs)
+
+31 approved corn events, each with LB + RB border sequences (~128 bp each):
+3272, 5307, 59122, BFL4-2, BT506, Bt11, CBH351, CM8101, DAS-40278-9, DBN9501, DBN9858, DBN9936, DP4114, GA21, GAB-3, IE09S034, MIR098, MIR162, MIR604, MON810, MON87411, MON87419, MON87427, MON87460, MON88017, MON89034, ND207, RF125, T25, TC1507, ZZM030
+
+Source: Table S1, Sci Rep 2025 (DOI: 10.1038/s41598-025-18593-8)
+
+### Custom Additions (3 seqs)
+
+| Name | GenBank | Size | Description |
+|------|---------|------|-------------|
+| P-FMV34S-full | X06166:6300-7743 | 1,444 bp | Full-length FMV 34S promoter |
+| CTP4-PhEPSPS | M21084:28-243 | 216 bp | Petunia EPSPS chloroplast transit peptide |
+| I-hsp70-maize | X03714:482-858 | 377 bp | Maize hsp70 intron 1 |
 
 ## Newly Added Elements (2025-04)
 
