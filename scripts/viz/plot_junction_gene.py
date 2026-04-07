@@ -199,27 +199,27 @@ def _element_category(target: str) -> str:
 # Read depth via minimap2
 # ---------------------------------------------------------------------------
 
-def compute_contig_depth(
+def compute_contig_alignment(
     contig_name: str, contig_seq: str,
     reads_r1: Path | None, reads_r2: Path | None,
-) -> np.ndarray | None:
-    """Map extracted reads to a single contig, return per-base depth array."""
+) -> tuple[np.ndarray | None, list[dict] | None]:
+    """Map extracted reads to a single contig.
+    Returns (depth_array, read_list) where read_list contains packed read info
+    for IGV-style pileup rendering."""
     if not reads_r1 or not reads_r1.exists():
-        return None
+        return None, None
 
     try:
         import pysam
     except ImportError:
-        log("pysam not available, skipping depth track")
-        return None
+        log("pysam not available, skipping depth/alignment tracks")
+        return None, None
 
     with tempfile.TemporaryDirectory(prefix="junc_depth_") as tmpdir:
-        # Write single contig FASTA
         ref_fa = os.path.join(tmpdir, "ref.fa")
         with open(ref_fa, "w") as f:
             f.write(f">{contig_name}\n{contig_seq}\n")
 
-        # Map reads with minimap2
         bam_path = os.path.join(tmpdir, "aln.bam")
         reads_args = [str(reads_r1)]
         if reads_r2 and reads_r2.exists():
@@ -232,17 +232,55 @@ def compute_contig_depth(
         result = subprocess.run(cmd, shell=True, capture_output=True, timeout=120)
         if result.returncode != 0:
             log(f"minimap2/samtools failed: {result.stderr.decode()[:200]}")
-            return None
+            return None, None
 
         # Compute depth
         depth = np.zeros(len(contig_seq), dtype=np.int32)
+        reads = []
+
         with pysam.AlignmentFile(bam_path, "rb") as bam:
             for col in bam.pileup(contig_name, min_mapping_quality=0,
                                    min_base_quality=0):
                 if 0 <= col.pos < len(depth):
                     depth[col.pos] = col.nsegments
 
-    return depth
+            # Extract read alignments for pileup display
+            for read in bam.fetch(contig_name):
+                if read.is_unmapped:
+                    continue
+                ref_start = read.reference_start
+                ref_end = read.reference_end or ref_start + read.query_length
+                # Detect soft-clipping
+                cigar = read.cigartuples or []
+                left_clip = cigar[0][1] if cigar and cigar[0][0] == 4 else 0
+                right_clip = cigar[-1][1] if cigar and cigar[-1][0] == 4 else 0
+                reads.append({
+                    "start": ref_start,
+                    "end": ref_end,
+                    "strand": "-" if read.is_reverse else "+",
+                    "mapq": read.mapping_quality,
+                    "left_clip": left_clip,
+                    "right_clip": right_clip,
+                    "is_paired": read.is_proper_pair,
+                })
+
+    return depth, reads
+
+
+def _pack_reads(reads: list[dict], max_rows: int = 40) -> list[list[dict]]:
+    """Pack reads into rows (IGV squished mode). Returns list of rows."""
+    rows: list[list[dict]] = []
+    for read in sorted(reads, key=lambda r: r["start"]):
+        placed = False
+        for row in rows:
+            if read["start"] >= row[-1]["end"] + 2:
+                row.append(read)
+                placed = True
+                break
+        if not placed:
+            if len(rows) < max_rows:
+                rows.append([read])
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -321,8 +359,9 @@ def plot_junction_with_gene(
     construct_hits: list[dict] | None = None,
     host_hits: list[dict] | None = None,
     depth: np.ndarray | None = None,
+    reads: list[dict] | None = None,
 ) -> None:
-    """Create junction diagram: gene track + annotated contig + depth."""
+    """Create junction diagram: gene track + annotated contig + reads + depth."""
 
     host_chr = junction["host_chr"]
     host_start = int(junction["host_start"])
@@ -383,10 +422,24 @@ def plot_junction_with_gene(
     # --- Decide row heights ---
     has_elements = construct_hits and len(construct_hits) > 0
     has_depth = depth is not None and len(depth) > 0
+    has_reads = reads is not None and len(reads) > 0
+
+    # Pack reads for display
+    packed_rows = []
+    if has_reads:
+        packed_rows = _pack_reads(reads, max_rows=30)
 
     n_rows = 3  # gene + contig + legend
     ratios = [2.5, 2.5, 0.3]
-    if has_depth:
+    if has_reads and has_depth:
+        n_rows = 5
+        read_height = min(max(len(packed_rows) * 0.12, 1.0), 3.0)
+        ratios = [2.5, 2.5, read_height, 1.0, 0.3]
+    elif has_reads:
+        n_rows = 4
+        read_height = min(max(len(packed_rows) * 0.12, 1.0), 3.0)
+        ratios = [2.5, 2.5, read_height, 0.3]
+    elif has_depth:
         n_rows = 4
         ratios = [2.5, 2.5, 1.2, 0.3]
 
@@ -689,9 +742,62 @@ def plot_junction_with_gene(
     for spine in ax_contig.spines.values():
         spine.set_visible(False)
 
-    # ==== ROW 3 (optional): Read depth ====
+    # ==== ROW 3 (optional): Read alignment pileup ====
+    if has_reads and packed_rows:
+        row_idx = 2
+        ax_reads = fig.add_subplot(gs[row_idx])
+        ax_reads.set_xlim(win_start, win_end)
+
+        n_packed = len(packed_rows)
+        ax_reads.set_ylim(-0.5, n_packed + 0.5)
+
+        READ_HEIGHT = 0.7
+        CLIP_COLOR = "#FFD600"
+
+        for ri, row in enumerate(packed_rows):
+            y = n_packed - 1 - ri  # top-to-bottom
+            for read in row:
+                rx0 = contig_to_x(read["start"])
+                rx1 = contig_to_x(read["end"])
+                # Color: blue for + strand, teal for - strand
+                rcolor = "#5C6BC0" if read["strand"] == "+" else "#26A69A"
+                if not read["is_paired"]:
+                    rcolor = "#EF5350"  # red for unpaired
+
+                ax_reads.barh(y, rx1 - rx0, left=rx0, height=READ_HEIGHT,
+                              color=rcolor, alpha=0.65, edgecolor="none", zorder=3)
+
+                # Soft-clip indicators (yellow bars at edges)
+                if read["left_clip"] > 3:
+                    clip_w = contig_to_x(read["left_clip"]) - contig_to_x(0)
+                    ax_reads.barh(y, clip_w, left=rx0 - clip_w, height=READ_HEIGHT,
+                                  color=CLIP_COLOR, alpha=0.8, edgecolor="none", zorder=4)
+                if read["right_clip"] > 3:
+                    clip_w = contig_to_x(read["right_clip"]) - contig_to_x(0)
+                    ax_reads.barh(y, clip_w, left=rx1, height=READ_HEIGHT,
+                                  color=CLIP_COLOR, alpha=0.8, edgecolor="none", zorder=4)
+
+        # Junction line
+        ax_reads.axvline(x=junction_pos, color=JUNCTION_COLOR, linewidth=2,
+                         linestyle="-", zorder=20, alpha=0.8)
+
+        ax_reads.set_ylabel("Reads", fontsize=8)
+        ax_reads.set_yticks([])
+        ax_reads.tick_params(labelbottom=False, bottom=False)
+        for spine in ["top", "right", "bottom"]:
+            ax_reads.spines[spine].set_visible(False)
+
+        # Read count annotation
+        ax_reads.text(win_end - win_width * 0.01, n_packed * 0.95,
+                      f"{len(reads)} reads",
+                      ha="right", va="top", fontsize=7, color="#555")
+
+    # ==== ROW 4 (optional): Read depth ====
+    depth_row_idx = 2
+    if has_reads:
+        depth_row_idx = 3
     if has_depth:
-        ax_depth = fig.add_subplot(gs[2])
+        ax_depth = fig.add_subplot(gs[depth_row_idx])
         ax_depth.set_xlim(win_start, win_end)
 
         # Convert contig positions to plot x-coordinates
@@ -755,6 +861,12 @@ def plot_junction_with_gene(
         plt.Line2D([0], [0], color=INTRON_COLOR, linewidth=1.5, label="Intron"),
         plt.Line2D([0], [0], color=JUNCTION_COLOR, linewidth=2.5, label="Junction site"),
     ]
+    if has_reads:
+        legend_patches.extend([
+            mpatches.Patch(color="#5C6BC0", alpha=0.65, label="Read (+)"),
+            mpatches.Patch(color="#26A69A", alpha=0.65, label="Read (-)"),
+            mpatches.Patch(color="#FFD600", alpha=0.8, label="Soft-clip"),
+        ])
     # Add element category colors used
     for cat, color in sorted(used_categories):
         if cat != "host":
@@ -817,19 +929,23 @@ def main() -> None:
         contig_seqs = read_contigs(args.contigs)
         log(f"Loaded {len(contig_seqs)} contigs")
 
-    # Collect unique junction contigs for depth computation
+    # Collect unique junction contigs for depth + read alignment computation
     junction_contigs = set(j["contig_name"] for j in junctions)
     contig_depths = {}
+    contig_reads = {}
 
     if args.reads_r1 and args.reads_r1.exists():
         for cname in junction_contigs:
             if cname in contig_seqs:
-                log(f"  Computing depth for {cname}...")
-                d = compute_contig_depth(cname, contig_seqs[cname],
-                                         args.reads_r1, args.reads_r2)
+                log(f"  Computing alignment for {cname}...")
+                d, r = compute_contig_alignment(cname, contig_seqs[cname],
+                                                args.reads_r1, args.reads_r2)
                 if d is not None:
                     contig_depths[cname] = d
-                    log(f"    mean={np.mean(d):.0f}x, max={np.max(d)}x")
+                    log(f"    depth: mean={np.mean(d):.0f}x, max={np.max(d)}x")
+                if r is not None:
+                    contig_reads[cname] = r
+                    log(f"    reads: {len(r)} aligned")
 
     log(f"Processing {len(junctions)} junctions")
 
@@ -855,6 +971,7 @@ def main() -> None:
             host_hits = parse_paf_for_contig(args.host_paf, contig_name)
 
         depth = contig_depths.get(contig_name)
+        reads_data = contig_reads.get(contig_name)
 
         for ext in ("png", "pdf"):
             out_path = out_dir / f"junction_gene_{i+1}_{host_chr}_{junction_pos}.{ext}"
@@ -867,6 +984,7 @@ def main() -> None:
                 construct_hits=construct_hits,
                 host_hits=host_hits,
                 depth=depth,
+                reads=reads_data,
             )
 
     log("All junction gene context plots generated.")
