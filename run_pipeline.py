@@ -29,6 +29,7 @@ STEP_SCRIPTS: dict[str, str] = {
     "6": "scripts/s06_junction.py",
     "7": "scripts/s07_host_map.py",
     "8": "scripts/s08_indel_detection.py",
+    "9": "scripts/s09_targeted_assembly.py",
     "10": "scripts/s10_copynumber.py",
     "11": "scripts/s11_multiqc.py",
 }
@@ -42,6 +43,7 @@ STEP_NAMES: dict[str, str] = {
     "6": "Chimeric contig / junction detection",
     "7": "Map all reads to host (bwa mem)",
     "8": "CRISPR indel detection (treatment vs WT)",
+    "9": "Targeted insert assembly (Pilon gap fill)",
     "10": "Copy number estimation",
     "11": "MultiQC report generation",
 }
@@ -198,9 +200,13 @@ def build_step_cmd(
                 "--contigs", str(s04 / "contigs.fasta"),
                 "--outdir", str(outdir),
                 "--sample-name", sname]
-        # Lower identity threshold for element_db (fragmented references)
+        # Lower thresholds for element_db (fragmented references):
+        # - identity: element_db alignments ~0.84, below default 0.90
+        # - coverage: element_db doesn't cover full vector, so combined
+        #   host+construct coverage on chimeric contigs is lower
         if "element_db" in construct_ref or "_combined_db" in construct_ref:
-            cmd.extend(["--min-identity", "0.70"])
+            cmd.extend(["--min-identity", "0.70",
+                         "--min-coverage-frac", "0.30"])
         return cmd
     elif step == "7":
         return [sys.executable, script,
@@ -238,6 +244,15 @@ def build_step_cmd(
             cmd.extend(["--junctions", str(junctions)])
 
         return cmd
+    elif step == "9":
+        return [sys.executable, script,
+               "--junctions", str(s06 / "junctions.tsv"),
+               "--host-bam", str(s07 / f"{sname}_host.bam"),
+               "--host-ref", host_ref,
+               "--element-db", construct_ref,
+               "--outdir", str(outdir),
+               "--sample-name", sname,
+               "--threads", str(threads)]
     elif step == "10":
         return [sys.executable, script,
                 "--construct-bam", str(s02 / f"{sname}_construct.bam"),
