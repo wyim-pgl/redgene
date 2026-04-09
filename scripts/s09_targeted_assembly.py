@@ -616,153 +616,84 @@ class TierResult:
     element_aln_len: int = 0
 
 
-def _batch_host_map_reads(
-    sites: list, host_bam: Path, host_ref: Path, workdir: Path,
-    threads: int = 4, max_reads_per_side: int = 10,
+def _batch_host_map_bowtie2(
+    clip_seqs: dict[str, str], host_ref: Path, workdir: Path,
+    threads: int = 4,
 ) -> set[str]:
-    """Check if soft-clipped portions of reads are host-derived by remapping
-    FULL reads with minimap2 and checking for supplementary alignments.
+    """Map clip sequences to host genome via bowtie2 --very-sensitive-local.
 
-    Clip sequences (20-70bp) are too short for minimap2 direct mapping.
-    Instead, we extract the full reads that produced the clips and remap them.
-    If minimap2 produces a supplementary alignment for the clipped portion,
-    the clip is host-derived (endogenous SV/TE).
+    bowtie2 is designed for short reads (20bp+) and handles 20-70bp clips
+    reliably, unlike minimap2 (long-read mapper, min seed ~19bp fails on
+    short clips) or BLAST (requires arbitrary identity/coverage thresholds).
 
-    Args:
-        sites: list of InsertionSite objects
-        host_bam: path to host BAM
-        host_ref: path to host reference
-        workdir: working directory
-
-    Returns:
-        set of site_side keys (e.g. "insertion_123_5p") where the clip
-        has a supplementary alignment in the host genome.
+    Returns set of clip IDs that map to the host genome.
+    Any mapping = clip is host-derived (endogenous).
     """
-    # Step 1: Extract full reads with soft-clips at each site
-    reads_fa = workdir / "_tier_reads.fa"
-    site_read_map: dict[str, str] = {}  # read_tag -> site_side key
-
-    with pysam.AlignmentFile(str(host_bam), "rb") as bam, \
-         open(reads_fa, "w") as fh:
-        for site in sites:
-            pos_5p = site.pos_5p or 0
-            pos_3p = site.pos_3p or pos_5p
-
-            # Collect reads for 5p side (right-clipped reads near pos_5p)
-            if site.seed_5p and len(site.seed_5p) >= 20:
-                n_5p = 0
-                try:
-                    for read in bam.fetch(
-                        site.host_chr,
-                        max(0, pos_5p - 50), pos_5p + 50,
-                    ):
-                        if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                            continue
-                        if not read.cigartuples or not read.query_sequence:
-                            continue
-                        cigar = read.cigartuples
-                        if cigar[-1][0] == 4 and cigar[-1][1] >= 20:
-                            tag = f"{site.site_id}_5p_r{n_5p}"
-                            site_read_map[tag] = f"{site.site_id}_5p"
-                            fh.write(f">{tag}\n{read.query_sequence}\n")
-                            n_5p += 1
-                            if n_5p >= max_reads_per_side:
-                                break
-                except ValueError:
-                    pass
-
-            # Collect reads for 3p side (left-clipped reads near pos_3p)
-            if site.seed_3p and len(site.seed_3p) >= 20:
-                n_3p = 0
-                try:
-                    for read in bam.fetch(
-                        site.host_chr,
-                        max(0, pos_3p - 50), pos_3p + 50,
-                    ):
-                        if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                            continue
-                        if not read.cigartuples or not read.query_sequence:
-                            continue
-                        cigar = read.cigartuples
-                        if cigar[0][0] == 4 and cigar[0][1] >= 20:
-                            tag = f"{site.site_id}_3p_r{n_3p}"
-                            site_read_map[tag] = f"{site.site_id}_3p"
-                            fh.write(f">{tag}\n{read.query_sequence}\n")
-                            n_3p += 1
-                            if n_3p >= max_reads_per_side:
-                                break
-                except ValueError:
-                    pass
-
-    if not site_read_map:
+    if not clip_seqs:
         return set()
 
-    log(f"  Extracted {len(site_read_map)} full reads for re-mapping")
+    # Check / build bowtie2 index
+    bt2_idx = str(host_ref)
+    if not Path(f"{bt2_idx}.1.bt2").exists():
+        log("  Building bowtie2 index for host genome...")
+        subprocess.run(
+            ["bowtie2-build", "--threads", str(threads),
+             str(host_ref), bt2_idx],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
 
-    # Step 2: Remap full reads with minimap2 (SAM output for supplementary detection)
-    result = subprocess.run(
-        ["minimap2", "-a", "--secondary=yes", "-N", "5",
-         "-t", str(threads), str(host_ref), str(reads_fa)],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    # Write clip sequences as FASTA
+    clip_fa = workdir / "_tier_clips.fa"
+    with open(clip_fa, "w") as fh:
+        for name, seq in clip_seqs.items():
+            fh.write(f">{name}\n{seq}\n")
+
+    # Map with bowtie2: --very-sensitive-local for max sensitivity on short seqs
+    # --no-unal: only output mapped clips (saves parsing)
+    sam_out = workdir / "_tier_clips_vs_host.sam"
+    subprocess.run(
+        ["bowtie2", "--very-sensitive-local", "--no-unal",
+         "-f", "-x", bt2_idx, "-U", str(clip_fa),
+         "-S", str(sam_out), "--threads", str(threads)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    reads_fa.unlink(missing_ok=True)
 
-    # Step 3: For each read, check if it has a supplementary alignment
-    # Supplementary = the clipped portion maps elsewhere in host → endogenous
-    has_supp: set[str] = set()  # read tags with supplementary alignments
-    for line in result.stdout.splitlines():
-        if line.startswith("@"):
-            continue
-        cols = line.split("\t")
-        if len(cols) < 11:
-            continue
-        read_tag = cols[0]
-        flag = int(cols[1])
-        is_unmapped = flag & 4
-        is_supplementary = flag & 2048
+    # Parse SAM: any non-header line = this clip mapped to host
+    mapped: set[str] = set()
+    if sam_out.exists():
+        with open(sam_out) as fh:
+            for line in fh:
+                if line.startswith("@"):
+                    continue
+                cols = line.split("\t", 2)
+                if cols:
+                    mapped.add(cols[0])
 
-        if is_unmapped:
-            continue
+    clip_fa.unlink(missing_ok=True)
+    sam_out.unlink(missing_ok=True)
 
-        if is_supplementary:
-            # This read has a supplementary alignment → clip maps to host
-            has_supp.add(read_tag)
-        else:
-            # Check SA tag on primary alignment
-            for field in cols[11:]:
-                if field.startswith("SA:Z:"):
-                    has_supp.add(read_tag)
-                    break
-
-    # Step 4: Map back to site_side keys
-    # A site_side is "endogenous" if ANY of its reads has supplementary alignment
-    endogenous_sides: set[str] = set()
-    for read_tag in has_supp:
-        if read_tag in site_read_map:
-            endogenous_sides.add(site_read_map[read_tag])
-
-    return endogenous_sides
+    return mapped
 
 
 def classify_site_tiers(
     sites: list[InsertionSite],
     element_db: Path,
     host_ref: Path,
-    host_bam: Path,
     workdir: Path,
     threads: int = 4,
     min_clip_for_mapping: int = 20,
 ) -> tuple[list[InsertionSite], list[InsertionSite], list[TierResult]]:
-    """Classify sites by remapping full soft-clipped reads with minimap2.
+    """Classify sites by mapping clip sequences to host genome with bowtie2.
 
-    Clip sequences (20-70bp) are too short for direct minimap2 or reliable
-    BLAST mapping. Instead, we extract the FULL reads that produced the clips
-    and remap them with minimap2. If a supplementary alignment exists for the
-    clipped portion, the clip is host-derived (endogenous SV/TE).
+    bowtie2 --very-sensitive-local handles 20bp+ clips reliably (unlike
+    minimap2 which is a long-read mapper, or BLAST which needs thresholds).
 
-    Tier A (foreign):    clip has NO supplementary alignment → assemble
-    Tier B (partial):    one side foreign, other side endogenous → assemble
-    Tier C (endogenous): BOTH sides have supplementary alignments → skip
+    Any bowtie2 mapping = clip exists in host genome = endogenous.
+    No mapping = clip is foreign DNA.
+
+    Tier A (foreign):    NEITHER clip maps to host → assemble
+    Tier B (partial):    one side maps, other does not → assemble
+    Tier C (endogenous): BOTH sides map to host → skip
     Tier D (ambiguous):  clip too short (<20bp) → assemble
 
     Returns (assembly_sites, skip_sites, all_tier_results).
@@ -773,13 +704,21 @@ def classify_site_tiers(
     tier_dir = workdir / "_tier_classification"
     tier_dir.mkdir(parents=True, exist_ok=True)
 
-    log(f"  Remapping full reads from {len(sites)} sites with minimap2 "
-        f"(supplementary alignment = endogenous)...")
+    # Step 1: Collect all clip sequences
+    clip_seqs: dict[str, str] = {}
+    for site in sites:
+        if site.seed_5p and len(site.seed_5p) >= 15:
+            clip_seqs[f"{site.site_id}_5p"] = site.seed_5p
+        if site.seed_3p and len(site.seed_3p) >= 15:
+            clip_seqs[f"{site.site_id}_3p"] = site.seed_3p
 
-    # Step 1-3: Extract full reads, remap with minimap2, detect supplementary
-    host_hit_set = _batch_host_map_reads(
-        sites, host_bam, host_ref, tier_dir, threads)
-    log(f"  {len(host_hit_set)} clip sides have supplementary host alignments")
+    log(f"  Mapping {len(clip_seqs)} clip sequences to host genome "
+        f"(bowtie2 --very-sensitive-local, any hit = endogenous)...")
+
+    # Step 2: bowtie2 mapping — any hit = clip is host-derived
+    host_hit_set = _batch_host_map_bowtie2(
+        clip_seqs, host_ref, tier_dir, threads)
+    log(f"  {len(host_hit_set)} / {len(clip_seqs)} clips mapped to host")
 
     # Step 4: Classify each site
     tier_results: list[TierResult] = []
@@ -793,7 +732,7 @@ def classify_site_tiers(
         has_5p = bool(site.seed_5p) and len(site.seed_5p) >= 15
         has_3p = bool(site.seed_3p) and len(site.seed_3p) >= 15
 
-        # Supplementary alignment exists = clip is host-derived
+        # bowtie2 mapped = clip exists in host genome = endogenous
         maps_5p = key_5p in host_hit_set
         maps_3p = key_3p in host_hit_set
 
@@ -2872,7 +2811,7 @@ def main() -> None:
     # ---- Phase 1.5: Tier Classification (host-genome mapping) ----
     log("\n--- Phase 1.5: Tier Classification (host mapping) ---")
     assembly_sites, skip_sites, tier_results = classify_site_tiers(
-        sites, element_db, host_ref, host_bam, step_dir,
+        sites, element_db, host_ref, step_dir,
         threads=args.threads,
     )
     write_tier_classification(
