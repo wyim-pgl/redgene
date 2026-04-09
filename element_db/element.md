@@ -7,10 +7,11 @@
 | `element_db/gmo_combined_db.fa` | 131 | 131 EUginius elements + custom additions |
 | `db/corn_border_db.fa` | 62 | 62 corn LB/RB event-specific border sequences |
 | `element_db/gm_new_elements.fa` | 3 | 3 newly added GM regulatory elements |
-| `db/gmo_all_combined_db.fa` | 196 | 196 total = all above combined (USE THIS) |
+| `element_db/crl_amplicons.fa` | 82 | 82 CRL-GMOMETHODS amplicon sequences |
+| `db/gmo_all_combined_db.fa` | 278 | 278 total = all above combined (USE THIS) |
 | `db/gmo_corn_combined_db.fa` | 192 | 192 = EUginius + corn borders (legacy, corn-specific) |
 
-## Summary (196 total sequences, 131 kb)
+## Summary (278 total sequences, 141 kb)
 
 ### By Source
 
@@ -19,7 +20,8 @@
 | EUginius DB | 131 | 121,190 bp | `element_db/gmo_combined_db.fa` |
 | Corn border DB (Sci Rep 2025) | 62 | 7,912 bp | `db/corn_border_db.fa` |
 | Custom GenBank additions | 3 | 2,037 bp | `element_db/gm_new_elements.fa` |
-| **Total (unified)** | **196** | **131,139 bp** | **`db/gmo_all_combined_db.fa`** |
+| CRL-GMOMETHODS amplicons | 82 | 10,179 bp | `element_db/crl_amplicons.fa` |
+| **Total (unified)** | **278** | **141,318 bp** | **`db/gmo_all_combined_db.fa`** |
 
 ### By Category (EUginius 131 seqs)
 
@@ -273,11 +275,29 @@ Source: [EUginius](https://euginius.eu) — EU Database of Reference Sequences f
 
 ---
 
+## CRL-GMOMETHODS Amplicons (82 sequences, 10,179 bp)
+
+Source: [EU Reference Laboratory for GM Food and Feed](https://gmo-crl.jrc.ec.europa.eu/gmomethods/)
+
+82 validated qPCR amplicon sequences from CRL-validated detection methods (3 duplicates of EUginius removed).
+
+| Category | Count | Species Coverage |
+|----------|-------|-----------------|
+| Construct-specific (QL/QT-CON) | 17 | Multi-species GM constructs |
+| Element-specific (QL/QT-ELE) | 6 | P-35S, pat, Cry1A(b), CP4-EPSPS |
+| Event-specific (QL/QT-EVE) | 51 | Soybean (22), Maize (9), Canola (8), Carnation (4), Rice (1), E. coli (2), Komagataella (1), Sugar beet (0), Potato (0), other (4) |
+| Taxon-specific (QT-TAX) | 8 | Soybean lectin (4), Maize ADH1/HMG (3), Canola FatA/BnC1 (2), Sugar beet GS2 (1) |
+
+Note: Many CRL amplicon sequences contain N characters (probe-masked internal regions between forward and reverse primer binding sites). These Ns are preserved as-is.
+
+---
+
 ## Source Databases
 
 - **EUginius** (https://euginius.eu): 131 GMO detection elements (promoters, terminators, CDS, construct-specific, event-specific, taxon-specific)
 - **Sci Rep 2025 corn borders**: 62 LB/RB event-specific border sequences from 31 approved corn events (DOI: 10.1038/s41598-025-18593-8)
 - **Custom additions**: Full-length P-FMV34S, CTP4, hsp70 intron from GenBank
+- **CRL-GMOMETHODS**: 82 qPCR amplicon sequences from EU Reference Laboratory validated methods
 
 ## Usage
 

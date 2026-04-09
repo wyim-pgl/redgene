@@ -890,7 +890,8 @@ def main() -> None:
         description="Junction visualization with gene/exon/CDS + element map + depth",
     )
     parser.add_argument("--junctions", type=Path, required=True)
-    parser.add_argument("--gff", type=Path, required=True)
+    parser.add_argument("--gff", type=Path, default=None,
+                        help="GFF3 annotation (optional; gene track omitted if absent)")
     parser.add_argument("--contigs", type=Path, default=None)
     parser.add_argument("--construct-paf", type=Path, default=None,
                         help="PAF: contigs aligned to construct/element DB")
@@ -956,9 +957,13 @@ def main() -> None:
 
         log(f"  Junction {i+1}: {host_chr}:{junction_pos}")
 
-        gene_info = parse_gff3_region(
-            args.gff, host_chr, junction_pos, junction_pos, flank=args.flank)
-        log(f"    Found {len(gene_info.get('genes', []))} gene(s)")
+        if args.gff and args.gff.exists():
+            gene_info = parse_gff3_region(
+                args.gff, host_chr, junction_pos, junction_pos, flank=args.flank)
+            log(f"    Found {len(gene_info.get('genes', []))} gene(s)")
+        else:
+            gene_info = {"genes": []}
+            log("    No GFF provided — skipping gene track")
 
         contig_seq = contig_seqs.get(contig_name)
 

@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
-"""Step 9 — Targeted seed extension assembly for transgene insert reconstruction.
+"""Step 9 — Targeted insert assembly via soft-clip junction detection,
+strand-aware k-mer extension, and Pilon iterative gap filling.
 
-For each insertion site detected by step 6:
-  1. Extract junction read seeds (soft-clipped T-DNA portions from host BAM)
-  2. Extract candidate reads from junction region (reads + mates within flank)
-  3. Build full k-mer index from candidate reads
-  4. Extend 5' and 3' seeds toward each other via majority vote consensus
-  5. Merge overlapping extensions into final insert
-  6. Annotate via BLAST against element database
+Pipeline:
+  Phase 1: Scan host BAM for bidirectional soft-clip clusters → insertion sites
+  Phase 2: Extract candidate reads from junction regions + unmapped pairs
+  Phase 3: Iterative k-mer extension + Pilon gap fill (max 15 rounds)
+  Phase 4: Annotate assembled insert via BLAST + border motif search
 
-Algorithm: Pure-Python k-mer indexed seed extension with majority vote
-consensus. Uses ALL k-mers (not prefix-only) for read recruitment, which
-is feasible because the candidate read pool is small (~5K-50K reads from
-the junction region, not 300K+ unmapped reads).
+No external assembler (SPAdes, SSAKE, TASR) is used.
+External tools: minimap2, samtools, Pilon, blastn.
 
 Inputs:
-  - junctions.tsv from step 6
-  - Host BAM from step 7
-  - Element database for annotation
+  - Host BAM from step 7 (or junctions.tsv from step 6 as fallback)
+  - Host reference FASTA
+  - Element database FASTA for annotation
 
 Outputs:
   - insert_only.fasta   — assembled insert sequence(s)
   - element_annotation.tsv — BLAST hits along insert
   - border_hits.tsv      — T-DNA border motif locations
+  - insert_report.txt    — human-readable linear map
   - s09_stats.txt        — convergence and assembly statistics
 """
 
@@ -40,6 +38,7 @@ import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 import pysam
 
@@ -55,11 +54,58 @@ def log(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Reverse complement
+# ---------------------------------------------------------------------------
+
+_COMP = str.maketrans("ACGTacgt", "TGCAtgca")
+
+
+def revcomp(seq: str) -> str:
+    return seq.translate(_COMP)[::-1]
+
+
+# ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
 
 @dataclass
-class Junction:
+class JunctionCluster:
+    """A cluster of soft-clipped reads at a genomic position."""
+    host_chr: str
+    position: int           # median position of cluster
+    clip_direction: str     # 'right' (fwd read 3' clip) or 'left' (rev read 5' clip)
+    clipped_seqs: list[str] = field(default_factory=list)
+    consensus_clip: str = ""
+    n_reads: int = 0
+    maps_to_host: bool = False
+    element_hits: list[str] = field(default_factory=list)
+
+
+@dataclass
+class InsertionSite:
+    """An insertion site with paired 5'/3' junction clusters."""
+    site_id: str
+    host_chr: str
+    junction_5p: JunctionCluster | None = None  # forward reads clipped on right
+    junction_3p: JunctionCluster | None = None  # reverse reads clipped on left
+    confidence: str = "low"
+    seed_5p: str = ""       # consensus clip from 5' junction (insert start)
+    seed_3p: str = ""       # consensus clip from 3' junction (insert end)
+    is_validated: bool = False
+
+    # Validation details
+    clips_are_different: bool = False
+    clips_not_in_host: bool = False
+    has_element_hits: bool = False
+
+    # Positions for read extraction
+    pos_5p: int = 0
+    pos_3p: int = 0
+
+
+@dataclass
+class LegacyJunction:
+    """Junction from step 6 junctions.tsv (fallback mode)."""
     contig_name: str
     contig_len: int
     host_chr: str
@@ -70,67 +116,16 @@ class Junction:
     construct_start: int
     construct_end: int
     junction_pos_host: int
-    junction_type: str  # LB or RB
+    junction_type: str
     confidence: str
     host_mapq: int
 
 
-@dataclass
-class InsertionSite:
-    """A paired (or single) insertion site grouping LB/RB junctions."""
-    site_id: str
-    junctions: list[Junction] = field(default_factory=list)
-    host_chr: str = ""
-    pos_5p: int = 0  # upstream junction position
-    pos_3p: int = 0  # downstream junction position
-    contig_5p: str = ""  # contig name for 5' junction
-    contig_3p: str = ""  # contig name for 3' junction
-
-
 # ---------------------------------------------------------------------------
-# Junction parsing
+# FASTA I/O
 # ---------------------------------------------------------------------------
-
-def parse_junctions(tsv_path: Path) -> list[Junction]:
-    """Parse junctions.tsv from step 6.
-
-    Deduplicates by (contig_name, host_chr, junction_pos_host), keeping
-    the entry with the highest MAPQ.  Each contig can have multiple element
-    matches producing duplicate rows that would otherwise create spurious
-    insertion sites.
-    """
-    raw: list[Junction] = []
-    with open(tsv_path) as fh:
-        reader = csv.DictReader(fh, delimiter="\t")
-        for row in reader:
-            raw.append(Junction(
-                contig_name=row["contig_name"],
-                contig_len=int(row["contig_len"]),
-                host_chr=row["host_chr"],
-                host_start=int(row["host_start"]),
-                host_end=int(row["host_end"]),
-                host_strand=row["host_strand"],
-                construct_element=row["construct_element"],
-                construct_start=int(row["construct_start"]),
-                construct_end=int(row["construct_end"]),
-                junction_pos_host=int(row["junction_pos_host"]),
-                junction_type=row["junction_type"],
-                confidence=row["confidence"],
-                host_mapq=int(row["host_mapq"]),
-            ))
-
-    # Deduplicate: keep highest-MAPQ entry per (contig, chr, position)
-    best: dict[tuple[str, str, int], Junction] = {}
-    for j in raw:
-        key = (j.contig_name, j.host_chr, j.junction_pos_host)
-        if key not in best or j.host_mapq > best[key].host_mapq:
-            best[key] = j
-
-    return list(best.values())
-
 
 def read_fasta(path: Path) -> dict[str, str]:
-    """Read FASTA file into {name: sequence} dict."""
     seqs: dict[str, str] = {}
     name = ""
     parts: list[str] = []
@@ -150,113 +145,507 @@ def read_fasta(path: Path) -> dict[str, str]:
 
 
 def write_fasta(path: Path, name: str, seq: str, wrap: int = 80) -> None:
-    """Write a single sequence to FASTA."""
     with open(path, "w") as fh:
         fh.write(f">{name}\n")
         for i in range(0, len(seq), wrap):
             fh.write(seq[i:i + wrap] + "\n")
 
 
+def _read_fq_seqs(path: Path) -> list[str]:
+    opener = gzip.open if str(path).endswith(".gz") else open
+    seqs: list[str] = []
+    with opener(path, "rt") as fh:
+        for i, line in enumerate(fh):
+            if i % 4 == 1:
+                seqs.append(line.strip().upper())
+    return seqs
+
+
 # ---------------------------------------------------------------------------
-# PAF parsing
+# Phase 1: Soft-clip Junction Detection
 # ---------------------------------------------------------------------------
 
-@dataclass
-class PafHit:
-    query_name: str
-    query_len: int
-    query_start: int
-    query_end: int
-    strand: str
-    target_name: str
-    target_len: int
-    target_start: int
-    target_end: int
-    mapq: int
+def _build_consensus(seqs: list[str], direction: str) -> str:
+    """Build majority-vote consensus from a list of clipped sequences.
+
+    For 'right' clips: sequences are aligned from their left (start of insert).
+    For 'left' clips: sequences are aligned from their right (end of insert).
+    """
+    if not seqs:
+        return ""
+
+    if direction == "right":
+        # Align from left
+        votes: dict[int, Counter] = defaultdict(Counter)
+        for seq in seqs:
+            for i, base in enumerate(seq):
+                votes[i][base.upper()] += 1
+        consensus = []
+        for p in range(max(votes.keys()) + 1):
+            if p not in votes:
+                break
+            v = votes[p]
+            total = sum(v.values())
+            best, cnt = v.most_common(1)[0]
+            if total >= 2 and cnt / total >= 0.51:
+                consensus.append(best)
+            else:
+                break
+        return "".join(consensus)
+    else:
+        # Align from right
+        votes = defaultdict(Counter)
+        max_len = max(len(s) for s in seqs)
+        for seq in seqs:
+            offset = max_len - len(seq)
+            for i, base in enumerate(seq):
+                votes[offset + i][base.upper()] += 1
+        consensus = []
+        for p in range(max_len):
+            if p not in votes:
+                consensus.append("N")
+                continue
+            v = votes[p]
+            total = sum(v.values())
+            best, cnt = v.most_common(1)[0]
+            if total >= 2 and cnt / total >= 0.51:
+                consensus.append(best)
+            else:
+                consensus.append("N")
+        # Trim leading/trailing N
+        result = "".join(consensus).strip("N")
+        return result
 
 
-def parse_paf(path: Path, contig_names: set[str] | None = None) -> list[PafHit]:
-    """Parse PAF, optionally filtering to specific contigs."""
-    hits = []
-    with open(path) as fh:
-        for line in fh:
-            cols = line.rstrip().split("\t")
-            if len(cols) < 12:
+def _batch_check_maps_to_host(seqs: dict[str, str], host_ref: Path, workdir: Path,
+                              min_identity: float = 0.90,
+                              min_coverage: float = 0.80) -> set[str]:
+    """Batch check which sequences map to host genome using one minimap2 call.
+
+    Args:
+        seqs: dict of {name: sequence} to check
+        Returns: set of names that map to host
+    """
+    if not seqs:
+        return set()
+
+    query_fa = workdir / "_clip_check_batch.fa"
+    with open(query_fa, "w") as fh:
+        for name, seq in seqs.items():
+            if len(seq) >= 20:
+                fh.write(f">{name}\n{seq}\n")
+
+    result = subprocess.run(
+        ["minimap2", "-c", "--secondary=no", "-t", "4",
+         str(host_ref), str(query_fa)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    query_fa.unlink(missing_ok=True)
+
+    maps_to_host: set[str] = set()
+    for line in result.stdout.splitlines():
+        cols = line.strip().split("\t")
+        if len(cols) < 12:
+            continue
+        qname = cols[0]
+        q_len = int(cols[1])
+        match_bp = int(cols[9])
+        block_len = int(cols[10])
+        if block_len == 0:
+            continue
+        identity = match_bp / block_len
+        coverage = (int(cols[3]) - int(cols[2])) / q_len if q_len > 0 else 0
+        if identity >= min_identity and coverage >= min_coverage:
+            maps_to_host.add(qname)
+    return maps_to_host
+
+
+def _batch_check_element_hits(seqs: dict[str, str], element_db: Path,
+                              workdir: Path) -> dict[str, list[str]]:
+    """Batch check which sequences hit the element database using one blastn call.
+
+    Args:
+        seqs: dict of {name: sequence} to check
+        Returns: dict of {name: [hit_elements]}
+    """
+    if not seqs:
+        return {}
+
+    query_fa = workdir / "_clip_element_batch.fa"
+    with open(query_fa, "w") as fh:
+        for name, seq in seqs.items():
+            if len(seq) >= 20:
+                fh.write(f">{name}\n{seq}\n")
+
+    blast_out = workdir / "_clip_blast_batch.tsv"
+    subprocess.run(
+        ["blastn", "-query", str(query_fa), "-subject", str(element_db),
+         "-outfmt", "6 qseqid sseqid pident length",
+         "-evalue", "1e-3", "-max_target_seqs", "5",
+         "-out", str(blast_out)],
+        stderr=subprocess.DEVNULL,
+    )
+
+    hits: dict[str, list[str]] = defaultdict(list)
+    if blast_out.exists():
+        with open(blast_out) as fh:
+            for line in fh:
+                cols = line.strip().split("\t")
+                if len(cols) >= 4 and int(cols[3]) >= 20:
+                    hits[cols[0]].append(cols[1])
+        blast_out.unlink(missing_ok=True)
+    query_fa.unlink(missing_ok=True)
+    return dict(hits)
+
+
+def find_softclip_junctions(
+    host_bam: Path,
+    host_ref: Path,
+    element_db: Path | None,
+    workdir: Path,
+    min_clip: int = 20,
+    cluster_window: int = 50,
+) -> list[InsertionSite]:
+    """Scan host BAM for insertion sites using bidirectional soft-clip analysis.
+
+    Three conditions for a validated insertion site:
+    1. Bidirectional soft-clips at the same genomic position
+    2. The two clip sequences are DIFFERENT (insert, not SV)
+    3. Neither clip maps to host genome (foreign sequence)
+    """
+    workdir.mkdir(parents=True, exist_ok=True)
+    log("Phase 1: Scanning host BAM for soft-clip junctions...")
+
+    # Step 1: Collect all soft-clipped reads
+    right_clips: dict[str, list[tuple[int, str]]] = defaultdict(list)  # chr -> [(pos, seq)]
+    left_clips: dict[str, list[tuple[int, str]]] = defaultdict(list)
+
+    bam = pysam.AlignmentFile(str(host_bam), "rb")
+    n_right = 0
+    n_left = 0
+
+    for read in bam.fetch():
+        if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            continue
+        cigar = read.cigartuples
+        if cigar is None:
+            continue
+        seq = read.query_sequence
+        if seq is None:
+            continue
+
+        chrom = read.reference_name
+
+        # Right clip (3' end clipped — forward read approaching junction)
+        if cigar[-1][0] == 4 and cigar[-1][1] >= min_clip:
+            clip_len = cigar[-1][1]
+            clip_pos = read.reference_end  # position where clip starts
+            clip_seq = seq[-clip_len:]
+            right_clips[chrom].append((clip_pos, clip_seq))
+            n_right += 1
+
+        # Left clip (5' end clipped — reverse read approaching junction)
+        if cigar[0][0] == 4 and cigar[0][1] >= min_clip:
+            clip_len = cigar[0][1]
+            clip_pos = read.reference_start  # position where clip ends
+            clip_seq = seq[:clip_len]
+            left_clips[chrom].append((clip_pos, clip_seq))
+            n_left += 1
+
+    bam.close()
+    log(f"  Collected {n_right:,} right-clips, {n_left:,} left-clips")
+
+    # Step 2: Cluster by position (min_depth=3 to filter noise)
+    MIN_CLUSTER_DEPTH = 3
+
+    def _cluster(clips: list[tuple[int, str]], window: int) -> list[tuple[int, list[str]]]:
+        if not clips:
+            return []
+        clips.sort(key=lambda x: x[0])
+        clusters = []
+        current_seqs = [clips[0][1]]
+        current_positions = [clips[0][0]]
+
+        for pos, seq in clips[1:]:
+            if pos - current_positions[0] <= window:
+                current_seqs.append(seq)
+                current_positions.append(pos)
+            else:
+                if len(current_seqs) >= MIN_CLUSTER_DEPTH:
+                    median_pos = sorted(current_positions)[len(current_positions) // 2]
+                    clusters.append((median_pos, current_seqs))
+                current_seqs = [seq]
+                current_positions = [pos]
+        if len(current_seqs) >= MIN_CLUSTER_DEPTH:
+            median_pos = sorted(current_positions)[len(current_positions) // 2]
+            clusters.append((median_pos, current_seqs))
+
+        return clusters
+
+    # Step 3: Pair forward/reverse clusters at same position
+    sites: list[InsertionSite] = []
+    site_idx = 0
+
+    for chrom in set(list(right_clips.keys()) + list(left_clips.keys())):
+        r_clusters = _cluster(right_clips.get(chrom, []), cluster_window)
+        l_clusters = _cluster(left_clips.get(chrom, []), cluster_window)
+
+        # Try to pair right and left clusters within window
+        used_l = set()
+        for r_pos, r_seqs in r_clusters:
+            best_l = None
+            best_dist = cluster_window + 1
+            for li, (l_pos, l_seqs) in enumerate(l_clusters):
+                if li in used_l:
+                    continue
+                dist = abs(r_pos - l_pos)
+                if dist <= cluster_window and dist < best_dist:
+                    best_l = li
+                    best_dist = dist
+
+            if best_l is not None:
+                l_pos, l_seqs = l_clusters[best_l]
+                used_l.add(best_l)
+
+                r_consensus = _build_consensus(r_seqs, "right")
+                l_consensus = _build_consensus(l_seqs, "left")
+
+                if len(r_consensus) < min_clip or len(l_consensus) < min_clip:
+                    continue
+
+                site_idx += 1
+                jc_5p = JunctionCluster(
+                    host_chr=chrom, position=r_pos,
+                    clip_direction="right",
+                    clipped_seqs=r_seqs, consensus_clip=r_consensus,
+                    n_reads=len(r_seqs),
+                )
+                jc_3p = JunctionCluster(
+                    host_chr=chrom, position=l_pos,
+                    clip_direction="left",
+                    clipped_seqs=l_seqs, consensus_clip=l_consensus,
+                    n_reads=len(l_seqs),
+                )
+
+                site = InsertionSite(
+                    site_id=f"insertion_{site_idx}",
+                    host_chr=chrom,
+                    junction_5p=jc_5p,
+                    junction_3p=jc_3p,
+                    seed_5p=r_consensus,
+                    seed_3p=l_consensus,
+                    pos_5p=min(r_pos, l_pos),
+                    pos_3p=max(r_pos, l_pos),
+                )
+                sites.append(site)
+            else:
+                # Single-direction cluster: only keep high-depth (≥5 reads)
+                if len(r_seqs) >= 5:
+                    r_consensus = _build_consensus(r_seqs, "right")
+                    if len(r_consensus) >= min_clip:
+                        site_idx += 1
+                        jc_5p = JunctionCluster(
+                            host_chr=chrom, position=r_pos,
+                            clip_direction="right",
+                            clipped_seqs=r_seqs, consensus_clip=r_consensus,
+                            n_reads=len(r_seqs),
+                        )
+                        site = InsertionSite(
+                            site_id=f"insertion_{site_idx}",
+                            host_chr=chrom,
+                            junction_5p=jc_5p,
+                            seed_5p=r_consensus,
+                            pos_5p=r_pos,
+                            confidence="low",
+                        )
+                        sites.append(site)
+
+        # Unpaired left clusters (only high-depth)
+        for li, (l_pos, l_seqs) in enumerate(l_clusters):
+            if li in used_l:
                 continue
-            qname = cols[0]
-            if contig_names and qname not in contig_names:
+            if len(l_seqs) < 5:
                 continue
-            hits.append(PafHit(
-                query_name=qname,
-                query_len=int(cols[1]),
-                query_start=int(cols[2]),
-                query_end=int(cols[3]),
-                strand=cols[4],
-                target_name=cols[5],
-                target_len=int(cols[6]),
-                target_start=int(cols[7]),
-                target_end=int(cols[8]),
-                mapq=int(cols[11]),
+            l_consensus = _build_consensus(l_seqs, "left")
+            if len(l_consensus) >= min_clip:
+                site_idx += 1
+                jc_3p = JunctionCluster(
+                    host_chr=chrom, position=l_pos,
+                    clip_direction="left",
+                    clipped_seqs=l_seqs, consensus_clip=l_consensus,
+                    n_reads=len(l_seqs),
+                )
+                site = InsertionSite(
+                    site_id=f"insertion_{site_idx}",
+                    host_chr=chrom,
+                    junction_3p=jc_3p,
+                    seed_3p=l_consensus,
+                    pos_5p=l_pos,
+                    confidence="low",
+                )
+                sites.append(site)
+
+    log(f"  Found {len(sites)} candidate insertion sites")
+
+    # Step 4: Validate — batched external tool calls for speed
+    # Separate paired (bidirectional) vs single-direction sites
+    paired_sites = [s for s in sites
+                    if s.junction_5p is not None and s.junction_3p is not None]
+    single_sites = [s for s in sites
+                    if s.junction_5p is None or s.junction_3p is None]
+
+    log(f"  Paired (bidirectional): {len(paired_sites)}, "
+        f"Single-direction: {len(single_sites)}")
+
+    # Condition 2 filter on paired sites: clips must be different
+    cond2_passed: list[InsertionSite] = []
+    for site in paired_sites:
+        cmp_len = min(20, len(site.seed_5p), len(site.seed_3p))
+        site.clips_are_different = site.seed_5p[:cmp_len] != site.seed_3p[:cmp_len]
+        if not site.clips_are_different:
+            continue
+        cond2_passed.append(site)
+
+    log(f"  After clip-difference filter: {len(cond2_passed)} paired sites")
+
+    # Condition 3: batch host-mapping check (one minimap2 call)
+    host_check_seqs: dict[str, str] = {}
+    for site in cond2_passed:
+        host_check_seqs[f"{site.site_id}_5p"] = site.seed_5p
+        host_check_seqs[f"{site.site_id}_3p"] = site.seed_3p
+
+    maps_to_host_set = _batch_check_maps_to_host(host_check_seqs, host_ref, workdir)
+    log(f"  Host-mapping check: {len(maps_to_host_set)} clips map to host")
+
+    validated_sites: list[InsertionSite] = []
+    for site in cond2_passed:
+        maps_5p = f"{site.site_id}_5p" in maps_to_host_set
+        maps_3p = f"{site.site_id}_3p" in maps_to_host_set
+        if site.junction_5p:
+            site.junction_5p.maps_to_host = maps_5p
+        if site.junction_3p:
+            site.junction_3p.maps_to_host = maps_3p
+        site.clips_not_in_host = not maps_5p and not maps_3p
+        if not site.clips_not_in_host:
+            continue
+        site.is_validated = True
+        site.confidence = "high"
+        validated_sites.append(site)
+
+    # Batch element-hit check for all validated + single-direction sites
+    element_check_seqs: dict[str, str] = {}
+    for site in validated_sites:
+        element_check_seqs[f"{site.site_id}_5p"] = site.seed_5p
+        element_check_seqs[f"{site.site_id}_3p"] = site.seed_3p
+    for site in single_sites:
+        clip_seq = site.seed_5p or site.seed_3p
+        if clip_seq:
+            element_check_seqs[f"{site.site_id}_clip"] = clip_seq
+
+    if element_db and element_check_seqs:
+        all_element_hits = _batch_check_element_hits(
+            element_check_seqs, element_db, workdir)
+
+        for site in validated_sites:
+            hits_5p = all_element_hits.get(f"{site.site_id}_5p", [])
+            hits_3p = all_element_hits.get(f"{site.site_id}_3p", [])
+            if site.junction_5p:
+                site.junction_5p.element_hits = hits_5p
+            if site.junction_3p:
+                site.junction_3p.element_hits = hits_3p
+            site.has_element_hits = bool(hits_5p or hits_3p)
+
+        for site in single_sites:
+            clip_hits = all_element_hits.get(f"{site.site_id}_clip", [])
+            if clip_hits:
+                if site.junction_5p:
+                    site.junction_5p.element_hits = clip_hits
+                if site.junction_3p:
+                    site.junction_3p.element_hits = clip_hits
+                site.has_element_hits = True
+                site.confidence = "medium"
+                validated_sites.append(site)
+                log(f"  {site.site_id}: single-direction but element hit "
+                    f"({clip_hits[0]}) → medium confidence")
+
+    for site in validated_sites:
+        log(f"  {site.site_id}: {site.host_chr}:{site.pos_5p}-{site.pos_3p} "
+            f"VALIDATED [{site.confidence}] "
+            f"(5p={len(site.seed_5p)}bp, 3p={len(site.seed_3p)}bp, "
+            f"element={'yes' if site.has_element_hits else 'no'})")
+
+    # Sort: element-hit sites FIRST (primary), then paired > single, then read support
+    # Element DB hits are the strongest signal for T-DNA insertion vs SV
+    validated_sites.sort(key=lambda s: (
+        0 if s.has_element_hits else 1,
+        0 if s.confidence == "high" else (1 if s.confidence == "medium" else 2),
+        -(s.junction_5p.n_reads if s.junction_5p else 0)
+        - (s.junction_3p.n_reads if s.junction_3p else 0),
+    ))
+
+    log(f"  Validated: {len(validated_sites)} insertion sites "
+        f"({sum(1 for s in validated_sites if s.has_element_hits)} with element hits)")
+
+    # Limit: all element-hit sites + top N non-element sites
+    MAX_NON_ELEMENT = 5
+    element_sites = [s for s in validated_sites if s.has_element_hits]
+    non_element_sites = [s for s in validated_sites if not s.has_element_hits]
+    validated_sites = element_sites + non_element_sites[:MAX_NON_ELEMENT]
+    if len(non_element_sites) > MAX_NON_ELEMENT:
+        log(f"  Keeping {len(element_sites)} element-hit + "
+            f"{MAX_NON_ELEMENT} top non-element sites "
+            f"(dropped {len(non_element_sites) - MAX_NON_ELEMENT})")
+
+    return validated_sites
+
+
+# ---------------------------------------------------------------------------
+# Fallback: Parse junctions.tsv from step 6
+# ---------------------------------------------------------------------------
+
+def parse_legacy_junctions(tsv_path: Path) -> list[LegacyJunction]:
+    """Parse junctions.tsv from step 6 as fallback."""
+    raw: list[LegacyJunction] = []
+    with open(tsv_path) as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for row in reader:
+            raw.append(LegacyJunction(
+                contig_name=row["contig_name"],
+                contig_len=int(row["contig_len"]),
+                host_chr=row["host_chr"],
+                host_start=int(row["host_start"]),
+                host_end=int(row["host_end"]),
+                host_strand=row["host_strand"],
+                construct_element=row["construct_element"],
+                construct_start=int(row["construct_start"]),
+                construct_end=int(row["construct_end"]),
+                junction_pos_host=int(row["junction_pos_host"]),
+                junction_type=row["junction_type"],
+                confidence=row["confidence"],
+                host_mapq=int(row["host_mapq"]),
             ))
-    return hits
+
+    # Deduplicate
+    best: dict[tuple[str, str, int], LegacyJunction] = {}
+    for j in raw:
+        key = (j.contig_name, j.host_chr, j.junction_pos_host)
+        if key not in best or j.host_mapq > best[key].host_mapq:
+            best[key] = j
+    return list(best.values())
 
 
-def get_construct_portion(
-    contig_name: str,
-    contig_seq: str,
-    host_hits: list[PafHit],
-    construct_hits: list[PafHit],
-) -> str:
-    """Extract the construct-derived portion of a chimeric contig.
-
-    Identifies host-aligned regions and returns the non-host portion,
-    keeping a small overlap anchor (50bp).
-    """
-    contig_len = len(contig_seq)
-
-    # Find host-covered ranges on the contig
-    host_ranges = [(h.query_start, h.query_end) for h in host_hits
-                   if h.query_name == contig_name]
-    # Find construct-covered ranges
-    construct_ranges = [(h.query_start, h.query_end) for h in construct_hits
-                        if h.query_name == contig_name]
-
-    if not construct_ranges:
-        return contig_seq  # no construct alignment, return whole thing
-
-    # Merge construct ranges to find the construct span
-    construct_ranges.sort()
-    merged_start = construct_ranges[0][0]
-    merged_end = construct_ranges[-1][1]
-
-    # If host is at the ends, trim with 50bp anchor overlap
-    anchor = 50
-    start = max(0, merged_start - anchor)
-    end = min(contig_len, merged_end + anchor)
-
-    return contig_seq[start:end]
-
-
-# ---------------------------------------------------------------------------
-# Insertion site grouping
-# ---------------------------------------------------------------------------
-
-def group_insertion_sites(junctions: list[Junction]) -> list[InsertionSite]:
-    """Group junctions into insertion sites.
-
-    Rules:
-    - Same chr, positions within 50kb → pair as same insertion
-    - Take highest-MAPQ junction per side
-    - Different chromosomes → separate sites
-    """
+def legacy_junctions_to_sites(
+    junctions: list[LegacyJunction],
+    host_bam: Path,
+    min_clip: int = 15,
+    window: int = 10,
+) -> list[InsertionSite]:
+    """Convert step 6 junctions to InsertionSites with soft-clip seeds."""
     if not junctions:
         return []
 
-    # Use all junctions (MAPQ filtering already done via deduplication —
-    # keeping highest-MAPQ per contig+chr+pos).  Low-MAPQ junctions may
-    # still be valid insertion sites (e.g. rice G281 Chr3:16439719 MAPQ=10).
     # Group by chromosome
-    by_chr: dict[str, list[Junction]] = {}
+    by_chr: dict[str, list[LegacyJunction]] = {}
     for j in junctions:
         by_chr.setdefault(j.host_chr, []).append(j)
 
@@ -264,20 +653,19 @@ def group_insertion_sites(junctions: list[Junction]) -> list[InsertionSite]:
     site_idx = 0
 
     for chrom, juncs in by_chr.items():
-        # Sort by position
         juncs.sort(key=lambda j: j.junction_pos_host)
 
-        # Try to pair junctions within 50kb
+        # Pair within 50kb
         used = set()
         for i, j1 in enumerate(juncs):
             if i in used:
                 continue
-            paired = None
+            paired_idx = None
             for k, j2 in enumerate(juncs):
                 if k in used or k == i:
                     continue
                 if abs(j2.junction_pos_host - j1.junction_pos_host) <= 50000:
-                    paired = k
+                    paired_idx = k
                     break
 
             site_idx += 1
@@ -286,214 +674,246 @@ def group_insertion_sites(junctions: list[Junction]) -> list[InsertionSite]:
                 host_chr=chrom,
             )
 
-            if paired is not None:
+            positions = [j1.junction_pos_host]
+            if paired_idx is not None:
                 used.add(i)
-                used.add(paired)
-                p1, p2 = j1.junction_pos_host, juncs[paired].junction_pos_host
-                site.pos_5p = min(p1, p2)
-                site.pos_3p = max(p1, p2)
-                if p1 <= p2:
-                    site.contig_5p = j1.contig_name
-                    site.contig_3p = juncs[paired].contig_name
-                    site.junctions = [j1, juncs[paired]]
-                else:
-                    site.contig_5p = juncs[paired].contig_name
-                    site.contig_3p = j1.contig_name
-                    site.junctions = [juncs[paired], j1]
+                used.add(paired_idx)
+                positions.append(juncs[paired_idx].junction_pos_host)
             else:
                 used.add(i)
-                site.pos_5p = j1.junction_pos_host
-                site.pos_3p = 0
-                site.contig_5p = j1.contig_name
-                site.junctions = [j1]
 
+            site.pos_5p = min(positions)
+            site.pos_3p = max(positions) if len(positions) > 1 else 0
+
+            # Extract seeds from soft-clips at junction positions
+            _extract_seeds_at_positions(site, host_bam, positions, chrom,
+                                        min_clip, window)
             sites.append(site)
 
     return sites
 
 
+def _extract_seeds_at_positions(
+    site: InsertionSite,
+    host_bam: Path,
+    positions: list[int],
+    chrom: str,
+    min_clip: int,
+    window: int,
+) -> None:
+    """Extract soft-clip seeds at known junction positions."""
+    bam = pysam.AlignmentFile(str(host_bam), "rb")
+
+    for jpos in positions:
+        right_clips: list[str] = []
+        left_clips: list[str] = []
+
+        for read in bam.fetch(chrom, max(0, jpos - 200), jpos + 200):
+            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                continue
+            cigar = read.cigartuples
+            if cigar is None:
+                continue
+            seq = read.query_sequence
+            if seq is None:
+                continue
+
+            if cigar[-1][0] == 4 and cigar[-1][1] >= min_clip:
+                if abs(read.reference_end - jpos) <= window:
+                    right_clips.append(seq[-cigar[-1][1]:])
+
+            if cigar[0][0] == 4 and cigar[0][1] >= min_clip:
+                if abs(read.reference_start - jpos) <= window:
+                    left_clips.append(seq[:cigar[0][1]])
+
+        if right_clips and len(right_clips) >= 2:
+            consensus = _build_consensus(right_clips, "right")
+            if len(consensus) >= min_clip:
+                site.junction_5p = JunctionCluster(
+                    host_chr=chrom, position=jpos, clip_direction="right",
+                    clipped_seqs=right_clips, consensus_clip=consensus,
+                    n_reads=len(right_clips),
+                )
+                if not site.seed_5p or len(consensus) > len(site.seed_5p):
+                    site.seed_5p = consensus
+
+        if left_clips and len(left_clips) >= 2:
+            consensus = _build_consensus(left_clips, "left")
+            if len(consensus) >= min_clip:
+                site.junction_3p = JunctionCluster(
+                    host_chr=chrom, position=jpos, clip_direction="left",
+                    clipped_seqs=left_clips, consensus_clip=consensus,
+                    n_reads=len(left_clips),
+                )
+                if not site.seed_3p or len(consensus) > len(site.seed_3p):
+                    site.seed_3p = consensus
+
+    bam.close()
+
+
 # ---------------------------------------------------------------------------
-# Candidate read extraction
+# Phase 2: Candidate Read Extraction
 # ---------------------------------------------------------------------------
 
 def extract_candidate_reads(
     host_bam: Path,
-    sites: list[InsertionSite],
+    site: InsertionSite,
     out_r1: Path,
     out_r2: Path,
     flank: int = 5000,
     threads: int = 4,
 ) -> int:
-    """Extract candidate reads from host BAM for Pilon gap filling.
+    """Extract reads for assembly from junction regions.
 
-    Collects: junction-flanking reads + unmapped + mate-unmapped.
-    Returns read pair count.
+    1. samtools view for junction ±flank regions
+    2. Extract read names, then samtools view -N for both mates
+    3. Also extract all-unmapped pairs (flag 12)
+    4. Merge, name-sort, convert to paired FASTQ
     """
-    tmp_bams = []
     tmp_dir = out_r1.parent
 
-    # Junction-flanking reads
-    for site in sites:
-        for junc in site.junctions:
-            region = (f"{junc.host_chr}:"
-                      f"{max(1, junc.junction_pos_host - flank)}-"
-                      f"{junc.junction_pos_host + flank}")
-            bam_tmp = tmp_dir / f"_junc_{junc.host_chr}_{junc.junction_pos_host}.bam"
-            subprocess.run(
-                ["samtools", "view", "-b", "-@", str(threads),
-                 str(host_bam), region],
-                stdout=open(bam_tmp, "wb"),
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-            tmp_bams.append(bam_tmp)
+    # Build regions
+    regions = []
+    positions = []
+    if site.pos_5p > 0:
+        positions.append(site.pos_5p)
+    if site.pos_3p > 0:
+        positions.append(site.pos_3p)
+    if not positions:
+        return 0
 
-    # Unmapped reads (construct-internal)
-    unmapped_bam = tmp_dir / "_unmapped.bam"
+    for pos in positions:
+        start = max(1, pos - flank)
+        end = pos + flank
+        regions.append(f"{site.host_chr}:{start}-{end}")
+
+    # Extract reads from junction regions
+    region_bam = tmp_dir / f"_{site.site_id}_regions.bam"
     subprocess.run(
-        ["samtools", "view", "-b", "-f", "4", "-@", str(threads), str(host_bam)],
+        ["samtools", "view", "-b", "-@", str(threads),
+         str(host_bam)] + regions,
+        stdout=open(region_bam, "wb"),
+        stderr=subprocess.DEVNULL, check=True,
+    )
+
+    # Collect read names
+    result = subprocess.run(
+        ["samtools", "view", str(region_bam)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, text=True,
+    )
+    names = set()
+    for line in result.stdout.splitlines():
+        names.add(line.split("\t", 1)[0])
+
+    namelist = tmp_dir / f"_{site.site_id}_names.txt"
+    with open(namelist, "w") as fh:
+        for n in sorted(names):
+            fh.write(n + "\n")
+    log(f"    Junction region reads: {len(names):,} read names")
+
+    # Extract both mates from full BAM
+    both_mates_bam = tmp_dir / f"_{site.site_id}_mates.bam"
+    subprocess.run(
+        ["samtools", "view", "-b", "-N", str(namelist),
+         "-@", str(threads), str(host_bam)],
+        stdout=open(both_mates_bam, "wb"),
+        stderr=subprocess.DEVNULL, check=True,
+    )
+
+    # Also get all-unmapped pairs (both mates unmapped, flag 12)
+    unmapped_bam = tmp_dir / f"_{site.site_id}_unmapped.bam"
+    subprocess.run(
+        ["samtools", "view", "-b", "-f", "12", "-@", str(threads), str(host_bam)],
         stdout=open(unmapped_bam, "wb"),
-        stderr=subprocess.DEVNULL,
-        check=True,
+        stderr=subprocess.DEVNULL, check=True,
     )
-    tmp_bams.append(unmapped_bam)
 
-    # Mate-unmapped (one read maps near junction, mate in insert)
-    mate_unmapped_bam = tmp_dir / "_mate_unmapped.bam"
+    # Merge
+    merged_bam = tmp_dir / f"_{site.site_id}_merged.bam"
     subprocess.run(
-        ["samtools", "view", "-b", "-f", "8", "-@", str(threads), str(host_bam)],
-        stdout=open(mate_unmapped_bam, "wb"),
-        stderr=subprocess.DEVNULL,
-        check=True,
+        ["samtools", "merge", "-f", "-@", str(threads), str(merged_bam),
+         str(both_mates_bam), str(unmapped_bam)],
+        stderr=subprocess.DEVNULL, check=True,
     )
-    tmp_bams.append(mate_unmapped_bam)
 
-    # Merge all
-    merged_bam = tmp_dir / "_candidate_merged.bam"
-    if len(tmp_bams) > 1:
-        subprocess.run(
-            ["samtools", "merge", "-f", "-@", str(threads), str(merged_bam)]
-            + [str(b) for b in tmp_bams],
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-    else:
-        shutil.copy2(tmp_bams[0], merged_bam)
-
-    # Name-sort and convert to FASTQ
-    nsort_bam = tmp_dir / "_candidate_nsort.bam"
+    # Name-sort and convert to paired FASTQ
+    nsort_bam = tmp_dir / f"_{site.site_id}_nsort.bam"
     subprocess.run(
         ["samtools", "sort", "-n", "-@", str(threads),
          str(merged_bam), "-o", str(nsort_bam)],
-        stderr=subprocess.DEVNULL,
-        check=True,
+        stderr=subprocess.DEVNULL, check=True,
     )
     subprocess.run(
-        ["samtools", "fastq",
+        ["samtools", "fastq", "-@", str(threads),
          "-1", str(out_r1), "-2", str(out_r2),
-         "-s", "/dev/null", "-0", "/dev/null",
-         str(nsort_bam)],
-        stderr=subprocess.DEVNULL,
-        check=True,
+         "-s", "/dev/null", "-0", "/dev/null", str(nsort_bam)],
+        stderr=subprocess.DEVNULL, check=True,
     )
 
     # Count reads
     count = 0
-    with pysam.FastxFile(str(out_r1)) as fh:
+    opener = gzip.open if str(out_r1).endswith(".gz") else open
+    with opener(str(out_r1), "rt") as fh:
         for _ in fh:
             count += 1
+    count = count // 4  # FASTQ: 4 lines per read
 
-    # Cleanup temp BAMs
-    for b in tmp_bams:
-        b.unlink(missing_ok=True)
-    merged_bam.unlink(missing_ok=True)
-    nsort_bam.unlink(missing_ok=True)
+    # Cleanup temp files
+    for p in [region_bam, namelist, both_mates_bam, unmapped_bam,
+              merged_bam, nsort_bam]:
+        p.unlink(missing_ok=True)
 
     return count
 
 
-# ---------------------------------------------------------------------------
-# Pseudo-reference construction
-# ---------------------------------------------------------------------------
+def extract_unmapped_paired(
+    host_bam: Path,
+    workdir: Path,
+    threads: int = 4,
+) -> tuple[Path, Path]:
+    """Extract unmapped reads from host BAM as paired FASTQ (cached)."""
+    r1 = workdir / "_unmapped_R1.fq.gz"
+    r2 = workdir / "_unmapped_R2.fq.gz"
+    if r1.exists() and r2.exists():
+        n = 0
+        with gzip.open(r1, "rt") as fh:
+            for _ in fh:
+                n += 1
+        log(f"  Unmapped reads (cached): {n // 4:,} pairs")
+        return r1, r2
 
-
-def build_pseudo_reference(
-    site: InsertionSite,
-    contig_seqs: dict[str, str],
-    host_hits: list[PafHit],
-    construct_hits: list[PafHit],
-    host_ref: Path,
-    flank_size: int = 20000,
-    gap_size: int = 30000,
-) -> str:
-    """Build pseudo-reference for one insertion site.
-
-    Structure: [flank_5p] + [insert_5p] + [N-gap] + [insert_3p] + [flank_3p]
-
-    For single-junction sites, BOTH genomic flanks around the junction
-    position are used so Pilon can fill from both directions.
-
-    Returns the assembled pseudo-reference sequence.
-    """
-    genome = pysam.FastaFile(str(host_ref))
-    chr_len = genome.get_reference_length(site.host_chr)
-
-    # Always extract BOTH flanks around the junction position(s)
-    # 5' flank: upstream of the leftmost junction
-    flank_5p_start = max(0, site.pos_5p - flank_size)
-    flank_5p = genome.fetch(site.host_chr, flank_5p_start, site.pos_5p)
-
-    # 3' flank: downstream of the rightmost junction (or same position for single)
-    anchor_3p = site.pos_3p if site.pos_3p > 0 else site.pos_5p
-    flank_3p_end = min(chr_len, anchor_3p + flank_size)
-    flank_3p = genome.fetch(site.host_chr, anchor_3p, flank_3p_end)
-
-    genome.close()
-
-    # Extract construct portions from junction contigs
-    insert_5p = ""
-    if site.contig_5p and site.contig_5p in contig_seqs:
-        insert_5p = get_construct_portion(
-            site.contig_5p, contig_seqs[site.contig_5p],
-            host_hits, construct_hits,
-        )
-
-    insert_3p = ""
-    if site.contig_3p and site.contig_3p in contig_seqs and site.contig_3p != site.contig_5p:
-        insert_3p = get_construct_portion(
-            site.contig_3p, contig_seqs[site.contig_3p],
-            host_hits, construct_hits,
-        )
-
-    # Assemble: flank_5p + insert_5p + N-gap + insert_3p + flank_3p
-    pseudo = flank_5p + insert_5p + ("N" * gap_size) + insert_3p + flank_3p
-
-    log(f"  Pseudo-ref: {len(flank_5p)}bp flank_5p + {len(insert_5p)}bp insert_5p"
-        f" + {gap_size}N + {len(insert_3p)}bp insert_3p + {len(flank_3p)}bp flank_3p"
-        f" = {len(pseudo)}bp total")
-
-    return pseudo
+    log(f"  Extracting unmapped reads from host BAM...")
+    subprocess.run(
+        f"samtools view -f 4 -@ {threads} -b {host_bam} "
+        f"| samtools sort -n -@ {threads} - "
+        f"| samtools fastq -1 {r1} -2 {r2} -s /dev/null -0 /dev/null - "
+        f"2>/dev/null",
+        shell=True, check=True,
+    )
+    n = 0
+    with gzip.open(r1, "rt") as fh:
+        for _ in fh:
+            n += 1
+    log(f"  Unmapped reads: {n // 4:,} pairs")
+    return r1, r2
 
 
 # ---------------------------------------------------------------------------
-# Seed extension assembler (k-mer indexed, TASR-like)
+# Phase 3: K-mer Extension + Pilon Gap Fill
 # ---------------------------------------------------------------------------
 
-_COMP = str.maketrans("ACGTacgt", "TGCAtgca")
+class StrandAwareSeedExtender:
+    """K-mer based extension engine with PE strand awareness.
 
+    INDEX RULES:
+    - R1 sequences: indexed as-is (forward strand)
+    - R2 sequences: reverse-complemented then indexed (fragment strand)
+    - Raw R2 (as sequenced): NEVER indexed, NEVER used for extension
 
-def revcomp(seq: str) -> str:
-    return seq.translate(_COMP)[::-1]
-
-
-class SeedExtender:
-    """Strand-aware k-mer extension with majority vote consensus.
-
-    Key PE rules:
-    - R1 forward: used as-is for extension
-    - R2: reverse-complemented before use (restoring fragment strand)
-    - Raw R2 (without RC) is NEVER indexed or used for extension
-      → prevents chimeric assembly from head-to-head T-DNA constructs
+    EXTENSION RULES:
+    - Track used reads to prevent infinite loops
+    - Stop at branch points (base ratio < min_ratio)
+    - Majority vote consensus for each new base
     """
 
     def __init__(
@@ -507,14 +927,13 @@ class SeedExtender:
         self.min_overlap = min_overlap
         self.min_depth = min_depth
         self.min_ratio = min_ratio
-        self.seqs: list[str] = []  # R1 forward + R2 RC (fragment strand)
-        # kmer → [(seq_idx, kmer_position), ...]
+        self.seqs: list[str] = []
         self.kmer_index: dict[str, list[tuple[int, int]]] = defaultdict(list)
 
     def load_paired_reads(self, r1_path: Path, r2_path: Path) -> int:
-        """Load paired FASTQ. R1=forward, R2=reverse-complement (fragment strand)."""
-        r1_seqs = self._read_fastq_seqs(r1_path)
-        r2_seqs = self._read_fastq_seqs(r2_path)
+        """Load R1 as forward, R2 as reverse-complement. Return pair count."""
+        r1_seqs = _read_fq_seqs(r1_path)
+        r2_seqs = _read_fq_seqs(r2_path)
         k = self.k
         n = 0
         for r1, r2 in zip(r1_seqs, r2_seqs):
@@ -522,7 +941,7 @@ class SeedExtender:
                 continue
             if "N" in r1 or "N" in r2:
                 continue
-            r2_rc = revcomp(r2)  # RC to restore fragment strand
+            r2_rc = revcomp(r2)
 
             for seq in (r1, r2_rc):
                 idx = len(self.seqs)
@@ -550,12 +969,7 @@ class SeedExtender:
         return n_new
 
     def _extend_right(self, seed: str, used: set[int]) -> str:
-        """Extend seed to the right with used-read tracking.
-
-        The `used` set is shared across iterations in run() to prevent
-        cyclic re-recruitment of the same reads (which causes infinite
-        looping through tandem repeats).
-        """
+        """Extend seed to the right with used-read tracking."""
         k = self.k
         min_ovl = self.min_overlap
         current = seed
@@ -603,18 +1017,14 @@ class SeedExtender:
 
         return current
 
-    def run(self, seed: str, max_iterations: int = 100) -> str:
-        """Iteratively extend seed until convergence.
-
-        Tracks used reads across all iterations and both directions to
-        prevent cyclic looping through repeated sequences.
-        """
+    def extend(self, seed: str, max_iterations: int = 100) -> str:
+        """Extend seed bidirectionally. Return extended sequence."""
         current = seed
         used: set[int] = set()
         for i in range(max_iterations):
             # Right extension
             extended = self._extend_right(current, used)
-            # Left extension (revcomp → right → revcomp)
+            # Left extension (revcomp -> extend right -> revcomp)
             rc_extended = self._extend_right(revcomp(extended), used)
             extended = revcomp(rc_extended)
 
@@ -627,262 +1037,10 @@ class SeedExtender:
             current = extended
         return current
 
-    @staticmethod
-    def _read_fastq_seqs(path: Path) -> list[str]:
-        opener = gzip.open if str(path).endswith(".gz") else open
-        seqs: list[str] = []
-        with opener(path, "rt") as fh:
-            for i, line in enumerate(fh):
-                if i % 4 == 1:
-                    seqs.append(line.strip().upper())
-        return seqs
-
 
 # ---------------------------------------------------------------------------
-# Candidate read extraction from junction region
+# K-mer recruitment
 # ---------------------------------------------------------------------------
-
-def extract_junction_candidates(
-    host_bam: Path,
-    junctions: list[Junction],
-    out_r1: Path,
-    out_r2: Path,
-    flank: int = 1000,
-    threads: int = 4,
-) -> int:
-    """Extract candidate reads from host BAM near junction positions.
-
-    Extracts reads mapping within ±flank of each junction position.
-    Uses samtools view with region queries — this naturally includes reads
-    whose mates are unmapped (T-DNA content) because the mapped end is in
-    the junction region. Name-sorting and fastq conversion recovers both
-    mates as paired reads.
-
-    Returns read pair count.
-    """
-    tmp_dir = out_r1.parent
-
-    # Build regions for junction-flanking reads
-    regions = []
-    seen = set()
-    for j in junctions:
-        start = max(1, j.junction_pos_host - flank)
-        end = j.junction_pos_host + flank
-        key = (j.host_chr, start, end)
-        if key not in seen:
-            regions.append(f"{j.host_chr}:{start}-{end}")
-            seen.add(key)
-
-    # Extract reads from junction regions into a single BAM
-    region_bam = tmp_dir / "_junc_regions.bam"
-    subprocess.run(
-        ["samtools", "view", "-b", "-@", str(threads),
-         str(host_bam)] + regions,
-        stdout=open(region_bam, "wb"),
-        stderr=subprocess.DEVNULL, check=True,
-    )
-
-    # Collect read names from junction regions, then extract both mates
-    # This is needed because samtools view only returns reads physically
-    # in the region — the mate at a distant locus (or unmapped) is not included.
-    # We use samtools view -N (name list) on the full BAM to get both mates.
-    namelist = tmp_dir / "_junc_readnames.txt"
-    subprocess.run(
-        ["samtools", "view", str(region_bam)],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True,
-    )
-    # Extract read names (field 1) from region BAM
-    result = subprocess.run(
-        ["samtools", "view", str(region_bam)],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, text=True,
-    )
-    names = set()
-    for line in result.stdout.splitlines():
-        names.add(line.split("\t", 1)[0])
-    with open(namelist, "w") as fh:
-        for n in sorted(names):
-            fh.write(n + "\n")
-    log(f"    Junction region read names: {len(names):,}")
-
-    # Extract both mates of all junction-region reads from the full BAM
-    both_mates_bam = tmp_dir / "_junc_both_mates.bam"
-    subprocess.run(
-        ["samtools", "view", "-b", "-N", str(namelist),
-         "-@", str(threads), str(host_bam)],
-        stdout=open(both_mates_bam, "wb"),
-        stderr=subprocess.DEVNULL, check=True,
-    )
-
-    # Name-sort and convert to paired FASTQ
-    nsort_bam = tmp_dir / "_candidate_nsort.bam"
-    subprocess.run(
-        ["samtools", "sort", "-n", "-@", str(threads),
-         str(both_mates_bam), "-o", str(nsort_bam)],
-        stderr=subprocess.DEVNULL, check=True,
-    )
-
-    subprocess.run(
-        ["samtools", "fastq", "-@", str(threads),
-         "-1", str(out_r1), "-2", str(out_r2),
-         "-s", "/dev/null", "-0", "/dev/null", str(nsort_bam)],
-        stderr=subprocess.DEVNULL, check=True,
-    )
-
-    # Count
-    count = 0
-    with pysam.FastxFile(str(out_r1)) as fh:
-        for _ in fh:
-            count += 1
-
-    # Cleanup
-    for p in [region_bam, namelist, both_mates_bam, nsort_bam]:
-        p.unlink(missing_ok=True)
-
-    return count
-
-
-# ---------------------------------------------------------------------------
-# Junction read seed extraction
-# ---------------------------------------------------------------------------
-
-def extract_junction_seeds(
-    host_bam: Path,
-    junctions: list[Junction],
-    host_ref: Path | None = None,
-    host_flank_size: int = 1000,
-    min_clip: int = 15,
-    window: int = 10,
-) -> list[tuple[str, str]]:
-    """Extract T-DNA seed sequences from soft-clipped junction reads.
-
-    For each junction position, collects soft-clipped reads from the host BAM,
-    builds a majority-vote consensus from overlapping clips, and returns
-    seed sequences with host genome flank prepended/appended.
-
-    Host flank provides a known anchor for Pilon gap fill:
-    - R-clip (T-DNA extends right): [host_1kb] + [T-DNA seed]
-    - L-clip (T-DNA extends left):  [T-DNA seed] + [host_1kb]
-
-    Returns list of (seed_name, seed_sequence) tuples.
-    """
-    seeds: list[tuple[str, str]] = []
-    seen_positions: set[tuple[str, int]] = set()
-
-    # Load host reference for flanking sequence
-    genome = None
-    if host_ref is not None:
-        genome = pysam.FastaFile(str(host_ref))
-
-    bam = pysam.AlignmentFile(str(host_bam), "rb")
-
-    for j in junctions:
-        chrom = j.host_chr
-        jpos = j.junction_pos_host
-        key = (chrom, jpos)
-        if key in seen_positions:
-            continue
-        seen_positions.add(key)
-
-        right_clips: list[tuple[int, str]] = []
-        left_clips: list[tuple[int, str]] = []
-
-        for read in bam.fetch(chrom, max(0, jpos - 200), jpos + 200):
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                continue
-            cigar = read.cigartuples
-            if cigar is None:
-                continue
-            seq = read.query_sequence
-
-            if cigar[-1][0] == 4 and cigar[-1][1] >= min_clip:
-                sclip_len = cigar[-1][1]
-                if abs(read.reference_end - jpos) <= window:
-                    offset = read.reference_end - jpos
-                    right_clips.append((offset, seq[-sclip_len:]))
-
-            if cigar[0][0] == 4 and cigar[0][1] >= min_clip:
-                sclip_len = cigar[0][1]
-                if abs(read.reference_start - jpos) <= window:
-                    offset = read.reference_start - jpos
-                    left_clips.append((offset, seq[:sclip_len]))
-
-        for direction, clips in [("R", right_clips), ("L", left_clips)]:
-            if len(clips) < 2:
-                continue
-            votes: dict[int, Counter] = defaultdict(Counter)
-            for offset, tdna in clips:
-                for i, base in enumerate(tdna):
-                    if direction == "R":
-                        p = offset + i
-                    else:
-                        p = offset - len(tdna) + i
-                    votes[p][base.upper()] += 1
-
-            if direction == "R":
-                consensus = []
-                for p in range(min(votes), max(votes) + 1):
-                    if p not in votes:
-                        break
-                    v = votes[p]
-                    total = sum(v.values())
-                    best, cnt = v.most_common(1)[0]
-                    if total >= 2 and cnt / total >= 0.51:
-                        consensus.append(best)
-                    else:
-                        break
-            else:
-                consensus = []
-                for p in range(max(votes), min(votes) - 1, -1):
-                    if p not in votes:
-                        break
-                    v = votes[p]
-                    total = sum(v.values())
-                    best, cnt = v.most_common(1)[0]
-                    if total >= 2 and cnt / total >= 0.51:
-                        consensus.append(best)
-                    else:
-                        break
-                consensus.reverse()
-
-            if len(consensus) >= 20:
-                seed_name = f"junction_{chrom}_{jpos}_{direction}"
-                tdna_seq = "".join(consensus)
-                host_flank = ""
-                flank_side = ""
-
-                # Extract host genome flank at junction side
-                if genome is not None:
-                    chr_len = genome.get_reference_length(chrom)
-                    if direction == "R":
-                        # T-DNA extends right → host is LEFT of junction
-                        flank_start = max(0, jpos - host_flank_size)
-                        host_flank = genome.fetch(chrom, flank_start, jpos).upper()
-                        flank_side = "prefix"
-                        log(f"    Seed: {seed_name} = {len(host_flank)}bp host + "
-                            f"{len(tdna_seq)}bp T-DNA (from {len(clips)} reads)")
-                    else:
-                        # T-DNA extends left → host is RIGHT of junction
-                        flank_end = min(chr_len, jpos + host_flank_size)
-                        host_flank = genome.fetch(chrom, jpos, flank_end).upper()
-                        flank_side = "suffix"
-                        log(f"    Seed: {seed_name} = {len(tdna_seq)}bp T-DNA + "
-                            f"{len(host_flank)}bp host (from {len(clips)} reads)")
-                else:
-                    log(f"    Seed: {seed_name} = {len(tdna_seq)}bp "
-                        f"(from {len(clips)} reads)")
-
-                seeds.append((seed_name, tdna_seq, host_flank, flank_side))
-
-    bam.close()
-    if genome is not None:
-        genome.close()
-    return seeds
-
-
-# ---------------------------------------------------------------------------
-# K-mer recruitment from unmapped reads (replaces BWA-based recruitment)
-# ---------------------------------------------------------------------------
-
 
 def recruit_by_kmer(
     contig_seq: str,
@@ -892,19 +1050,17 @@ def recruit_by_kmer(
 ) -> tuple[list[str], list[str]]:
     """K-mer based paired recruitment from unmapped reads.
 
-    Builds k-mer set from contig (both strands), scans unmapped R1 and R2_rc
-    for matches. Returns (r1_seqs, r2_rc_seqs) — R2 is already RC'd.
-    Raw R2 is NOT used for matching (head-to-head safety).
+    Builds k-mer set from contig (both strands), scans R1 forward + R2 RC.
+    Raw R2 is NOT used (head-to-head safety).
+    Returns (r1_seqs, r2_rc_seqs).
     """
-    # Build contig k-mer set (both strands)
     contig_kmers: set[str] = set()
     for seq in (contig_seq, revcomp(contig_seq)):
         for i in range(len(seq) - k + 1):
             contig_kmers.add(seq[i:i + k])
 
-    opener = gzip.open
-    r1_seqs = _read_fq_seqs(unmapped_r1, opener)
-    r2_seqs = _read_fq_seqs(unmapped_r2, opener)
+    r1_seqs = _read_fq_seqs(unmapped_r1)
+    r2_seqs = _read_fq_seqs(unmapped_r2)
 
     recruited_r1: list[str] = []
     recruited_r2rc: list[str] = []
@@ -916,7 +1072,7 @@ def recruit_by_kmer(
         r2_rc = revcomp(r2)
 
         hit = False
-        for seq in (r1, r2_rc):  # check R1 and R2_rc only, NOT raw R2
+        for seq in (r1, r2_rc):
             for i in range(0, len(seq) - k + 1, stride):
                 if seq[i:i + k] in contig_kmers:
                     hit = True
@@ -931,157 +1087,38 @@ def recruit_by_kmer(
     return recruited_r1, recruited_r2rc
 
 
-def _read_fq_seqs(path: Path, opener=None) -> list[str]:
-    """Read FASTQ sequences only."""
-    if opener is None:
-        opener = gzip.open if str(path).endswith(".gz") else open
-    seqs: list[str] = []
-    with opener(path, "rt") as fh:
-        for i, line in enumerate(fh):
-            if i % 4 == 1:
-                seqs.append(line.strip().upper())
-    return seqs
-
-
-def extract_unmapped_paired(
-    host_bam: Path,
-    workdir: Path,
-    threads: int = 4,
-) -> tuple[Path, Path]:
-    """Extract unmapped reads from host BAM as paired FASTQ (cached)."""
-    r1 = workdir / "_unmapped_R1.fq.gz"
-    r2 = workdir / "_unmapped_R2.fq.gz"
-    if r1.exists() and r2.exists():
-        return r1, r2
-    log(f"  Extracting unmapped reads from host BAM...")
-    subprocess.run(
-        f"samtools view -f 4 -@ {threads} -b {host_bam} "
-        f"| samtools sort -n -@ {threads} - "
-        f"| samtools fastq -1 {r1} -2 {r2} -s /dev/null -0 /dev/null - "
-        f"2>/dev/null",
-        shell=True, check=True,
-    )
-    n = 0
-    with gzip.open(r1, "rt") as fh:
-        for _ in fh:
-            n += 1
-    log(f"  Unmapped reads: {n // 4:,} pairs")
-    return r1, r2
-
-
 # ---------------------------------------------------------------------------
-# Pilon gap fill
+# Pilon gap fill (CRITICAL: [contig_5p] + NNN + [contig_3p] as ONE scaffold)
 # ---------------------------------------------------------------------------
-
-
-def _write_pool_fastq(extender: SeedExtender, r1_out: Path, r2_out: Path) -> None:
-    """Write extender's read pool as pseudo-paired FASTQ for Pilon mapping.
-
-    Extender stores R1 (even idx) and R2_rc (odd idx) alternating.
-    For Pilon, R2 needs to be in original sequencing orientation (RC of R2_rc).
-    """
-    with open(r1_out, "w") as f1, open(r2_out, "w") as f2:
-        for i in range(0, len(extender.seqs) - 1, 2):
-            r1 = extender.seqs[i]
-            r2_rc = extender.seqs[i + 1]
-            r2_raw = revcomp(r2_rc)
-            name = f"read_{i // 2}"
-            f1.write(f"@{name}/1\n{r1}\n+\n{'I' * len(r1)}\n")
-            f2.write(f"@{name}/2\n{r2_raw}\n+\n{'I' * len(r2_raw)}\n")
-
-
-def _find_end_anchors(
-    contig: str,
-    extender: SeedExtender,
-    search_len: int = 50,
-) -> tuple[str, str]:
-    """Find PE mate anchor sequences at both contig ends.
-
-    Right anchor: R1 reads (even idx) at contig right end → their R2_rc mates
-                  are ~insert_size further right → use as right anchor.
-    Left anchor:  R2_rc reads (odd idx) at contig left end → their R1 mates
-                  are ~insert_size further left → use as left anchor.
-
-    Returns (left_anchor, right_anchor). Empty string if no anchor found.
-    """
-    k = extender.k
-
-    def _collect_mates(region: str, read_parity: int) -> list[str]:
-        """Collect mate sequences for reads of given parity matching region k-mers."""
-        kmers = {region[i:i + k] for i in range(len(region) - k + 1)}
-        mates: list[str] = []
-        seen: set[int] = set()
-        for kmer in kmers:
-            for seq_idx, kpos in extender.kmer_index.get(kmer, []):
-                if seq_idx in seen or seq_idx % 2 != read_parity:
-                    continue
-                seen.add(seq_idx)
-                mate_idx = seq_idx ^ 1  # even↔odd
-                if mate_idx < len(extender.seqs):
-                    mates.append(extender.seqs[mate_idx])
-        return mates
-
-    # Right anchor: R1 (even=0) at right end → R2_rc mates point further right
-    right_mates = _collect_mates(contig[-search_len:], read_parity=0)
-    right_anchor = max(right_mates, key=len) if right_mates else ""
-
-    # Left anchor: R2_rc (odd=1) at left end → R1 mates point further left
-    left_mates = _collect_mates(contig[:search_len], read_parity=1)
-    left_anchor = max(left_mates, key=len) if left_mates else ""
-
-    return left_anchor, right_anchor
-
 
 def pilon_fill(
-    contig: str,
-    extender: SeedExtender,
+    contig_5p: str,
+    contig_3p: str,
     r1_fq: Path,
     r2_fq: Path,
     workdir: Path,
-    insert_size: int = 500,
+    gap_size: int = 1000,
     threads: int = 4,
-) -> str:
-    """Build PE-anchored scaffold and run Pilon to extend contig ends.
+) -> tuple[str, str, bool]:
+    """Build scaffold [contig_5p]+NNN+[contig_3p] and run Pilon to fill gap.
 
-    Finds PE mates of reads at contig ends, places them as anchors
-    ~insert_size away, creating internal gaps that Pilon can fill.
+    KEY INSIGHT: Pilon only fills INTERNAL gaps between two known sequences.
+    Both contigs must be in ONE scaffold for Pilon to work.
 
-    Scaffold: [left_anchor] + [insert_size N] + [contig] + [insert_size N] + [right_anchor]
-                              ↑ internal gap ↑            ↑ internal gap ↑
-    Both gaps have known sequence on both sides → Pilon fills them.
-
-    Returns extended contig sequence.
+    Returns (updated_5p, updated_3p, gap_filled).
+    gap_filled=True means no N remains (complete assembly).
     """
     workdir.mkdir(parents=True, exist_ok=True)
 
-    left_anchor, right_anchor = _find_end_anchors(contig, extender)
+    if not contig_5p or not contig_3p:
+        return contig_5p, contig_3p, False
 
-    if not left_anchor and not right_anchor:
-        log(f"    Pilon: no PE anchors found, skipping")
-        return contig
-
-    anchor_info = []
-    if left_anchor:
-        anchor_info.append(f"L={len(left_anchor)}bp")
-    if right_anchor:
-        anchor_info.append(f"R={len(right_anchor)}bp")
-    log(f"    Pilon scaffold: {' '.join(anchor_info)} anchors, "
-        f"{insert_size}N gaps, contig={len(contig):,}bp")
-
-    # Build scaffold: [left_anchor] + NNN + [contig] + NNN + [right_anchor]
-    gap = "N" * insert_size
-    parts: list[str] = []
-    if left_anchor:
-        parts.extend([left_anchor, gap])
-    parts.append(contig)
-    if right_anchor:
-        parts.extend([gap, right_anchor])
-    scaffold = "".join(parts)
-
+    # Build scaffold: [contig_5p] + NNN + [contig_3p]
+    scaffold = contig_5p + ("N" * gap_size) + contig_3p
     ref_fa = workdir / "pilon_ref.fasta"
     write_fasta(ref_fa, "scaffold", scaffold)
 
-    # minimap2 short-read mapping
+    # Map reads with minimap2
     bam = workdir / "pilon_mapped.bam"
     subprocess.run(
         f"minimap2 -ax sr -t {threads} --secondary=no "
@@ -1101,20 +1138,24 @@ def pilon_fill(
 
     if n_mapped < 5:
         log(f"    Pilon: only {n_mapped} mapped reads, skipping")
-        return contig
+        return contig_5p, contig_3p, False
 
-    # Pilon
+    log(f"    Pilon: {n_mapped:,} reads mapped to scaffold "
+        f"({len(contig_5p)}+{gap_size}N+{len(contig_3p)}={len(scaffold)}bp)")
+
+    # Run Pilon
     pilon_prefix = workdir / "pilon_out"
-    pilon_log = workdir / "pilon.log"
-    with open(pilon_log, "w") as logfh:
+    pilon_log_file = workdir / "pilon.log"
+    with open(pilon_log_file, "w") as logfh:
         subprocess.run(
             ["pilon", "--genome", str(ref_fa), "--frags", str(bam),
-             "--output", str(pilon_prefix), "--fix", "gaps",
+             "--output", str(pilon_prefix), "--fix", "all",
              "--mindepth", "2", "--gapmargin", "100000"],
             stdout=logfh, stderr=subprocess.STDOUT,
         )
-    if pilon_log.exists():
-        with open(pilon_log) as fh:
+
+    if pilon_log_file.exists():
+        with open(pilon_log_file) as fh:
             for line in fh:
                 line = line.strip()
                 if any(k in line for k in ["Gap", "fix", "Total", "Confirmed"]):
@@ -1122,129 +1163,80 @@ def pilon_fill(
 
     pilon_fa = Path(f"{pilon_prefix}.fasta")
     if not pilon_fa.exists():
-        return contig
+        return contig_5p, contig_3p, False
 
     seqs = read_fasta(pilon_fa)
     if not seqs:
-        return contig
+        return contig_5p, contig_3p, False
 
     filled = list(seqs.values())[0]
 
-    # Strip any remaining edge N's (unfilled anchor gaps at edges)
-    filled = filled.strip("N")
+    # Check if gap is fully filled (no N remaining)
+    n_match = re.search(r"N{10,}", filled)
+    if n_match is None:
+        # Gap fully filled!
+        log(f"    Pilon: gap completely filled! ({len(filled):,}bp)")
+        return filled, "", True
 
-    if len(filled) < len(contig) * 0.5:
-        log(f"    Pilon: result too short ({len(filled)} vs {len(contig)}), "
-            f"keeping original")
-        return contig
+    # Split at longest remaining N stretch
+    n_runs = [(m.start(), m.end()) for m in re.finditer(r"N+", filled)]
+    if not n_runs:
+        return filled, "", True
 
-    return filled
+    # Find longest N run
+    longest = max(n_runs, key=lambda x: x[1] - x[0])
+    new_5p = filled[:longest[0]]
+    new_3p = filled[longest[1]:]
+
+    growth_5p = len(new_5p) - len(contig_5p)
+    growth_3p = len(new_3p) - len(contig_3p)
+    remaining_gap = longest[1] - longest[0]
+    log(f"    Pilon: 5p {len(contig_5p):,}→{len(new_5p):,}bp (+{growth_5p}), "
+        f"3p {len(contig_3p):,}→{len(new_3p):,}bp (+{growth_3p}), "
+        f"gap {gap_size}→{remaining_gap}N")
+
+    return new_5p, new_3p, False
 
 
 # ---------------------------------------------------------------------------
-# Seed extension assembly (alternating K-mer ext + Pilon)
+# Host genome termination check
 # ---------------------------------------------------------------------------
 
-
-def extract_junction_host_flanks(
+def check_host_termination(
+    contig_5p: str,
+    contig_3p: str,
     host_ref: Path,
-    junctions: list[Junction],
-    flank_len: int = 200,
-) -> list[tuple[str, str, str]]:
-    """Extract host genomic flanking sequences at each junction position.
-
-    For each junction, extracts flank_len bp on BOTH sides of the junction:
-    - left_flank: host sequence upstream of junction (host side for R-clip seeds)
-    - right_flank: host sequence downstream of junction (host side for L-clip seeds)
-
-    Returns list of (junction_id, left_flank_seq, right_flank_seq).
-    """
-    genome = pysam.FastaFile(str(host_ref))
-    flanks: list[tuple[str, str, str]] = []
-    seen: set[tuple[str, int]] = set()
-
-    for j in junctions:
-        key = (j.host_chr, j.junction_pos_host)
-        if key in seen:
-            continue
-        seen.add(key)
-
-        chr_len = genome.get_reference_length(j.host_chr)
-        pos = j.junction_pos_host
-
-        left_start = max(0, pos - flank_len)
-        left_flank = genome.fetch(j.host_chr, left_start, pos).upper()
-
-        right_end = min(chr_len, pos + flank_len)
-        right_flank = genome.fetch(j.host_chr, pos, right_end).upper()
-
-        jid = f"{j.host_chr}:{pos}"
-        flanks.append((jid, left_flank, right_flank))
-        log(f"    Host flank at {jid}: L={len(left_flank)}bp, R={len(right_flank)}bp")
-
-    genome.close()
-    return flanks
-
-
-def _check_host_reached(
-    contig: str,
-    host_ref: Path | None,
-    junctions: list,
     workdir: Path,
-    check_len: int = 500,
-    local_flank: int = 50000,
+    check_len: int = 100,
+    min_identity: float = 0.95,
+    min_match: int = 50,
 ) -> tuple[bool, bool]:
-    """Check if contig ends match the local host genome near known junctions.
+    """Check if contig ends have reached back to host genome.
 
-    Extracts a local region (±local_flank bp around each junction) from the
-    host genome and maps the contig's first/last check_len bp against it
-    using minimap2.  This avoids whole-genome false positives from host-derived
-    promoters (Ubi1, Act1) because only the immediate junction neighbourhood
-    is queried.
+    5' contig growing end = right end (extending into insert then through to host)
+    3' contig growing end = left end (extending into insert then through to host)
 
-    Returns (left_reached, right_reached).
+    Returns (reached_5p, reached_3p).
     """
-    if host_ref is None or len(contig) < check_len * 3:
+    if len(contig_5p) < check_len * 2 and len(contig_3p) < check_len * 2:
         return False, False
 
-    import pysam as _pysam
+    query_fa = workdir / "_host_term.fa"
+    with open(query_fa, "w") as fh:
+        if len(contig_5p) >= check_len * 2:
+            fh.write(f">growing_5p\n{contig_5p[-check_len:]}\n")
+        if len(contig_3p) >= check_len * 2:
+            fh.write(f">growing_3p\n{contig_3p[:check_len]}\n")
 
-    # Build local reference from junction neighbourhood
-    local_fa = workdir / "_host_local.fa"
-    genome = _pysam.FastaFile(str(host_ref))
-    seen: set[tuple[str, int]] = set()
-    with open(local_fa, "w") as fout:
-        for j in junctions:
-            key = (j.host_chr, j.junction_pos_host)
-            if key in seen:
-                continue
-            seen.add(key)
-            chr_len = genome.get_reference_length(j.host_chr)
-            start = max(0, j.junction_pos_host - local_flank)
-            end = min(chr_len, j.junction_pos_host + local_flank)
-            seq = genome.fetch(j.host_chr, start, end).upper()
-            fout.write(f">{j.host_chr}:{start}-{end}\n{seq}\n")
-    genome.close()
-
-    # Write contig ends as query
-    query_fa = workdir / "_host_check.fa"
-    left_end = contig[:check_len].upper()
-    right_end = contig[-check_len:].upper()
-    with open(query_fa, "w") as fout:
-        fout.write(f">left_end\n{left_end}\n")
-        fout.write(f">right_end\n{right_end}\n")
-
-    # Map with minimap2 (asm5 preset for high-identity genome matching)
-    paf = workdir / "_host_check.paf"
+    paf = workdir / "_host_term.paf"
     subprocess.run(
-        ["minimap2", "-c", "--secondary=no", "-t", "2",
-         str(local_fa), str(query_fa)],
+        ["minimap2", "-c", "--secondary=no", "-t", "1",
+         str(host_ref), str(query_fa)],
         stdout=open(paf, "w"), stderr=subprocess.DEVNULL,
     )
 
-    # Parse PAF — require ≥200bp match at ≥0.95 identity
-    left_hit = False
-    right_hit = False
+    reached_5p = False
+    reached_3p = False
     if paf.exists():
         with open(paf) as fh:
             for line in fh:
@@ -1254,333 +1246,505 @@ def _check_host_reached(
                 qname = cols[0]
                 match_bp = int(cols[9])
                 block_len = int(cols[10])
-                if match_bp < 200 or block_len < 200:
+                if match_bp < min_match or block_len < min_match:
                     continue
                 identity = match_bp / block_len
-                if identity < 0.95:
+                if identity < min_identity:
                     continue
-                target = cols[5]
-                if qname == "left_end":
-                    left_hit = True
-                elif qname == "right_end":
-                    right_hit = True
+                if qname == "growing_5p":
+                    reached_5p = True
+                elif qname == "growing_3p":
+                    reached_3p = True
 
-    # Cleanup
-    for f in (local_fa, query_fa, paf):
+    for f in (query_fa, paf):
         f.unlink(missing_ok=True)
 
-    return left_hit, right_hit
+    return reached_5p, reached_3p
 
 
-def _detect_tandem_repeat(seq: str, min_period: int = 500, max_period: int = 5000,
-                          ) -> tuple[str, int, int]:
-    """Detect and trim tandem repeats in a sequence.
+# ---------------------------------------------------------------------------
+# Foreign read refinement (minimap2 chaining + Pilon)
+# ---------------------------------------------------------------------------
 
-    Tests candidate periods from min_period to max_period. When a period with
-    ≥95% identity is found, counts how many repeat copies exist at the end
-    of the sequence and trims all but one.
+def extract_foreign_reads(
+    s03_r1: Path,
+    s03_r2: Path,
+    host_ref: Path,
+    workdir: Path,
+    threads: int = 4,
+) -> tuple[Path, Path]:
+    """Extract s03 reads that DON'T map to host genome (construct-only reads).
 
-    Returns (trimmed_seq, repeat_period, n_copies_removed).
+    These 'foreign' reads contain transgene sequences not present in the host.
+    By filtering out host-mapping reads, we enrich for construct-internal
+    elements (hLF1, G6 EPSPS, Pepc, etc.) that enable Pilon to extend
+    assemblies through regions the k-mer assembler couldn't resolve.
     """
-    if len(seq) < min_period * 3:
-        return seq, 0, 0
+    foreign_r1 = workdir / "_foreign_R1.fq.gz"
+    foreign_r2 = workdir / "_foreign_R2.fq.gz"
+    if foreign_r1.exists() and foreign_r2.exists():
+        n = 0
+        with gzip.open(foreign_r1, "rt") as fh:
+            for _ in fh:
+                n += 1
+        log(f"  Foreign reads (cached): {n // 4:,} pairs")
+        return foreign_r1, foreign_r2
 
-    # Test candidate periods (step=1 for exact detection; ≤5K iterations is fast)
-    best_period = 0
-    for period in range(min_period, min(max_period + 1, len(seq) // 3)):
-        # Check identity at this period over a diagnostic window
-        window = min(period, len(seq) - period * 2)
-        if window < 200:
-            continue
-        # Sample from the latter half of the sequence
-        start = len(seq) - period * 2
-        matches = 0
-        total = 0
-        for i in range(start, start + window):
-            a = seq[i]
-            b = seq[i + period]
-            if a != "N" and b != "N":
-                total += 1
-                if a == b:
-                    matches += 1
-        if total > 200 and matches / total >= 0.95:
-            best_period = period
-            break  # shortest matching period
+    log(f"  Extracting foreign reads (s03 reads unmapped to host)...")
 
-    if best_period == 0:
-        return seq, 0, 0
+    # Map s03 reads to host
+    host_bam = workdir / "_s03_to_host.bam"
+    subprocess.run(
+        f"bwa mem -t {threads} {host_ref} {s03_r1} {s03_r2} 2>/dev/null "
+        f"| samtools sort -@ 4 -o {host_bam}",
+        shell=True, check=True,
+    )
+    subprocess.run(["samtools", "index", str(host_bam)],
+                   stderr=subprocess.DEVNULL, check=True)
 
-    # Count how many complete copies exist at the end
-    n_copies = 0
-    pos = len(seq)
-    while pos - best_period * 2 >= 0:
-        chunk1 = seq[pos - best_period : pos]
-        chunk2 = seq[pos - best_period * 2 : pos - best_period]
-        matches = sum(1 for a, b in zip(chunk1, chunk2) if a == b and a != "N")
-        total = sum(1 for a, b in zip(chunk1, chunk2) if a != "N" and b != "N")
-        if total > 100 and matches / total >= 0.90:
-            n_copies += 1
-            pos -= best_period
-        else:
+    # Get properly mapped read names (MAPQ >= 20, both reads mapped)
+    host_mapped = set()
+    all_reads = set()
+    with pysam.AlignmentFile(str(host_bam), "rb") as bam:
+        for read in bam.fetch(until_eof=True):
+            all_reads.add(read.query_name)
+            if (not read.is_unmapped and not read.mate_is_unmapped
+                    and read.mapping_quality >= 20):
+                host_mapped.add(read.query_name)
+
+    foreign_names = all_reads - host_mapped
+    log(f"  Total: {len(all_reads):,} pairs, "
+        f"host: {len(host_mapped):,}, foreign: {len(foreign_names):,}")
+
+    # Extract foreign reads as FASTQ
+    readname_file = workdir / "_foreign_names.txt"
+    with open(readname_file, "w") as fh:
+        for name in foreign_names:
+            fh.write(f"{name}\n")
+
+    subprocess.run(
+        f"samtools view -h -N {readname_file} {host_bam} "
+        f"| samtools sort -n -@ 4 - "
+        f"| samtools fastq -1 {foreign_r1} -2 {foreign_r2} "
+        f"-s /dev/null -0 /dev/null - 2>/dev/null",
+        shell=True, check=True,
+    )
+
+    # Cleanup
+    host_bam.unlink(missing_ok=True)
+    Path(f"{host_bam}.bai").unlink(missing_ok=True)
+    readname_file.unlink(missing_ok=True)
+
+    n = 0
+    with gzip.open(foreign_r1, "rt") as fh:
+        for _ in fh:
+            n += 1
+    log(f"  Foreign reads extracted: {n // 4:,} pairs")
+    return foreign_r1, foreign_r2
+
+
+def refine_with_foreign_reads(
+    insert_fasta: Path,
+    s03_r1: Path,
+    s03_r2: Path,
+    host_ref: Path,
+    workdir: Path,
+    threads: int = 4,
+    max_rounds: int = 10,
+) -> Path:
+    """Refine assembled insert using minimap2 chaining + Pilon with foreign reads.
+
+    Approach:
+      1. Extract foreign reads (s03 reads unmapped to host)
+      2. Iterative: minimap2 map → Pilon --fix all → check convergence
+      3. Pilon's local reassembly can extend construct regions using
+         foreign reads that the k-mer assembler couldn't resolve
+         (especially palindromic/inverted repeat regions in head-to-head T-DNA)
+
+    Returns path to refined FASTA.
+    """
+    refine_dir = workdir / "_foreign_refine"
+    refine_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract foreign reads
+    foreign_r1, foreign_r2 = extract_foreign_reads(
+        s03_r1, s03_r2, host_ref, refine_dir, threads=threads,
+    )
+
+    # Check if we have enough foreign reads
+    n_foreign = 0
+    with gzip.open(foreign_r1, "rt") as fh:
+        for _ in fh:
+            n_foreign += 1
+    n_foreign //= 4
+    if n_foreign < 10:
+        log(f"  Too few foreign reads ({n_foreign}), skipping refinement")
+        return insert_fasta
+
+    # Start with current assembly
+    seqs = read_fasta(insert_fasta)
+    if not seqs:
+        return insert_fasta
+    seq_name = list(seqs.keys())[0]
+    current_seq = list(seqs.values())[0]
+    prev_len = len(current_seq)
+
+    log(f"  Foreign read refinement: {prev_len:,}bp scaffold, "
+        f"{n_foreign:,} foreign read pairs")
+
+    for rnd in range(1, max_rounds + 1):
+        scaffold_fa = refine_dir / f"scaffold_r{rnd}.fa"
+        write_fasta(scaffold_fa, "insert_scaffold", current_seq)
+
+        # Map foreign reads with minimap2 (k-mer chaining handles repeats)
+        bam = refine_dir / f"r{rnd}.bam"
+        subprocess.run(
+            f"minimap2 -ax sr -t {threads} {scaffold_fa} "
+            f"{foreign_r1} {foreign_r2} 2>/dev/null "
+            f"| samtools sort -@ 4 -o {bam}",
+            shell=True, check=True,
+        )
+        subprocess.run(["samtools", "index", str(bam)],
+                       stderr=subprocess.DEVNULL, check=True)
+
+        # Count mapped
+        r = subprocess.run(
+            ["samtools", "view", "-c", "-F", "4", str(bam)],
+            stdout=subprocess.PIPE, text=True, stderr=subprocess.DEVNULL,
+        )
+        n_mapped = int(r.stdout.strip()) if r.stdout.strip() else 0
+
+        if n_mapped < 5:
+            log(f"    Round {rnd}: only {n_mapped} mapped, stopping")
             break
 
-    if n_copies == 0:
-        return seq, best_period, 0
+        # Run Pilon with --fix all
+        pilon_prefix = refine_dir / f"pilon_r{rnd}"
+        pilon_log = refine_dir / f"pilon_r{rnd}.log"
+        with open(pilon_log, "w") as logfh:
+            subprocess.run(
+                ["pilon", "--genome", str(scaffold_fa),
+                 "--frags", str(bam),
+                 "--output", str(pilon_prefix),
+                 "--fix", "all", "--mindepth", "1"],
+                stdout=logfh, stderr=subprocess.STDOUT,
+            )
 
-    trim_len = n_copies * best_period
-    trimmed = seq[: len(seq) - trim_len]
-    return trimmed, best_period, n_copies
+        pilon_fa = Path(f"{pilon_prefix}.fasta")
+        if not pilon_fa.exists():
+            log(f"    Round {rnd}: Pilon failed")
+            break
+
+        new_seqs = read_fasta(pilon_fa)
+        if not new_seqs:
+            break
+
+        new_seq = list(new_seqs.values())[0]
+        new_len = len(new_seq)
+        n_ns = new_seq.upper().count("N")
+
+        log(f"    Round {rnd}: {prev_len:,}→{new_len:,}bp "
+            f"(Ns={n_ns}, mapped={n_mapped})")
+
+        # Check convergence
+        if new_len == prev_len and new_seq == current_seq:
+            log(f"    Converged at round {rnd}")
+            break
+
+        current_seq = new_seq
+        prev_len = new_len
+
+        # Cleanup intermediate files
+        scaffold_fa.unlink(missing_ok=True)
+        bam.unlink(missing_ok=True)
+        Path(f"{bam}.bai").unlink(missing_ok=True)
+        pilon_fa.unlink(missing_ok=True)
+        pilon_log.unlink(missing_ok=True)
+
+    # Write refined result
+    refined_fa = workdir / insert_fasta.name
+    write_fasta(refined_fa, seq_name, current_seq)
+
+    orig_seqs = read_fasta(insert_fasta)
+    orig_len = len(list(orig_seqs.values())[0])
+    final_len = len(current_seq)
+    final_ns = current_seq.upper().count("N")
+    log(f"  Refinement: {orig_len:,}→{final_len:,}bp, "
+        f"Ns: {list(orig_seqs.values())[0].upper().count('N')}→{final_ns}")
+
+    # Cleanup refine directory
+    shutil.rmtree(refine_dir, ignore_errors=True)
+
+    # Update the original file
+    write_fasta(insert_fasta, seq_name, current_seq)
+    return insert_fasta
 
 
-def seed_extension_assembly(
-    seed_seqs: list[tuple[str, str, str, str]],  # (name, tdna_seq, host_flank, flank_side)
+# ---------------------------------------------------------------------------
+# Overlap / merge detection
+# ---------------------------------------------------------------------------
+
+def _check_merge(contig_5p: str, contig_3p: str, min_overlap: int = 30) -> str | None:
+    """Check if contig_5p and contig_3p overlap. Return merged seq or None."""
+    if not contig_5p or not contig_3p:
+        return None
+
+    # Check if 3' end of 5p overlaps with 5' end of 3p
+    max_check = min(len(contig_5p), len(contig_3p), 500)
+    for ovl in range(max_check, min_overlap - 1, -1):
+        if contig_5p[-ovl:] == contig_3p[:ovl]:
+            merged = contig_5p + contig_3p[ovl:]
+            log(f"    MERGE: {ovl}bp overlap detected! "
+                f"→ {len(merged):,}bp merged contig")
+            return merged
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Write pool FASTQ for Pilon
+# ---------------------------------------------------------------------------
+
+def _write_pool_fastq(extender: StrandAwareSeedExtender,
+                      r1_out: Path, r2_out: Path) -> None:
+    """Write extender's read pool as pseudo-paired FASTQ for Pilon mapping."""
+    with open(r1_out, "w") as f1, open(r2_out, "w") as f2:
+        for i in range(0, len(extender.seqs) - 1, 2):
+            r1 = extender.seqs[i]
+            r2_rc = extender.seqs[i + 1]
+            r2_raw = revcomp(r2_rc)
+            name = f"read_{i // 2}"
+            f1.write(f"@{name}/1\n{r1}\n+\n{'I' * len(r1)}\n")
+            f2.write(f"@{name}/2\n{r2_raw}\n+\n{'I' * len(r2_raw)}\n")
+
+
+# ---------------------------------------------------------------------------
+# Main assembly loop
+# ---------------------------------------------------------------------------
+
+def assemble_insert(
+    site: InsertionSite,
     candidate_r1: Path,
     candidate_r2: Path,
+    host_bam: Path,
+    host_ref: Path,
     element_db: Path,
     workdir: Path,
-    site_id: str,
-    host_bam: Path | None = None,
-    host_ref: Path | None = None,
-    all_junctions: list | None = None,
     threads: int = 4,
-    k: int = 15,
-    min_overlap: int = 20,
-    min_depth: int = 2,
-    min_ratio: float = 0.7,
-    max_iterations: int = 100,
-    max_rounds: int = 50,
+    max_rounds: int = 15,
+    ext_k: int = 15,
+    recruit_k: int = 25,
+    gap_size: int = 1000,
+    s03_r1: Path | None = None,
+    s03_r2: Path | None = None,
 ) -> tuple[Path | None, int, str]:
-    """Alternating K-mer extension + PE-anchored Pilon gap fill.
+    """Main loop alternating k-mer extension and Pilon gap fill.
 
-    For each round:
-      1. K-mer recruit from unmapped reads
-      2. K-mer extension (strand-aware, PE-aware)
-      3. PE-anchored Pilon: find R2 mates at contig ends → build
-         [anchor] + 500N + [contig] + 500N + [anchor] → Pilon fills gaps
-      4. Check if contig ends reached host genome → stop if both ends hit
-
-    Returns (contig_fasta_path, n_rounds, status).
+    Returns (fasta_path, n_rounds, status).
+    Status: 'complete', 'partial', 'no_seeds', 'no_assembly'.
     """
     workdir.mkdir(parents=True, exist_ok=True)
 
-    if not seed_seqs:
+    seed_5p = site.seed_5p
+    seed_3p = site.seed_3p
+
+    if not seed_5p and not seed_3p:
+        log(f"  No seeds for {site.site_id}")
         return None, 0, "no_seeds"
 
-    # Initialize strand-aware extender with junction-region reads
-    extender = SeedExtender(k=k, min_overlap=min_overlap,
-                            min_depth=min_depth, min_ratio=min_ratio)
-    log(f"  Loading candidate reads (strand-aware PE)...")
+    log(f"  Seeds: 5p={len(seed_5p)}bp, 3p={len(seed_3p)}bp")
+
+    # Initialize extender
+    extender = StrandAwareSeedExtender(
+        k=ext_k, min_overlap=20, min_depth=2, min_ratio=0.7,
+    )
+
+    # Load construct-extracted reads (s03) as PRIMARY pool — these are the
+    # reads that actually hit the construct, much more targeted than host BAM
+    if s03_r1 and s03_r2 and s03_r1.exists() and s03_r2.exists():
+        log(f"  Loading construct-extracted reads (s03)...")
+        n_s03 = extender.load_paired_reads(s03_r1, s03_r2)
+        log(f"  S03 reads: {n_s03:,} pairs")
+    else:
+        n_s03 = 0
+
+    # Load junction-region candidate reads (supplementary)
+    log(f"  Loading junction-region reads...")
     n_pairs = extender.load_paired_reads(candidate_r1, candidate_r2)
-    log(f"  Loaded {n_pairs:,} pairs ({len(extender.seqs):,} seqs)")
-    log(f"  K-mer index: {len(extender.kmer_index):,} unique {k}-mers")
+    log(f"  Total pool: {len(extender.seqs):,} seqs, "
+        f"{len(extender.kmer_index):,} unique {ext_k}-mers")
 
-    # Extract unmapped paired reads (cached)
-    unmapped_r1: Path | None = None
-    unmapped_r2: Path | None = None
-    if host_bam is not None:
-        unmapped_r1, unmapped_r2 = extract_unmapped_paired(
-            host_bam, workdir, threads=threads,
-        )
+    # Extract unmapped reads (cached)
+    unmapped_r1, unmapped_r2 = extract_unmapped_paired(
+        host_bam, workdir, threads=threads,
+    )
 
-    # Phase 1: K-mer extension of each seed (T-DNA only, no host flank)
-    contigs: list[tuple[str, str]] = []
-    best_host_flank = ""
-    best_flank_side = ""
-    for seed_name, tdna_seq, host_flank, flank_side in seed_seqs:
-        log(f"  Extending: {seed_name} ({len(tdna_seq)}bp T-DNA)")
-        extended = extender.run(tdna_seq, max_iterations=max_iterations)
-        contigs.append((seed_name, extended))
+    # Initial k-mer extension of both seeds
+    contig_5p = seed_5p
+    contig_3p = seed_3p
 
-    # Pick best seed (longest with element_db hits)
-    best_name, best_seq = _pick_best_contig(contigs, element_db, workdir, site_id)
-    if not best_seq:
-        return None, 0, "no_assembly"
+    if contig_5p:
+        log(f"  Initial extension of 5p seed ({len(contig_5p)}bp)...")
+        contig_5p = extender.extend(contig_5p, max_iterations=100)
+        log(f"  5p: {len(seed_5p)} → {len(contig_5p):,}bp")
 
-    # Retrieve host flank for the best seed
-    for seed_name, tdna_seq, host_flank, flank_side in seed_seqs:
-        if seed_name == best_name:
-            best_host_flank = host_flank
-            best_flank_side = flank_side
-            break
+    if contig_3p:
+        log(f"  Initial extension of 3p seed ({len(contig_3p)}bp)...")
+        contig_3p = extender.extend(contig_3p, max_iterations=100)
+        log(f"  3p: {len(seed_3p)} → {len(contig_3p):,}bp")
 
-    log(f"  Phase 1 best: {best_name} → {len(best_seq):,}bp T-DNA"
-        f" + {len(best_host_flank)}bp host ({best_flank_side})")
+    # Check immediate merge
+    merged = _check_merge(contig_5p, contig_3p)
+    if merged:
+        final_fa = workdir / f"{site.site_id}_insert.fasta"
+        write_fasta(final_fa, f"{site.site_id}_assembled_insert", merged)
+        log(f"  COMPLETE after initial extension: {len(merged):,}bp")
+        return final_fa, 0, "complete"
 
-    # Phase 2: Alternating recruitment + extension + PE-anchored Pilon
-    # 'current' tracks T-DNA portion only; host flank is added for Pilon
-    current = best_seq
+    # Main iterative loop
     total_rounds = 0
-    growth_history: list[int] = []  # track per-round growth for cycle detection
+    growth_history: list[int] = []
+    status = "partial"
 
     for rnd in range(1, max_rounds + 1):
-        prev_len = len(current)
+        prev_5p_len = len(contig_5p)
+        prev_3p_len = len(contig_3p)
         log(f"\n  --- Round {rnd} ---")
 
-        # Step 1: K-mer recruit from unmapped pool (T-DNA k-mers only)
-        if unmapped_r1 is not None and unmapped_r2 is not None:
-            r1_new, r2rc_new = recruit_by_kmer(
-                current, unmapped_r1, unmapped_r2, k=25,
-            )
-            if r1_new:
-                n_added = extender.add_seqs(r1_new + r2rc_new)
-                log(f"    Recruit: {len(r1_new)} pairs → {n_added} new seqs "
-                    f"({len(extender.seqs):,} total)")
-            else:
-                log(f"    Recruit: 0 pairs")
-
-        # Step 2: K-mer extension (T-DNA only)
-        current = extender.run(current, max_iterations=max_iterations)
-        ext_growth = len(current) - prev_len
-        log(f"    K-mer ext: {prev_len:,} → {len(current):,}bp (+{ext_growth})")
-
-        # Step 3: PE-anchored Pilon gap fill
-        # Build full scaffold: host_flank + T-DNA (or T-DNA + host_flank)
-        if best_flank_side == "prefix":
-            pilon_contig = best_host_flank + current
-        elif best_flank_side == "suffix":
-            pilon_contig = current + best_host_flank
-        else:
-            pilon_contig = current
-
-        pilon_dir = workdir / f"_pilon_r{rnd}"
-        pilon_dir.mkdir(parents=True, exist_ok=True)
-        pool_r1 = pilon_dir / "pool_R1.fq"
-        pool_r2 = pilon_dir / "pool_R2.fq"
-        _write_pool_fastq(extender, pool_r1, pool_r2)
-
-        prev_pilon_full = len(pilon_contig)
-        pilon_result = pilon_fill(
-            pilon_contig, extender,
-            pool_r1, pool_r2,
-            pilon_dir, insert_size=500, threads=threads,
+        # Step A: K-mer recruit from unmapped pool
+        recruit_contig = contig_5p + contig_3p
+        r1_new, r2rc_new = recruit_by_kmer(
+            recruit_contig, unmapped_r1, unmapped_r2, k=recruit_k,
         )
-
-        # Strip host flank back out to get T-DNA portion
-        host_len = len(best_host_flank)
-        if best_flank_side == "prefix" and host_len > 0:
-            current = pilon_result[host_len:]
-        elif best_flank_side == "suffix" and host_len > 0:
-            current = pilon_result[:-host_len] if host_len > 0 else pilon_result
+        if r1_new:
+            n_added = extender.add_seqs(r1_new + r2rc_new)
+            log(f"    Recruit: {len(r1_new)} pairs → {n_added} new seqs")
         else:
-            current = pilon_result
+            log(f"    Recruit: 0 pairs")
 
-        pilon_growth = len(current) - prev_len
-        log(f"    Pilon: {prev_len:,} → {len(current):,}bp (+{pilon_growth})")
+        # Step B: K-mer extension (strand-aware)
+        if contig_5p:
+            contig_5p = extender.extend(contig_5p, max_iterations=100)
+        if contig_3p:
+            contig_3p = extender.extend(contig_3p, max_iterations=100)
 
-        shutil.rmtree(pilon_dir, ignore_errors=True)
+        ext_growth = (len(contig_5p) - prev_5p_len) + (len(contig_3p) - prev_3p_len)
+        log(f"    K-mer ext: 5p={prev_5p_len:,}→{len(contig_5p):,}, "
+            f"3p={prev_3p_len:,}→{len(contig_3p):,} (+{ext_growth})")
 
+        # Step C: Check merge
+        merged = _check_merge(contig_5p, contig_3p)
+        if merged:
+            final_fa = workdir / f"{site.site_id}_insert.fasta"
+            write_fasta(final_fa, f"{site.site_id}_assembled_insert", merged)
+            log(f"  COMPLETE: contigs merged → {len(merged):,}bp (round {rnd})")
+            return final_fa, rnd, "complete"
+
+        # Step D: Pilon gap fill
+        if contig_5p and contig_3p:
+            pilon_dir = workdir / f"_pilon_r{rnd}"
+            pilon_dir.mkdir(parents=True, exist_ok=True)
+
+            pool_r1 = pilon_dir / "pool_R1.fq"
+            pool_r2 = pilon_dir / "pool_R2.fq"
+            _write_pool_fastq(extender, pool_r1, pool_r2)
+
+            contig_5p, contig_3p, gap_filled = pilon_fill(
+                contig_5p, contig_3p,
+                pool_r1, pool_r2,
+                pilon_dir,
+                gap_size=gap_size,
+                threads=threads,
+            )
+
+            shutil.rmtree(pilon_dir, ignore_errors=True)
+
+            if gap_filled:
+                # contig_5p contains the complete merged assembly
+                final_seq = contig_5p
+                final_fa = workdir / f"{site.site_id}_insert.fasta"
+                write_fasta(final_fa, f"{site.site_id}_assembled_insert", final_seq)
+                log(f"  COMPLETE: Pilon filled gap → {len(final_seq):,}bp (round {rnd})")
+                return final_fa, rnd, "complete"
+
+        # Step E: Check termination
         total_rounds = rnd
-        total_growth = ext_growth + pilon_growth
+        total_growth = (len(contig_5p) - prev_5p_len) + (len(contig_3p) - prev_3p_len)
+
         if total_growth == 0:
             log(f"    No growth → converged")
+            status = "converged"
             break
 
-        # Cycle detection (two levels):
-        # 1) Fast: 2 consecutive rounds with identical growth → immediate stop
-        # 2) Pattern: 3-round growth pattern repeats → stop
+        # Check if contig ends reached host genome
+        reached_5p, reached_3p = check_host_termination(
+            contig_5p, contig_3p, host_ref, workdir,
+        )
+        if reached_5p:
+            log(f"    5' contig reached host genome!")
+        if reached_3p:
+            log(f"    3' contig reached host genome!")
+        if reached_5p and reached_3p:
+            log(f"    >>> Both ends at host genome — insert fully traversed!")
+            status = "complete"
+            break
+
+        # Cycle detection
         growth_history.append(total_growth)
-        cycle_detected = False
         if (len(growth_history) >= 2
                 and growth_history[-1] == growth_history[-2]
                 and growth_history[-1] > 0):
             log(f"    Constant growth ({growth_history[-1]}) for 2 rounds → cycling")
-            cycle_detected = True
-        elif len(growth_history) >= 6:
+            status = "converged"
+            break
+        if len(growth_history) >= 6:
             recent = growth_history[-3:]
             earlier = growth_history[-6:-3]
             if recent == earlier:
-                log(f"    Cyclic growth detected "
-                    f"(pattern {recent} repeated) → stopping")
-                cycle_detected = True
-
-        if cycle_detected:
-            # Trim tandem repeats from the assembled T-DNA
-            trimmed, period, n_removed = _detect_tandem_repeat(current)
-            if n_removed > 0:
-                log(f"    Tandem repeat: period={period}bp, "
-                    f"removed {n_removed} copies "
-                    f"({len(current):,} → {len(trimmed):,}bp)")
-                current = trimmed
-            break
-
-        # Step 4: Check if T-DNA far end reached host genome
-        # Uses minimap2 against local host region (±50kb around junction)
-        # Only check the FAR end (near end always has host from junction leak)
-        if all_junctions and host_ref and len(current) >= 1000:
-            left_hit, right_hit = _check_host_reached(
-                current, host_ref, all_junctions, workdir,
-                check_len=500,
-            )
-            if best_flank_side == "prefix":
-                far_end_hit = right_hit
-            elif best_flank_side == "suffix":
-                far_end_hit = left_hit
-            else:
-                far_end_hit = left_hit and right_hit
-            if far_end_hit:
-                log(f"    >>> Far end reached host genome — insert complete!")
+                log(f"    Cyclic growth detected → stopping")
+                status = "converged"
                 break
 
-    # Write final insert (T-DNA + host flank)
-    if best_flank_side == "prefix":
-        final_seq = best_host_flank + current
-    elif best_flank_side == "suffix":
-        final_seq = current + best_host_flank
+    # Write final result
+    if contig_5p and contig_3p:
+        # Output both contigs separately if not merged
+        final_seq = contig_5p + ("N" * 100) + contig_3p
+        final_fa = workdir / f"{site.site_id}_insert.fasta"
+        write_fasta(final_fa, f"{site.site_id}_assembled_insert", final_seq)
+        log(f"  Final: 5p={len(contig_5p):,}bp + 3p={len(contig_3p):,}bp "
+            f"= {len(final_seq):,}bp after {total_rounds} rounds → {status}")
+    elif contig_5p:
+        final_fa = workdir / f"{site.site_id}_insert.fasta"
+        write_fasta(final_fa, f"{site.site_id}_assembled_insert", contig_5p)
+        log(f"  Final: {len(contig_5p):,}bp (5p only) after {total_rounds} rounds")
+    elif contig_3p:
+        final_fa = workdir / f"{site.site_id}_insert.fasta"
+        write_fasta(final_fa, f"{site.site_id}_assembled_insert", contig_3p)
+        log(f"  Final: {len(contig_3p):,}bp (3p only) after {total_rounds} rounds")
     else:
-        final_seq = current
+        return None, total_rounds, "no_assembly"
 
-    final_fa = workdir / f"{site_id}_insert.fasta"
-    write_fasta(final_fa, f"{site_id}_assembled_insert", final_seq)
-    log(f"  Final: {len(current):,}bp T-DNA + {len(best_host_flank)}bp host "
-        f"= {len(final_seq):,}bp after {total_rounds} rounds")
+    # Phase 3b: Foreign read refinement (minimap2 chaining + Pilon)
+    # After k-mer assembly converges, use foreign reads (s03 unmapped to host)
+    # with iterative minimap2+Pilon to extend construct regions.
+    # This resolves palindromic/inverted repeat regions that k-mer extension
+    # cannot handle (e.g., head-to-head T-DNA structures).
+    if s03_r1 and s03_r2 and s03_r1.exists() and s03_r2.exists():
+        log(f"\n  === Foreign read refinement (minimap2 + Pilon) ===")
+        final_fa = refine_with_foreign_reads(
+            insert_fasta=final_fa,
+            s03_r1=s03_r1,
+            s03_r2=s03_r2,
+            host_ref=host_ref,
+            workdir=workdir,
+            threads=threads,
+            max_rounds=10,
+        )
 
-    status = "complete" if len(current) > max(len(s) for _, s, *_ in seed_seqs) else "partial"
     return final_fa, total_rounds, status
 
 
-def _pick_best_contig(
-    contigs: list[tuple[str, str]],
-    element_db: Path,
-    workdir: Path,
-    site_id: str,
-) -> tuple[str, str]:
-    """BLAST contigs vs element_db, pick longest with hits."""
-    contigs_fa = workdir / f"{site_id}_contigs.fasta"
-    with open(contigs_fa, "w") as fh:
-        for name, seq in contigs:
-            fh.write(f">{name}\n")
-            for i in range(0, len(seq), 80):
-                fh.write(seq[i:i + 80] + "\n")
-
-    blast_out = workdir / f"{site_id}_blast.tsv"
-    subprocess.run(
-        ["blastn", "-query", str(contigs_fa), "-subject", str(element_db),
-         "-outfmt", "6 qseqid sseqid pident length qstart qend",
-         "-evalue", "1e-5", "-max_target_seqs", "10",
-         "-out", str(blast_out)],
-        stderr=subprocess.DEVNULL, check=True,
-    )
-
-    hit_names: set[str] = set()
-    if blast_out.exists():
-        with open(blast_out) as fh:
-            for line in fh:
-                hit_names.add(line.split("\t")[0])
-
-    best_name, best_seq = "", ""
-    for name, seq in contigs:
-        if name in hit_names and len(seq) > len(best_seq):
-            best_name, best_seq = name, seq
-    if not best_seq:
-        for name, seq in contigs:
-            if len(seq) > len(best_seq):
-                best_name, best_seq = name, seq
-
-    return best_name, best_seq
-
-
 # ---------------------------------------------------------------------------
-# Annotation
+# Phase 4: Annotation
 # ---------------------------------------------------------------------------
 
 def annotate_insert(
@@ -1594,13 +1758,11 @@ def annotate_insert(
     border_tsv = output_dir / "border_hits.tsv"
 
     # BLAST vs element_db
-    # First make a blast DB if needed
     db_prefix = output_dir / "element_blastdb"
     subprocess.run(
         ["makeblastdb", "-in", str(element_db), "-dbtype", "nucl",
          "-out", str(db_prefix)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
     )
 
     blast_out = output_dir / "blast_raw.tsv"
@@ -1609,14 +1771,14 @@ def annotate_insert(
          "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send evalue bitscore",
          "-evalue", "1e-5", "-max_target_seqs", "50",
          "-out", str(blast_out)],
-        stderr=subprocess.DEVNULL,
-        check=True,
+        stderr=subprocess.DEVNULL, check=True,
     )
 
     # Parse and write annotation
+    hits = []
     with open(blast_out) as fin, open(annotation_tsv, "w") as fout:
-        fout.write("query\telement\tidentity\tlength\tq_start\tq_end\ts_start\ts_end\tevalue\n")
-        hits = []
+        fout.write("query\telement\tidentity\tlength\tq_start\tq_end\t"
+                   "s_start\ts_end\tevalue\n")
         for line in fin:
             cols = line.rstrip().split("\t")
             if len(cols) >= 10:
@@ -1626,7 +1788,6 @@ def annotate_insert(
 
     if hits:
         log(f"  BLAST hits: {len(hits)} elements found")
-        # Sort by query position and show top hits
         hits.sort(key=lambda x: int(x[4]))
         for h in hits[:10]:
             log(f"    {h[4]}-{h[5]}: {h[1]} ({h[2]}% identity, {h[3]}bp)")
@@ -1634,8 +1795,6 @@ def annotate_insert(
         log("  No BLAST hits found against element database")
 
     # T-DNA border motif search
-    # Canonical border: TGGCAGGATATATTGTGGTGTAAAC (25bp)
-    # Allow mismatches via short word BLAST
     border_fa = output_dir / "_borders.fa"
     with open(border_fa, "w") as fh:
         fh.write(">RB_consensus\nTGGCAGGATATATTGTGGTGTAAAC\n")
@@ -1649,7 +1808,7 @@ def annotate_insert(
         stderr=subprocess.DEVNULL,
     )
 
-    if border_tsv.stat().st_size > 0:
+    if border_tsv.exists() and border_tsv.stat().st_size > 0:
         log("  T-DNA border motifs found")
     else:
         log("  No border motifs found (may need manual inspection)")
@@ -1657,11 +1816,168 @@ def annotate_insert(
     # Cleanup
     border_fa.unlink(missing_ok=True)
     blast_out.unlink(missing_ok=True)
-    for ext in [".nhr", ".nin", ".nsq", ".ndb", ".not", ".ntf", ".nto"]:
+    for ext in [".nhr", ".nin", ".nsq", ".ndb", ".not", ".ntf", ".nto", ".njs"]:
         p = Path(f"{db_prefix}{ext}")
         p.unlink(missing_ok=True)
 
     return annotation_tsv, border_tsv
+
+
+def generate_report(
+    insert_fasta: Path,
+    annotation_tsv: Path,
+    border_tsv: Path,
+    site: InsertionSite,
+    n_rounds: int,
+    status: str,
+    output_dir: Path,
+) -> Path:
+    """Generate human-readable linear map report."""
+    report_path = output_dir / f"{site.site_id}_report.txt"
+
+    # Read insert sequence
+    seqs = read_fasta(insert_fasta)
+    if not seqs:
+        with open(report_path, "w") as fh:
+            fh.write("No insert assembled.\n")
+        return report_path
+
+    insert_name = list(seqs.keys())[0]
+    insert_seq = seqs[insert_name]
+    insert_len = len(insert_seq)
+    n_count = insert_seq.upper().count("N")
+
+    # Read annotation hits (with orientation from s_start/s_end)
+    # elements: (q_start, q_end, element_name, s_strand)
+    elements: list[tuple[int, int, str, str]] = []
+    orientation_by_elem: dict[str, set[str]] = defaultdict(set)
+    if annotation_tsv.exists():
+        with open(annotation_tsv) as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            for row in reader:
+                try:
+                    q_start = int(row["q_start"])
+                    q_end = int(row["q_end"])
+                    s_start = int(row["s_start"])
+                    s_end = int(row["s_end"])
+                    elem = row["element"]
+                    # Filter to current insert only
+                    if row["query"] != insert_name:
+                        continue
+                    strand = "+" if s_start < s_end else "-"
+                    elements.append((q_start, q_end, elem, strand))
+                    orientation_by_elem[elem].add(strand)
+                except (ValueError, KeyError):
+                    continue
+    elements.sort(key=lambda x: x[0])
+
+    # Deduplicate overlapping elements (keep longest per region)
+    deduped: list[tuple[int, int, str, str]] = []
+    for start, end, elem, strand in elements:
+        overlap = False
+        for i, (ds, de, dn, _ds) in enumerate(deduped):
+            if start < de and end > ds:
+                if (end - start) > (de - ds):
+                    deduped[i] = (start, end, elem, strand)
+                overlap = True
+                break
+        if not overlap:
+            deduped.append((start, end, elem, strand))
+    elements = sorted(deduped, key=lambda x: x[0])
+
+    # Count element occurrences for multi-construct detection
+    elem_counts: Counter = Counter()
+    for _, _, elem, _ in elements:
+        elem_counts[elem] += 1
+
+    # Build linear map with orientation arrows
+    linear_parts = []
+    for _, _, elem, strand in elements:
+        short_name = elem.split("|")[0] if "|" in elem else (
+            elem.split("_")[0] if "_" in elem else elem)
+        arrow = "→" if strand == "+" else "←"
+        linear_parts.append(f"[{short_name}{arrow}]")
+
+    # Detect head-to-head / tandem arrangement
+    # Head-to-head: same element found in BOTH orientations
+    structure = "single-copy"
+    bidirectional_elems = {e for e, strands in orientation_by_elem.items()
+                          if "+" in strands and "-" in strands
+                          and len(e) > 30}  # skip short amplicons
+    if bidirectional_elems:
+        structure = "head-to-head 2-copy T-DNA"
+    elif len(elements) > 3:
+        if elem_counts.most_common(1)[0][1] >= 2:
+            structure = f"multi-copy (≥{elem_counts.most_common(1)[0][1]} copies)"
+
+    # Read border hits
+    n_borders = 0
+    if border_tsv.exists():
+        with open(border_tsv) as fh:
+            n_borders = sum(1 for line in fh if line.strip())
+
+    # Determine deletion size
+    deletion_size = abs(site.pos_3p - site.pos_5p) if site.pos_3p > 0 else 0
+
+    with open(report_path, "w") as fh:
+        fh.write("=" * 70 + "\n")
+        fh.write("RedGene Insert Assembly & Annotation Report\n")
+        fh.write("=" * 70 + "\n")
+        pos_str = f"{site.host_chr}:{site.pos_5p:,}"
+        if site.pos_3p > 0 and site.pos_3p != site.pos_5p:
+            pos_str += f"-{site.pos_3p:,}"
+        fh.write(f"Insertion site: {pos_str}")
+        if deletion_size > 0:
+            fh.write(f" ({deletion_size}bp deletion)")
+        fh.write("\n")
+        fh.write(f"Insert length: {insert_len:,} bp")
+        if n_count > 0:
+            fh.write(f" ({n_count} unresolved N's)")
+        fh.write("\n")
+        fh.write(f"Assembly status: {status.upper()} (round {n_rounds})\n")
+        fh.write(f"Structure: {structure}\n")
+        if n_borders > 0:
+            fh.write(f"T-DNA borders found: {n_borders}\n")
+        fh.write("\n")
+
+        if linear_parts:
+            fh.write("--- Linear Map ---\n")
+            fh.write("5' host --")
+            line = ""
+            for part in linear_parts:
+                if len(line) + len(part) > 60:
+                    fh.write(line + "\n         ")
+                    line = ""
+                line += part + "--"
+            fh.write(line + " 3' host\n")
+        else:
+            fh.write("--- No element annotations found ---\n")
+
+        fh.write("=" * 70 + "\n")
+
+        # Detailed element list
+        if elements:
+            fh.write("\nDetailed element positions:\n")
+            fh.write(f"{'Start':>8}  {'End':>8}  {'Dir':>3}  {'Element'}\n")
+            fh.write("-" * 60 + "\n")
+            for start, end, elem, strand in elements:
+                fh.write(f"{start:>8}  {end:>8}  {strand:>3}  {elem}\n")
+
+        # Multi-copy detection
+        multi = {e: c for e, c in elem_counts.items() if c >= 2}
+        if multi:
+            fh.write(f"\nMulti-copy elements detected:\n")
+            for elem, count in multi.items():
+                fh.write(f"  {elem}: {count} copies\n")
+
+        # Head-to-head evidence
+        if bidirectional_elems:
+            fh.write(f"\nHead-to-head evidence (same element in both orientations):\n")
+            for elem in sorted(bidirectional_elems):
+                fh.write(f"  {elem}\n")
+
+    log(f"  Report written: {report_path}")
+    return report_path
 
 
 # ---------------------------------------------------------------------------
@@ -1675,7 +1991,6 @@ def write_stats(
     candidate_reads: int,
     results: list[dict],
 ) -> None:
-    """Write assembly statistics."""
     with open(stats_path, "w") as fh:
         fh.write(f"sample\t{sample_name}\n")
         fh.write(f"insertion_sites\t{num_sites}\n")
@@ -1694,165 +2009,128 @@ def write_stats(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Step 9: Targeted seed extension insert assembly")
-    parser.add_argument("--junctions", required=True,
-                        help="junctions.tsv from step 6")
-    parser.add_argument("--junction-contigs", default=None,
-                        help="(unused, kept for CLI compat)")
-    parser.add_argument("--host-paf", default=None,
-                        help="(unused, kept for CLI compat)")
-    parser.add_argument("--construct-paf", default=None,
-                        help="(unused, kept for CLI compat)")
+        description="Step 9: Targeted insert assembly "
+                    "(soft-clip detection + k-mer extension + Pilon gap fill)")
+    parser.add_argument("--junctions", default=None,
+                        help="junctions.tsv from step 6 (fallback if soft-clip "
+                             "detection finds nothing)")
     parser.add_argument("--host-bam", required=True,
                         help="Host-mapped BAM from step 7")
-    parser.add_argument("--host-ref", default=None,
-                        help="Host reference FASTA (for junction-stop detection)")
+    parser.add_argument("--host-ref", required=True,
+                        help="Host reference FASTA")
     parser.add_argument("--element-db", required=True,
                         help="Element database FASTA for annotation")
-    parser.add_argument("--construct-ref", default=None,
-                        help="(unused, kept for CLI compat)")
-    parser.add_argument("--s03-r1", default=None,
-                        help="(unused, kept for CLI compat)")
-    parser.add_argument("--s03-r2", default=None,
-                        help="(unused, kept for CLI compat)")
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--sample-name", required=True)
     parser.add_argument("--threads", type=int, default=8)
-    parser.add_argument("--max-rounds", type=int, default=50,
+    parser.add_argument("--max-rounds", type=int, default=15,
                         help="Max alternating extension+Pilon rounds")
     parser.add_argument("--seed-k", type=int, default=15,
                         help="k-mer size for seed extension")
-    parser.add_argument("--min-overlap", type=int, default=20)
-    parser.add_argument("--min-depth", type=int, default=2)
-    parser.add_argument("--min-ratio", type=float, default=0.7)
-    parser.add_argument("--flank", type=int, default=1000,
+    parser.add_argument("--recruit-k", type=int, default=25,
+                        help="k-mer size for unmapped read recruitment")
+    parser.add_argument("--gap-size", type=int, default=1000,
+                        help="Initial N gap size for Pilon scaffold")
+    parser.add_argument("--flank", type=int, default=5000,
                         help="Flank size for candidate read extraction (bp)")
+    parser.add_argument("--min-clip", type=int, default=20,
+                        help="Minimum soft-clip length for junction detection")
+    # Backward-compat args (unused)
+    parser.add_argument("--junction-contigs", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--host-paf", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--construct-paf", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--construct-ref", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--s03-r1", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--s03-r2", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--min-overlap", type=int, default=20, help=argparse.SUPPRESS)
+    parser.add_argument("--min-depth", type=int, default=2, help=argparse.SUPPRESS)
+    parser.add_argument("--min-ratio", type=float, default=0.7, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     step_dir = Path(args.outdir) / args.sample_name / STEP
     step_dir.mkdir(parents=True, exist_ok=True)
 
-    log(f"=== Step 9: Targeted Seed Extension Assembly for {args.sample_name} ===")
+    host_bam = Path(args.host_bam)
+    host_ref = Path(args.host_ref)
+    element_db = Path(args.element_db)
 
-    # ---- Parse junctions ----
-    junctions_path = Path(args.junctions)
-    if not junctions_path.exists() or junctions_path.stat().st_size == 0:
-        log("No junctions found (step 6 empty). Nothing to assemble.")
+    log(f"=== Step 9: Targeted Insert Assembly for {args.sample_name} ===")
+    log(f"  Host BAM: {host_bam}")
+    log(f"  Host ref: {host_ref}")
+    log(f"  Element DB: {element_db}")
+
+    # ---- Phase 1: Soft-clip junction detection ----
+    sites = find_softclip_junctions(
+        host_bam, host_ref, element_db, step_dir,
+        min_clip=args.min_clip,
+    )
+
+    # Fallback to step 6 junctions if no sites found
+    if not sites and args.junctions:
+        junctions_path = Path(args.junctions)
+        if junctions_path.exists() and junctions_path.stat().st_size > 0:
+            log("No soft-clip sites found, falling back to step 6 junctions...")
+            legacy_juncs = parse_legacy_junctions(junctions_path)
+            if legacy_juncs:
+                sites = legacy_junctions_to_sites(legacy_juncs, host_bam)
+                log(f"  Converted {len(legacy_juncs)} legacy junctions → "
+                    f"{len(sites)} sites")
+
+    if not sites:
+        log("No insertion sites found. Nothing to assemble.")
         write_stats(step_dir / "s09_stats.txt", args.sample_name, 0, 0, [])
         return
 
-    junctions = parse_junctions(junctions_path)
-    if not junctions:
-        log("No junctions parsed. Exiting.")
-        write_stats(step_dir / "s09_stats.txt", args.sample_name, 0, 0, [])
-        return
-
-    log(f"Parsed {len(junctions)} junctions")
-
-    # ---- Group into insertion sites ----
-    sites = group_insertion_sites(junctions)
-    log(f"Grouped into {len(sites)} insertion site(s)")
-
+    log(f"\nProcessing {len(sites)} insertion site(s):")
     for site in sites:
-        n_junc = len(site.junctions)
-        paired = "paired" if site.pos_3p > 0 else "single"
         log(f"  {site.site_id}: {site.host_chr}:{site.pos_5p}"
-            f"{f'-{site.pos_3p}' if site.pos_3p else ''}"
-            f" ({n_junc} junction(s), {paired})")
-
-    # ---- Detect cross-chromosome false positives ----
-    contig_chrs: dict[str, set[str]] = {}
-    for site in sites:
-        for j in site.junctions:
-            contig_chrs.setdefault(j.contig_name, set()).add(site.host_chr)
-
-    cross_chr_contigs = {c for c, chrs in contig_chrs.items() if len(chrs) > 1}
-
-    skip_sites: set[str] = set()
-    if cross_chr_contigs:
-        chr_scores: dict[str, int] = {}
-        for site in sites:
-            score = len(site.junctions) + (2 if site.pos_3p > 0 else 0)
-            chr_scores[site.host_chr] = chr_scores.get(site.host_chr, 0) + score
-        primary_chr = max(chr_scores, key=chr_scores.get)
-
-        for site in sites:
-            site_contigs = {j.contig_name for j in site.junctions}
-            if (site_contigs & cross_chr_contigs
-                    and site.host_chr != primary_chr):
-                skip_sites.add(site.site_id)
-                log(f"  Skipping {site.site_id} ({site.host_chr}:{site.pos_5p})"
-                    f" — cross-chr false positive (contig also maps to {primary_chr})")
-
-    # ---- Collect all junctions for host-reached detection ----
-    all_junctions_for_host: list[Junction] = []
-    if args.host_ref:
-        all_junctions_for_host = [
-            j for s in sites for j in s.junctions
-            if s.site_id not in skip_sites
-        ]
-        if all_junctions_for_host:
-            log("Extracting host flanks at junction positions...")
-            extract_junction_host_flanks(
-                Path(args.host_ref), all_junctions_for_host, flank_len=200,
-            )
+            f"{f'-{site.pos_3p}' if site.pos_3p else ''} "
+            f"({site.confidence}, 5p={len(site.seed_5p)}bp, "
+            f"3p={len(site.seed_3p)}bp)")
 
     # ---- Process each insertion site ----
     all_results = []
     for site in sites:
-        log(f"\n=== Processing {site.site_id} ===")
+        log(f"\n{'=' * 60}")
+        log(f"=== Processing {site.site_id}: "
+            f"{site.host_chr}:{site.pos_5p} ===")
 
-        if site.site_id in skip_sites:
-            all_results.append({
-                "site_id": site.site_id,
-                "insert_length": 0,
-                "remaining_ns": 0,
-                "rounds": 0,
-                "status": "skipped_cross_chr",
-            })
-            continue
-
-        # Step 1: Extract junction seeds (T-DNA soft-clips + 1kb host flank)
-        seed_seqs = extract_junction_seeds(
-            Path(args.host_bam), site.junctions,
-            host_ref=Path(args.host_ref) if args.host_ref else None,
-        )
-
-        # Step 2: Extract candidate reads from junction region
+        # Phase 2: Extract candidate reads
         cand_r1 = step_dir / f"{site.site_id}_candidate_R1.fastq.gz"
         cand_r2 = step_dir / f"{site.site_id}_candidate_R2.fastq.gz"
         if not cand_r1.exists():
-            n_cand = extract_junction_candidates(
-                Path(args.host_bam), site.junctions,
-                cand_r1, cand_r2,
+            n_cand = extract_candidate_reads(
+                host_bam, site, cand_r1, cand_r2,
                 flank=args.flank, threads=args.threads,
             )
             log(f"  Candidate reads: {n_cand:,} pairs")
         else:
             n_cand = 0
-            with pysam.FastxFile(str(cand_r1)) as fh:
+            opener = gzip.open if str(cand_r1).endswith(".gz") else open
+            with opener(str(cand_r1), "rt") as fh:
                 for _ in fh:
                     n_cand += 1
+            n_cand = n_cand // 4
             log(f"  Candidate reads (cached): {n_cand:,} pairs")
 
-        # Step 3: Alternating K-mer extension + PE-anchored Pilon
-        assembly_fa, rounds, status = seed_extension_assembly(
-            seed_seqs=seed_seqs,
+        # Phase 3: Iterative assembly
+        s03_r1 = Path(args.s03_r1) if args.s03_r1 else None
+        s03_r2 = Path(args.s03_r2) if args.s03_r2 else None
+        assembly_fa, rounds, status = assemble_insert(
+            site=site,
             candidate_r1=cand_r1,
             candidate_r2=cand_r2,
-            element_db=Path(args.element_db),
+            host_bam=host_bam,
+            host_ref=host_ref,
+            element_db=element_db,
             workdir=step_dir,
-            site_id=site.site_id,
-            host_bam=Path(args.host_bam),
-            host_ref=Path(args.host_ref) if args.host_ref else None,
-            all_junctions=all_junctions_for_host or None,
             threads=args.threads,
-            k=args.seed_k,
-            min_overlap=args.min_overlap,
-            min_depth=args.min_depth,
-            min_ratio=args.min_ratio,
-            max_iterations=100,
             max_rounds=args.max_rounds,
+            ext_k=args.seed_k,
+            recruit_k=args.recruit_k,
+            gap_size=args.gap_size,
+            s03_r1=s03_r1,
+            s03_r2=s03_r2,
         )
 
         # Record result
@@ -1863,7 +2141,6 @@ def main() -> None:
                 longest_seq = contigs[longest_name]
                 insert_len = len(longest_seq)
                 insert_ns = longest_seq.upper().count("N")
-                log(f"  Insert: {insert_len:,}bp → {status}")
             else:
                 insert_len, insert_ns = 0, 0
                 status = "no_assembly"
@@ -1879,7 +2156,7 @@ def main() -> None:
             "status": status,
         })
 
-    # ---- Annotation ----
+    # ---- Combine inserts ----
     combined_insert = step_dir / "insert_only.fasta"
     with open(combined_insert, "w") as fout:
         for site in sites:
@@ -1887,12 +2164,26 @@ def main() -> None:
             if site_fa.exists():
                 fout.write(open(site_fa).read())
 
+    # ---- Phase 4: Annotation & Report ----
     if combined_insert.exists() and combined_insert.stat().st_size > 0:
-        log("\n=== Annotating insert ===")
-        annotate_insert(
-            combined_insert, Path(args.element_db),
-            step_dir, args.sample_name,
+        log(f"\n{'=' * 60}")
+        log("=== Phase 4: Annotation ===")
+        ann_tsv, border_tsv = annotate_insert(
+            combined_insert, element_db, step_dir, args.sample_name,
         )
+
+        # Generate report for each site
+        for site in sites:
+            site_fa = step_dir / f"{site.site_id}_insert.fasta"
+            if site_fa.exists():
+                result_info = next(
+                    (r for r in all_results if r["site_id"] == site.site_id), None)
+                if result_info:
+                    generate_report(
+                        site_fa, ann_tsv, border_tsv,
+                        site, result_info["rounds"], result_info["status"],
+                        step_dir,
+                    )
 
     # ---- Write stats ----
     write_stats(
@@ -1900,10 +2191,11 @@ def main() -> None:
         len(sites), 0, all_results,
     )
 
-    log(f"\n=== Step 9 complete ===")
+    log(f"\n{'=' * 60}")
+    log(f"=== Step 9 complete ===")
     log(f"Output: {step_dir}")
     for r in all_results:
-        log(f"  {r['site_id']}: {r['insert_length']}bp, "
+        log(f"  {r['site_id']}: {r['insert_length']:,}bp, "
             f"{r['remaining_ns']} Ns, {r['rounds']} rounds → {r['status']}")
 
 

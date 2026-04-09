@@ -245,11 +245,19 @@ def build_step_cmd(
 
         return cmd
     elif step == "9":
+        # Check for WT-filtered reads (s03b output), fall back to s03
+        s03_r1 = s03 / f"{sname}_filtered_R1.fq.gz"
+        s03_r2 = s03 / f"{sname}_filtered_R2.fq.gz"
+        if not s03_r1.exists():
+            s03_r1 = s03 / f"{sname}_construct_R1.fq.gz"
+            s03_r2 = s03 / f"{sname}_construct_R2.fq.gz"
         return [sys.executable, script,
                "--junctions", str(s06 / "junctions.tsv"),
                "--host-bam", str(s07 / f"{sname}_host.bam"),
                "--host-ref", host_ref,
                "--element-db", construct_ref,
+               "--s03-r1", str(s03_r1),
+               "--s03-r2", str(s03_r2),
                "--outdir", str(outdir),
                "--sample-name", sname,
                "--threads", str(threads)]

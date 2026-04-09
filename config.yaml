@@ -194,22 +194,16 @@ samples:
     host_reference: db/SLM_r2.0.pmol.fasta
     construct_reference: element_db/gmo_combined_db.fa
     reads:
-      r1: test_data/tomato/subsampled/tomato_A2_3_5x_R1.fq.gz
-      r2: test_data/tomato/subsampled/tomato_A2_3_5x_R2.fq.gz
-    expected:
-      cas9_present: true
-      edit_type: heterozygous
+      r1: data/tomato/subsampled/tomato_A2_3_5x_R1.fq.gz
+      r2: data/tomato/subsampled/tomato_A2_3_5x_R2.fq.gz
 
   tomato_A2_3_3x:
     name: "Tomato A2_3 - 3x coverage"
     host_reference: db/SLM_r2.0.pmol.fasta
     construct_reference: element_db/gmo_combined_db.fa
     reads:
-      r1: test_data/tomato/subsampled/tomato_A2_3_3x_R1.fq.gz
-      r2: test_data/tomato/subsampled/tomato_A2_3_3x_R2.fq.gz
-    expected:
-      cas9_present: true
-      edit_type: heterozygous
+      r1: data/tomato/subsampled/tomato_A2_3_3x_R1.fq.gz
+      r2: data/tomato/subsampled/tomato_A2_3_3x_R2.fq.gz
 
   # Corn ND207 transformant (CRA026358, Sci Rep 2025)
   corn_ND207:
@@ -309,6 +303,39 @@ samples:
     reads:
       r1: data/soybean/SRR11585833_1.fastq.gz
       r2: data/soybean/SRR11585833_2.fastq.gz
+
+  # Coverage sensitivity tests (soybean UGT72E3 subsampled)
+  soybean_UGT72E3_15x:
+    name: "Soybean UGT72E3 subsampled to ~15x"
+    host_reference: db/Gmax_v4.0.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/soybean/subsampled/UGT72E3_15x_R1.fq.gz
+      r2: data/soybean/subsampled/UGT72E3_15x_R2.fq.gz
+
+  soybean_UGT72E3_10x:
+    name: "Soybean UGT72E3 subsampled to ~10x"
+    host_reference: db/Gmax_v4.0.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/soybean/subsampled/UGT72E3_10x_R1.fq.gz
+      r2: data/soybean/subsampled/UGT72E3_10x_R2.fq.gz
+
+  soybean_UGT72E3_5x:
+    name: "Soybean UGT72E3 subsampled to ~5x"
+    host_reference: db/Gmax_v4.0.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/soybean/subsampled/UGT72E3_5x_R1.fq.gz
+      r2: data/soybean/subsampled/UGT72E3_5x_R2.fq.gz
+
+  soybean_UGT72E3_3x:
+    name: "Soybean UGT72E3 subsampled to ~3x"
+    host_reference: db/Gmax_v4.0.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: data/soybean/subsampled/UGT72E3_3x_R1.fq.gz
+      r2: data/soybean/subsampled/UGT72E3_3x_R2.fq.gz
 
   # Coverage sensitivity tests (corn ND207 subsampled)
   corn_ND207_5x:

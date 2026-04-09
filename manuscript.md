@@ -48,6 +48,8 @@ We organized RedGene as a modular 10-step pipeline in which each step is a stand
 
 **Step 5: Contig alignment.** We aligned assembled contigs to both host genome and construct reference with minimap2 v2.26 (Li, 2018) using the asm5 preset, and generated PAF output. **Step 6: Junction calling.** We identified contigs with significant alignments to both host and construct references as chimeric and defined each junction coordinate at the boundary between host-aligned and construct-aligned blocks. We applied filters for minimum identity (0.90 in exact construct mode, 0.70 in element database mode), minimum host mapping quality (MAPQ >= 10), minimum alignment length (50 bp on both host and construct sides), and minimum combined coverage fraction (0.50 in exact construct mode, 0.30 in element database mode). We assigned each junction as LB or RB based on construct-side alignment relative to border motifs and classified confidence as High, Medium, or Low.
 
+**Step 9: Targeted insert assembly.** We reconstructed full-length insert sequences from junction coordinates using iterative gap filling. For each insertion site, we constructed a pseudo-reference by concatenating host-flanking sequence (500 bp upstream and downstream of junction coordinates), construct-derived portions extracted from chimeric contigs (identified by host-side and construct-side PAF alignments from step 5), and an N-gap (15 kb default) representing the unknown insert interior. Candidate reads for gap filling were extracted from the host BAM (step 7) in three categories: junction-flanking reads within 5 kb of each junction coordinate, unmapped reads (SAM flag 0x4), and mate-unmapped reads (SAM flag 0x8). We then iteratively aligned candidate reads to the pseudo-reference with minimap2 (`--secondary=no`) and polished the assembly with Pilon v1.24 (Walker et al., 2014) using `--fix all --mindepth 3 --gapmargin 100000` and k-mer size 47. Iterations continued until the N-gap was completely resolved or no further changes were introduced, with a maximum of 15 rounds. We annotated assembled inserts by BLAST (Camacho et al., 2009) against a 278-sequence element database comprising 131 EUginius GMO elements, 82 CRL-GMOMETHODS amplicon sequences (Bonfini et al., 2012), 62 corn event-specific LB/RB border sequences (Ji et al., 2025), and 3 custom entries. T-DNA border motifs were identified by short-word BLAST (word size 7) against the canonical 25 bp border consensus.
+
 **Step 7: Host genome mapping.** We aligned all trimmed reads to host reference genomes with BWA-MEM v0.7.17 (Li and Durbin, 2009) using 16 threads and generated coordinate-sorted, indexed BAM files for steps 8 and 10. **Step 8: CRISPR indel detection.** For gene-edited samples, we compared nucleotide-level pileups between treatment and wild-type BAM files at predicted gRNA targets using samtools mpileup (Danecek et al., 2021), and we used direct pileup parsing rather than bcftools variant calling because low-depth decomposition of complex indels into smaller events obscured editing patterns. We applied a base-quality threshold of zero (`-Q 0`) because anchor bases flanking CRISPR-induced indels could fall to Q18, below the default Q20 cutoff. **Step 10: Copy number estimation.** We estimated transgene copy number from the ratio of median read depth across construct elements to median depth across single-copy host genes, normalized for read length and library size.
 
 ### Benchmark tool configuration
@@ -114,6 +116,10 @@ In rice G281 (374 Mbp), the insertion at Chr3:16,439,719 was detected at 15x (Hi
 
 Across these subsampling results, target junctions were retained at 10x in corn and cucumber, while rice required 15x for the reported insertion locus. At 5x, corn retained the target junction and cucumber retained one junction, whereas rice yielded only false positive calls. At 3x, cucumber and rice did not yield true junction calls, and corn remained detectable at 1x with direct matches to event-specific border sequences.
 
+### Insert reconstruction via targeted assembly
+
+Step 9 (targeted insert assembly) was applied to eight samples across five species (rice, tomato, cucumber, corn, and soybean) to reconstruct full-length insert sequences from junction coordinates. For insert annotation, the element database was expanded to 278 sequences by incorporating 82 CRL-GMOMETHODS amplicon sequences alongside the existing 131 EUginius elements, 62 corn border sequences, and 3 custom entries. Assembly and annotation results for these samples are pending completion.
+
 ## Discussion
 
 Assembly-based junction detection with a curated element database enabled transgene insertion-site characterization without complete construct sequences. Across eight transgenic samples in five crop species, insertion sites were detected in all cases, including six in which construct-dependent tools could not be applied because full construct FASTA files were unavailable. This addresses a practical bottleneck in GMO molecular characterization, where regulatory and enforcement laboratories frequently encounter events with proprietary, partial, or undeclared construct information (Pauwels et al., 2015; Holst-Jensen et al., 2012). The results indicate that element database mode can extend routine characterization to construct-unavailable events.
@@ -147,6 +153,8 @@ Bae SJ, Park SH, Jang HA, et al. Establishment of a rapid assay for sequencing o
 Bonfini L, van den Bulcke MH, Mazzara M, et al. GMOMETHODS: the European Union database of reference methods for GMO analysis. J AOAC Int. 2012;95(6):1713-1719.
 
 Borjesson V, Kvarnheden A, Stachowicz J, et al. TC-hunter: identification of the insertion site of a transgenic gene within the host genome. BMC Genomics. 2022;23:717.
+
+Camacho C, Coulouris G, Avagyan V, et al. BLAST+: architecture and applications. BMC Bioinformatics. 2009;10:421.
 
 Broeders SRM, De Keersmaecker SCJ, Roosens NHC. How to deal with the upcoming challenges in GMO detection in food and feed. J Biomed Biotechnol. 2012;2012:402418.
 
@@ -207,6 +215,8 @@ Sun L, Bhagwat A, Bhagwat SS, et al. TDNAscan: a software to identify complete a
 Szwacka M, Krzymowska M, Osuch A, et al. Variable properties of transgenic cucumber plants containing the thaumatin II cDNA introduced by Agrobacterium tumefaciens. Acta Physiol Plant. 2002;24(2):173-185.
 
 Szwacka M, Tykarska T, Wisniewska A, et al. Transgenic cucumber plants expressing the thaumatin gene. Transgenic Res. 2012;21(5):1125-1139.
+
+Walker BJ, Abeel T, Shea T, et al. Pilon: an integrated tool for comprehensive microbial variant detection and genome assembly improvement. PLoS One. 2014;9(11):e112963.
 
 Wang C, Lu X, Xu Z, et al. Deciphering the complex molecular architecture of the genetically modified soybean FG72 through paired-end whole genome sequencing. Curr Res Biotechnol. 2024;8:100225.
 

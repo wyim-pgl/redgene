@@ -216,11 +216,11 @@ SlPHD_MS1, but each line was edited at different loci:
 
 **A2_3 (Cas9 present, T-DNA positive control):**
 
-| Coverage | Total Reads | Extracted Reads | Contigs | N50 | Junction Detected | Position |
-|----------|------------|-----------------|---------|-----|-------------------|----------|
-| ~10.3x (full) | 60.2M | 3,436 | 501 | 347 | **YES** | chr08:65,107,378 |
-| ~5x | ~33M | 785 | 92 | 264 | **NO** | - |
-| ~3x | ~20M | 473 | 52 | 264 | **NO** | - |
+| Coverage | Extracted Reads | Contigs | Chimeric | Junctions | Confidence | Key Site (65,107,378) |
+|----------|----------------|---------|----------|-----------|------------|----------------------|
+| ~10.8x (full) | 3,436 | 501 | 1 | 1 | Medium | Detected (RB) |
+| ~5x | 1,543 | 221 | 0 | 0 | -- | **FAILED** |
+| ~3x | 905 | 109 | 0 | 0 | -- | **FAILED** |
 
 **A2_1 (Cas9 removed, negative control):**
 
@@ -234,6 +234,45 @@ SlPHD_MS1, but each line was edited at different loci:
 **Note on A2_1 15x**: 22,983 extracted reads is anomalously high for a T-DNA-negative sample.
 This reflects background noise from host sequences with partial homology to element_db entries
 (TA29, pinII, Ubi1, actin). WT-based filtering (s03b) would remove most of these.
+
+### WT Construct Hits (Element DB False Positive Analysis)
+
+WT tomato (non-transgenic) run through the same element_db pipeline produces more construct hits than transgenic samples:
+
+| Sample | Construct-hitting reads | Junctions | Chimeric contigs |
+|--------|------------------------|-----------|-----------------|
+| **tomato_WT** | **9,764** | **0** | **0** |
+| tomato_A2_1 | 15,920 | 0 | 0 |
+| tomato_A2_2 | 2,951 | 0 | 0 |
+| tomato_A2_3 | 3,436 | 1 | 1 |
+
+**WT construct hit breakdown** (top elements):
+
+| Element | Reads | Origin | Why hits WT tomato |
+|---------|-------|--------|-------------------|
+| P-SSuAra (RuBisCO promoter) | 4,633 | Arabidopsis | Conserved photosynthesis gene in all plants |
+| P-TA29 (tapetum promoter) | 3,836 | Tobacco | Solanaceae-conserved reproductive gene |
+| cp4-epsps | 1,907 | Agrobacterium | Partial homology to plant EPSPS |
+| P-Ubi1-maize | 719 | Maize | Ubiquitin gene conserved across monocots/dicots |
+
+**Key finding**: Despite 9,764 WT reads hitting construct elements, zero chimeric contigs and zero junctions are produced. The assembly-based approach naturally filters false positives because WT reads produce host-only contigs (no construct insertion breakpoint exists). This means the pipeline's assembly step acts as an inherent biological filter, even without explicit WT-based read filtering.
+
+### Homology Filtering (Step 3b) Across All Species
+
+| Species | Sample | Construct DB | Extracted Reads | Homologous Regions | Discarded | % Removed |
+|---------|--------|-------------|-----------------|-------------------|-----------|-----------|
+| Rice | G281 | element_db (131) | 5,097 | found | 73 | 1.4% |
+| Tomato | Cas9_A2_1 | element_db (131) | 15,920 | 0 | 0 | 0% |
+| Tomato | Cas9_A2_2 | element_db (131) | 2,951 | 0 | 0 | 0% |
+| Tomato | Cas9_A2_3 | element_db (131) | 3,436 | 0 | 0 | 0% |
+| Cucumber | line212 | element_db (131) | 1,021 | 0 | 0 | 0% |
+| Cucumber | line224 | element_db (131) | 1,117 | 0 | 0 | 0% |
+| Cucumber | line225 | element_db (131) | 1,139 | 0 | 0 | 0% |
+| Soybean | UGT72E3 | element_db (131) | 19,451 | 0 | 0 | 0% |
+| Soybean | AtYUCCA6 | element_db (131) | 18,280 | 0 | 0 | 0% |
+| Corn | ND207 | corn_combined (192) | 2,271,697 | 51 | 3,848 | 0.2% |
+
+Step 3b (construct-host homology filter) has minimal effect across all species. The element_db elements are mostly bacterial/viral origin and share little homology with plant genomes. Corn shows 51 homologous regions due to the corn-specific border database containing native maize flanking sequences, but even there only 0.2% of reads are removed.
 
 ---
 
@@ -286,17 +325,23 @@ This reflects background noise from host sequences with partial homology to elem
 
 **Tomato A2_3 (833 Mbp genome):**
 
-| Coverage | Junction Detection | Notes |
-|----------|-------------------|-------|
-| ~10.3x (full) | DETECTED (chr08:65,107,378) | EXACT MATCH with known |
-| ~5x | NOT detected | 785 extracted reads, N50=264 |
-| ~3x | NOT detected | 473 extracted reads, N50=264 |
+| Coverage | Extracted Reads | Contigs | Chimeric | Junctions | Confidence | Key Site (65,107,378) |
+|----------|----------------|---------|----------|-----------|------------|----------------------|
+| ~10.8x (full) | 3,436 | 501 | 1 | 1 | Medium | Detected (RB) |
+| ~5x | 1,543 | 221 | 0 | 0 | -- | **FAILED** |
+| ~3x | 905 | 109 | 0 | 0 | -- | **FAILED** |
 
-**Summary**: Minimum ~15x for rice, ~10x for tomato for the *specific known junction*.
-Note: Rice at 10x still finds 8 junction candidates (including Chr3:31,443,557 and
-Chr2:8,432,860 seen at full coverage) — it only misses the Chr3:16,439,719 site.
-The tomato coverage sensitivity is based on a single sample (A2_3) with a single
-junction, so the threshold is not statistically robust.
+**Summary**: Minimum coverage thresholds vary by species and are not simply a function of genome size:
+
+| Species | Genome | Full Cov | Min Reliable | 5x | 3x |
+|---------|--------|---------|-------------|-----|-----|
+| Cucumber | 332 Mbp | 36x | **10x** | Partial (LB only) | Failed |
+| Rice | 374 Mbp | 50x | **15x** | Variable | Variable |
+| Tomato | 833 Mbp | 10.8x | **~11x** | Failed | Failed |
+| Soybean | 1.1 Gbp | 29x | **3x** | High | High |
+| Corn | 2.18 Gbp | 5x | **1x** (border DB) | High | High |
+
+Detection sensitivity correlates more strongly with the number of construct-hitting reads than with genome size. Soybean (19,451 extracted reads at full cov) and corn (2.27M reads) maintain stable chimeric contig assembly at low coverage because the absolute construct-read count remains sufficient for SPAdes. Cucumber (2,233 reads) and tomato (3,436 reads) have fewer construct hits, making assembly fragile at reduced coverage.
 
 **Caveat**: The 15x rice data produces "High" confidence at Chr3:16,439,719 while
 the full 29x data produces "Medium" with MAPQ=10 — an example of assembly
@@ -526,11 +571,12 @@ Subsampled from ~36x to test minimum coverage for junction detection (332 Mbp ge
 - At 5x: only one junction side detected (LB, Medium confidence)
 - At 3x: complete failure — no chimeric contigs assembled
 
-**Extrapolation by genome size**:
-- Cucumber (332 Mbp): ≥10x reliable
+**Cross-species coverage thresholds**:
+- Cucumber (332 Mbp): ≥10x reliable, 5x partial, 3x failed
 - Rice (374 Mbp): ≥15x reliable (from prior tests)
 - Tomato (833 Mbp): ≥10x reliable (from prior tests)
-- Corn (2.18 Gbp): TBD (only full coverage tested so far)
+- Soybean (1.1 Gbp): ≥3x reliable (High confidence at all coverages)
+- Corn (2.18 Gbp): ≥1x detectable (key junction found at 1x with Medium confidence)
 
 ### Code Fix: Element DB Coverage Calculation (s06_junction.py)
 - **Problem**: Junction detection used single construct alignment coverage, not union of all construct alignments. With element_db (131 separate sequences), each element covered <26% of chimeric contigs → filtered as "low combined coverage"
@@ -583,6 +629,19 @@ Subsampled from ~36x to test minimum coverage for junction detection (332 Mbp ge
 - These are legitimate host genes that also appear in the GMO element DB as commonly used construct promoters
 - Border sequences contain ~100bp native flanking → 2.25M extracted reads (vs 6K rice, 3.4K tomato)
 - **Fix**: `run_pipeline.py` now passes `--min-identity 0.70` for element_db/combined_db (default 0.90 silently filtered real junctions)
+
+### Homology Filtering (Step 3b)
+
+Construct-host homology detection with minimap2 followed by BWA mapping to identify reads from host-derived regions in the construct database.
+
+- **Homologous regions detected**: 51 regions across 32 chromosomes
+- **Largest region**: NC_050100.1:84,400,732-84,404,546 (3,814 bp) — likely Ubi1 promoter locus
+- **Most regions**: 57 bp short homology hits on unplaced scaffolds (NW_* contigs)
+- **Total extracted reads**: 2,271,697 pairs
+- **Discarded (homologous)**: 3,848 pairs (0.2%)
+- **Retained**: 2,267,849 pairs (99.8%)
+
+The minimal filtering effect (0.2%) indicates that the massive read extraction in corn (2.25M pairs) is not primarily driven by construct-host homology. Instead, it results from the ~100bp native maize flanking sequences embedded in the border database entries, which capture genuine host reads at MAPQ=60. These reads are true positives from the border sequence perspective but inflate the assembly input far beyond what other species require.
 
 ### Code Fix: Identity Threshold for Element DB (run_pipeline.py)
 - **Problem**: Default `--min-identity 0.90` in s06_junction.py silently filtered genuine chimeric contigs where minimap2 alignment identity was 0.84-0.85 (common with fragmented element references)
@@ -708,3 +767,55 @@ Original coverage is ~5x. Subsampled to 3x and 1x with seqtk sample (fixed rando
 - **Site II (Chr19)**: NC_038255.2:49,789,752 detected (Medium confidence, MAPQ 60) at Glyma.19g245800. **Confirmed.**
 - **Site I (Chr18)**: NOT detected. This locus contains 5+ identical tandem T-DNA copies (Kim et al., 2021). SPAdes collapses identical repeats into a single contig, preventing chimeric junction formation. This is a known limitation of short-read assembly for multi-copy tandem insertions.
 - Medium confidence (vs High for UGT72E3) because only one contig with unidirectional (all LB) element matches was assembled, lacking a paired RB junction.
+
+### Coverage Sensitivity (Soybean UGT72E3 Subsampling)
+
+Original coverage is ~29x (97.4M read pairs, 1.1 Gbp genome). Subsampled to 15x/10x/5x/3x with seqtk sample (seed=42).
+
+| Coverage | Extracted Reads | Contigs | Host PAF | Construct PAF | Chimeric Contigs | Junctions | Confidence |
+|----------|----------------|---------|----------|---------------|-----------------|-----------|------------|
+| **~29x** (full) | 19,451 pairs | 1,606 | 3,528 | 28 | 2 | 8 | **High** |
+| **~15x** | 9,925 pairs | 1,231 | 2,744 | 34 | 2 | 8 | **High** |
+| **~10x** | 6,729 pairs | 977 | 2,966 | 34 | 2 | 8 | **High** |
+| **~5x** | 3,425 pairs | 399 | 1,050 | 20 | 2 | 9 | **High** |
+| **~3x** | 2,079 pairs | 205 | 479 | 22 | 2 | 9 | **High** |
+
+All coverages detected both junction coordinates (Chr18:51,882,860 and 51,882,903) with High confidence. Junction coordinates were identical across all coverage levels.
+
+**Key observations**:
+- Soybean (1.1 Gbp) is robustly detectable down to **3x coverage** — the lowest threshold among all tested species
+- Even at 3x, 2 chimeric contigs are assembled with the same insertion coordinates as full coverage
+- Extracted reads scale linearly with coverage (19,451 → 2,079) but chimeric contig count remains stable at 2
+- The 3x SPAdes assembly produced warnings about erroneous kmer thresholds, but junction detection was unaffected
+- This contrasts with cucumber (332 Mbp, failed at 3x) and rice (374 Mbp, partial at 5x), suggesting that detection sensitivity depends more on the ratio of construct-hitting reads to total assembly complexity than on genome size alone
+
+---
+
+## Step 9: Targeted Insert Assembly (Pilon Gap Filling)
+
+### Overview
+Junction-guided iterative Pilon gap filling to resolve full transgene insertion cassettes. Uses pseudo-reference construction (host flanks + junction contig insert portions + N-gap) with iterative Pilon polishing.
+
+### Submitted Jobs
+
+| Sample | Job ID | Status | Notes |
+|--------|--------|--------|-------|
+| rice_G281 | 5623883 | Running | 4 junctions, pCAMBIA-1300 T-DNA |
+| soybean_UGT72E3 | 5623884 | Running | 8 junctions, paired LB+RB |
+| soybean_AtYUCCA6 | 5623885 | Running | 5 junctions, single-sided |
+| tomato_Cas9_A2_3 | 5623886 | Running | 1 junction only |
+| cucumber_line224 | 5623887 | Running (s07 first) | 9 junctions, paired |
+| cucumber_line225 | 5623888 | Running (s07 first) | 2 junctions, paired |
+| cucumber_line212 | 5623889 | Running (s07 first) | 3 junctions |
+| corn_ND207 | 5623890 | Running (s07 first) | 7 junctions |
+
+### Element Database Update
+- Added 82 CRL-GMOMETHODS amplicon sequences (construct-specific: 17, element-specific: 6, event-specific: 51, taxon-specific: 8)
+- Total element DB: 278 sequences (141 kb) in `db/gmo_all_combined_db.fa`
+- Source: EU Reference Laboratory for GM Food and Feed (https://gmo-crl.jrc.ec.europa.eu/gmomethods/)
+
+### CRL Amplicon-Based Insert Annotation
+CRL amplicons serve dual purpose in s09:
+1. **Element identification**: BLAST of assembled insert vs 278-element DB identifies promoters, CDS, terminators, and event-specific junctions
+2. **Event fingerprinting**: Event-specific amplicons (51 from CRL) can match against assembled inserts to confirm known GM event identity
+3. **N-masked probe regions**: Many CRL amplicons contain N characters between primer sites; these probe-masked regions don't affect flanking primer-site BLAST matches
