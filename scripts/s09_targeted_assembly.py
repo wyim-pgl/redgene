@@ -1833,9 +1833,9 @@ def assemble_insert(
         if contig_3p:
             contig_3p = extender.extend(contig_3p, max_iterations=100)
 
-        ext_growth = (len(contig_5p) - prev_5p_len) + (len(contig_3p) - prev_3p_len)
+        kmer_growth = (len(contig_5p) - prev_5p_len) + (len(contig_3p) - prev_3p_len)
         log(f"    K-mer ext: 5p={prev_5p_len:,}→{len(contig_5p):,}, "
-            f"3p={prev_3p_len:,}→{len(contig_3p):,} (+{ext_growth})")
+            f"3p={prev_3p_len:,}→{len(contig_3p):,} (+{kmer_growth})")
 
         # Step B2: minimap2 soft-clip extension (handles repeats k-mer can't)
         mm2_dir = workdir / f"_mm2_r{rnd}"
@@ -1879,6 +1879,9 @@ def assemble_insert(
             return final_fa, rnd, "complete"
 
         # Step D: Pilon gap fill
+        pre_pilon_5p = len(contig_5p)
+        pre_pilon_3p = len(contig_3p)
+        pilon_growth = 0
         if contig_5p and contig_3p:
             pilon_dir = workdir / f"_pilon_r{rnd}"
             pilon_dir.mkdir(parents=True, exist_ok=True)
@@ -1896,9 +1899,9 @@ def assemble_insert(
             )
 
             shutil.rmtree(pilon_dir, ignore_errors=True)
+            pilon_growth = (len(contig_5p) - pre_pilon_5p) + (len(contig_3p) - pre_pilon_3p)
 
             if gap_filled:
-                # contig_5p contains the complete merged assembly
                 final_seq = contig_5p
                 final_fa = workdir / f"{site.site_id}_insert.fasta"
                 write_fasta(final_fa, f"{site.site_id}_assembled_insert", final_seq)
@@ -1932,12 +1935,13 @@ def assemble_insert(
                 return final_fa, rnd, "complete"
         shutil.rmtree(ssake_dir, ignore_errors=True)
 
-        # Step E: Check termination
+        # Step E: Check termination — only converge when ALL 4 steps show zero growth
         total_rounds = rnd
-        total_growth = (len(contig_5p) - prev_5p_len) + (len(contig_3p) - prev_3p_len)
+        log(f"    Round {rnd} growth: kmer={kmer_growth}, mm2={mm2_growth}, "
+            f"pilon={pilon_growth}, ssake={ssake_growth}")
 
-        if total_growth == 0:
-            log(f"    No growth → converged")
+        if kmer_growth == 0 and mm2_growth == 0 and pilon_growth == 0 and ssake_growth == 0:
+            log(f"    All 4 assemblers show zero growth → converged")
             status = "converged"
             break
 
@@ -1954,19 +1958,20 @@ def assemble_insert(
             status = "complete"
             break
 
-        # Cycle detection
+        # Cycle detection — per-step growth pattern over 3 rounds
+        total_growth = kmer_growth + mm2_growth + pilon_growth + ssake_growth
         growth_history.append(total_growth)
-        if (len(growth_history) >= 2
-                and growth_history[-1] == growth_history[-2]
-                and growth_history[-1] > 0):
-            log(f"    Constant growth ({growth_history[-1]}) for 2 rounds → cycling")
-            status = "converged"
-            break
+        if len(growth_history) >= 3:
+            last3 = growth_history[-3:]
+            if last3[0] == last3[1] == last3[2] and last3[0] > 0:
+                log(f"    Same total growth ({last3[0]}) for 3 rounds → cycling")
+                status = "converged"
+                break
         if len(growth_history) >= 6:
             recent = growth_history[-3:]
             earlier = growth_history[-6:-3]
             if recent == earlier:
-                log(f"    Cyclic growth detected → stopping")
+                log(f"    Cyclic growth pattern detected → stopping")
                 status = "converged"
                 break
 
