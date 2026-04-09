@@ -608,25 +608,41 @@ class TierResult:
     clip_3p_len: int = 0
     clip_5p_maps_host: bool = False
     clip_3p_maps_host: bool = False
-    clip_5p_mapq: int = -1      # -1 = no mapping
-    clip_3p_mapq: int = -1
+    clip_5p_nhits: int = 0      # number of host BLAST hits
+    clip_3p_nhits: int = 0
     element_hit: bool = False   # annotation only, not used for classification
     element_id: str = ""
     element_identity: float = 0
     element_aln_len: int = 0
 
 
-def _batch_host_map_with_mapq(
+def _batch_host_blast(
     seqs: dict[str, str], host_ref: Path, workdir: Path,
     threads: int = 4,
+    min_identity: float = 90.0,
+    min_qcov: float = 0.80,
 ) -> dict[str, tuple[bool, int]]:
-    """Map clip sequences to host genome, return {name: (maps, mapq)}.
+    """BLAST clip sequences against host genome, return {name: (maps, n_hits)}.
 
-    Uses minimap2 PAF output. For each query, returns whether it mapped
-    and the mapping quality of the primary alignment.
+    Uses blastn with word_size=7 to detect short (20-70bp) host-derived clips.
+    minimap2 cannot reliably map sequences this short.
+
+    Returns dict of {query_name: (True, number_of_hits)} for clips that map
+    to host with >=min_identity% over >=min_qcov of query length.
+    n_hits > 1 means multi-mapping (repetitive).
     """
     if not seqs:
         return {}
+
+    # Ensure BLAST DB exists
+    ndb = host_ref.with_suffix(host_ref.suffix + ".ndb")
+    if not ndb.exists():
+        log("  Building BLAST database for host genome...")
+        subprocess.run(
+            ["makeblastdb", "-in", str(host_ref), "-dbtype", "nucl",
+             "-parse_seqids"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
 
     query_fa = workdir / "_tier_clips.fa"
     with open(query_fa, "w") as fh:
@@ -634,38 +650,39 @@ def _batch_host_map_with_mapq(
             if len(seq) >= 15:
                 fh.write(f">{name}\n{seq}\n")
 
-    result = subprocess.run(
-        ["minimap2", "-c", "--secondary=no", "-t", str(threads),
-         str(host_ref), str(query_fa)],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    blast_out = workdir / "_tier_host_blast.tsv"
+    subprocess.run(
+        ["blastn", "-query", str(query_fa), "-db", str(host_ref),
+         "-outfmt", "6 qseqid sseqid pident length qlen qstart qend sstart send",
+         "-evalue", "1e-3", "-word_size", "7", "-dust", "no",
+         "-max_target_seqs", "5", "-num_threads", str(threads),
+         "-out", str(blast_out)],
+        stderr=subprocess.DEVNULL,
     )
-    query_fa.unlink(missing_ok=True)
 
-    # Parse PAF: columns are qname, qlen, qstart, qend, strand,
-    #   tname, tlen, tstart, tend, nmatch, block_len, mapq, ...
+    # Parse: keep hits with sufficient identity and query coverage
     mapping: dict[str, tuple[bool, int]] = {}
-    for line in result.stdout.splitlines():
-        cols = line.strip().split("\t")
-        if len(cols) < 12:
-            continue
-        qname = cols[0]
-        q_len = int(cols[1])
-        q_start = int(cols[2])
-        q_end = int(cols[3])
-        match_bp = int(cols[9])
-        block_len = int(cols[10])
-        mapq = int(cols[11])
+    if blast_out.exists():
+        with open(blast_out) as fh:
+            for line in fh:
+                cols = line.strip().split("\t")
+                if len(cols) < 9:
+                    continue
+                qname = cols[0]
+                pident = float(cols[2])
+                aln_len = int(cols[3])
+                q_len = int(cols[4])
 
-        if block_len == 0 or q_len == 0:
-            continue
-        identity = match_bp / block_len
-        coverage = (q_end - q_start) / q_len
+                if q_len == 0:
+                    continue
+                qcov = aln_len / q_len
 
-        # Require reasonable alignment: >=80% identity, >=50% coverage
-        if identity >= 0.80 and coverage >= 0.50:
-            # Keep the best MAPQ for each query
-            if qname not in mapping or mapq > mapping[qname][1]:
-                mapping[qname] = (True, mapq)
+                if pident >= min_identity and qcov >= min_qcov:
+                    prev_hits = mapping.get(qname, (False, 0))[1]
+                    mapping[qname] = (True, prev_hits + 1)
+
+    query_fa.unlink(missing_ok=True)
+    blast_out.unlink(missing_ok=True)
 
     return mapping
 
@@ -701,10 +718,11 @@ def classify_site_tiers(
         if site.seed_3p and len(site.seed_3p) >= 15:
             clip_seqs[f"{site.site_id}_3p"] = site.seed_3p
 
-    log(f"  Mapping {len(clip_seqs)} clip sequences against host genome...")
+    log(f"  BLASTing {len(clip_seqs)} clip sequences against host genome "
+        f"(word_size=7, identity>=90%, qcov>=80%)...")
 
-    # Step 2: Map ALL clips to host genome (single minimap2 call)
-    host_map = _batch_host_map_with_mapq(clip_seqs, host_ref, tier_dir, threads)
+    # Step 2: BLAST ALL clips against host genome (single blastn call)
+    host_map = _batch_host_blast(clip_seqs, host_ref, tier_dir, threads)
     log(f"  {len(host_map)} clips mapped to host")
 
     # Step 3: Classify each site based on host mapping
@@ -719,13 +737,13 @@ def classify_site_tiers(
         has_5p = bool(site.seed_5p) and len(site.seed_5p) >= 15
         has_3p = bool(site.seed_3p) and len(site.seed_3p) >= 15
 
-        maps_5p, mapq_5p = host_map.get(key_5p, (False, -1))
-        maps_3p, mapq_3p = host_map.get(key_3p, (False, -1))
+        maps_5p, nhits_5p = host_map.get(key_5p, (False, 0))
+        maps_3p, nhits_3p = host_map.get(key_3p, (False, 0))
 
         clip_5p_len = len(site.seed_5p) if site.seed_5p else 0
         clip_3p_len = len(site.seed_3p) if site.seed_3p else 0
 
-        # Check if clips are too short for reliable mapping
+        # Check if clips are too short for reliable BLAST
         short_5p = clip_5p_len < min_clip_for_mapping if has_5p else True
         short_3p = clip_3p_len < min_clip_for_mapping if has_3p else True
 
@@ -733,8 +751,8 @@ def classify_site_tiers(
             # Both clips too short for confident mapping
             tier = "D"
             reason = "clips_too_short"
-        elif maps_5p and maps_3p and mapq_5p >= 10 and mapq_3p >= 10:
-            # Both sides map to host with good MAPQ → endogenous SV
+        elif maps_5p and maps_3p:
+            # Both sides map to host → endogenous SV
             tier = "C"
             reason = "both_sides_host"
         elif (not maps_5p) and (not maps_3p):
@@ -752,26 +770,16 @@ def classify_site_tiers(
             if has_3p and not short_3p:
                 tier = "B"
                 reason = "3p_foreign_5p_host"
-            elif mapq_5p >= 10:
-                tier = "D"
-                reason = "5p_host_3p_missing"
             else:
                 tier = "D"
-                reason = "5p_low_mapq_3p_missing"
+                reason = "5p_host_3p_missing"
         elif maps_3p and not maps_5p:
             if has_5p and not short_5p:
                 tier = "B"
                 reason = "5p_foreign_3p_host"
-            elif mapq_3p >= 10:
-                tier = "D"
-                reason = "3p_host_5p_missing"
             else:
                 tier = "D"
-                reason = "3p_low_mapq_5p_missing"
-        elif (maps_5p and mapq_5p == 0) or (maps_3p and mapq_3p == 0):
-            # Multi-mapping, cannot determine
-            tier = "D"
-            reason = "mapq0_ambiguous"
+                reason = "3p_host_5p_missing"
         else:
             tier = "D"
             reason = "unclassified"
@@ -786,8 +794,8 @@ def classify_site_tiers(
             clip_3p_len=clip_3p_len,
             clip_5p_maps_host=maps_5p,
             clip_3p_maps_host=maps_3p,
-            clip_5p_mapq=mapq_5p,
-            clip_3p_mapq=mapq_3p,
+            clip_5p_nhits=nhits_5p,
+            clip_3p_nhits=nhits_3p,
         )
         tier_results.append(tr)
 
@@ -879,13 +887,13 @@ def write_tier_classification(
         fh.write("site_id\tchrom\tpos\ttier\treason\t"
                  "clip_5p_len\tclip_3p_len\t"
                  "clip_5p_maps_host\tclip_3p_maps_host\t"
-                 "clip_5p_mapq\tclip_3p_mapq\t"
+                 "clip_5p_nhits\tclip_3p_nhits\t"
                  "element_hit\telement_id\telement_identity\telement_aln_len\n")
         for tr in tier_results:
             fh.write(f"{tr.site_id}\t{tr.chrom}\t{tr.pos}\t{tr.tier}\t{tr.reason}\t"
                      f"{tr.clip_5p_len}\t{tr.clip_3p_len}\t"
                      f"{tr.clip_5p_maps_host}\t{tr.clip_3p_maps_host}\t"
-                     f"{tr.clip_5p_mapq}\t{tr.clip_3p_mapq}\t"
+                     f"{tr.clip_5p_nhits}\t{tr.clip_3p_nhits}\t"
                      f"{tr.element_hit}\t{tr.element_id}\t"
                      f"{tr.element_identity}\t{tr.element_aln_len}\n")
     log(f"  Tier classification written: {output_path}")
