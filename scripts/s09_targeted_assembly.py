@@ -590,24 +590,84 @@ def find_softclip_junctions(
 
 
 # ---------------------------------------------------------------------------
-# Tier classification: element-based filtering before assembly
+# Tier classification: host-genome mapping approach
 # ---------------------------------------------------------------------------
+# Principle: clips that map back to host = endogenous SV (skip).
+#            clips that do NOT map to host = foreign DNA (assemble).
+#            Element DB is for annotation AFTER classification, not filtering.
 
 @dataclass
 class TierResult:
     """Tier classification for one insertion site."""
     site_id: str
-    tier: str               # "A", "B", "C"
-    reason: str
-    element_hit_std: str = ""
-    element_identity_std: float = 0
-    element_aln_len_std: int = 0
-    element_hit_sens: str = ""
-    element_identity_sens: float = 0
-    element_aln_len_sens: int = 0
-    host_map_5p: bool = False
-    host_map_3p: bool = False
-    annotation: str = ""
+    chrom: str = ""
+    pos: int = 0
+    tier: str = ""              # "A", "B", "C", "D"
+    reason: str = ""
+    clip_5p_len: int = 0
+    clip_3p_len: int = 0
+    clip_5p_maps_host: bool = False
+    clip_3p_maps_host: bool = False
+    clip_5p_mapq: int = -1      # -1 = no mapping
+    clip_3p_mapq: int = -1
+    element_hit: bool = False   # annotation only, not used for classification
+    element_id: str = ""
+    element_identity: float = 0
+    element_aln_len: int = 0
+
+
+def _batch_host_map_with_mapq(
+    seqs: dict[str, str], host_ref: Path, workdir: Path,
+    threads: int = 4,
+) -> dict[str, tuple[bool, int]]:
+    """Map clip sequences to host genome, return {name: (maps, mapq)}.
+
+    Uses minimap2 PAF output. For each query, returns whether it mapped
+    and the mapping quality of the primary alignment.
+    """
+    if not seqs:
+        return {}
+
+    query_fa = workdir / "_tier_clips.fa"
+    with open(query_fa, "w") as fh:
+        for name, seq in seqs.items():
+            if len(seq) >= 15:
+                fh.write(f">{name}\n{seq}\n")
+
+    result = subprocess.run(
+        ["minimap2", "-c", "--secondary=no", "-t", str(threads),
+         str(host_ref), str(query_fa)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    query_fa.unlink(missing_ok=True)
+
+    # Parse PAF: columns are qname, qlen, qstart, qend, strand,
+    #   tname, tlen, tstart, tend, nmatch, block_len, mapq, ...
+    mapping: dict[str, tuple[bool, int]] = {}
+    for line in result.stdout.splitlines():
+        cols = line.strip().split("\t")
+        if len(cols) < 12:
+            continue
+        qname = cols[0]
+        q_len = int(cols[1])
+        q_start = int(cols[2])
+        q_end = int(cols[3])
+        match_bp = int(cols[9])
+        block_len = int(cols[10])
+        mapq = int(cols[11])
+
+        if block_len == 0 or q_len == 0:
+            continue
+        identity = match_bp / block_len
+        coverage = (q_end - q_start) / q_len
+
+        # Require reasonable alignment: >=80% identity, >=50% coverage
+        if identity >= 0.80 and coverage >= 0.50:
+            # Keep the best MAPQ for each query
+            if qname not in mapping or mapq > mapping[qname][1]:
+                mapping[qname] = (True, mapq)
+
+    return mapping
 
 
 def classify_site_tiers(
@@ -615,14 +675,17 @@ def classify_site_tiers(
     element_db: Path,
     host_ref: Path,
     workdir: Path,
+    threads: int = 4,
+    min_clip_for_mapping: int = 25,
 ) -> tuple[list[InsertionSite], list[InsertionSite], list[TierResult]]:
-    """Classify validated sites into Tier A/B/C based on element DB screening.
+    """Classify sites by host-genome mapping of clip sequences.
 
-    Tier A: Standard BLAST hit >=80% identity over >=20bp -> assemble
-    Tier B: Only sensitive BLAST hit, or low-complexity/short clip -> assemble (flagged)
-    Tier C: No element hit at all -> skip assembly
+    Tier A (foreign):    clip does NOT map to host → assemble
+    Tier B (partial):    one side maps to host, other does not → assemble
+    Tier C (endogenous): BOTH sides map to host with MAPQ>=10 → skip
+    Tier D (ambiguous):  clip too short or MAPQ=0 → assemble
 
-    Returns (tier_ab_sites, tier_c_sites, all_tier_results).
+    Returns (assembly_sites, skip_sites, all_tier_results).
     """
     if not sites:
         return [], [], []
@@ -630,7 +693,7 @@ def classify_site_tiers(
     tier_dir = workdir / "_tier_classification"
     tier_dir.mkdir(parents=True, exist_ok=True)
 
-    # Collect all clip sequences for batch BLAST
+    # Step 1: Collect all clip sequences
     clip_seqs: dict[str, str] = {}
     for site in sites:
         if site.seed_5p and len(site.seed_5p) >= 15:
@@ -638,164 +701,173 @@ def classify_site_tiers(
         if site.seed_3p and len(site.seed_3p) >= 15:
             clip_seqs[f"{site.site_id}_3p"] = site.seed_3p
 
-    if not clip_seqs:
-        log("  Tier classification: no clip sequences to classify")
-        results = [TierResult(s.site_id, "B", "no_clips") for s in sites]
-        return sites, [], results
+    log(f"  Mapping {len(clip_seqs)} clip sequences against host genome...")
 
-    # Write all clips to one FASTA
-    clip_fa = tier_dir / "all_clips.fa"
-    with open(clip_fa, "w") as fh:
-        for name, seq in clip_seqs.items():
-            fh.write(f">{name}\n{seq}\n")
+    # Step 2: Map ALL clips to host genome (single minimap2 call)
+    host_map = _batch_host_map_with_mapq(clip_seqs, host_ref, tier_dir, threads)
+    log(f"  {len(host_map)} clips mapped to host")
 
-    # Standard BLAST (evalue 1e-5)
-    std_out = tier_dir / "std_blast.tsv"
-    subprocess.run(
-        ["blastn", "-query", str(clip_fa), "-subject", str(element_db),
-         "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
-         "-evalue", "1e-5", "-max_target_seqs", "5",
-         "-out", str(std_out)],
-        stderr=subprocess.DEVNULL,
-    )
-
-    # Sensitive BLAST (evalue 1e-3, word_size 7)
-    sens_out = tier_dir / "sens_blast.tsv"
-    subprocess.run(
-        ["blastn", "-query", str(clip_fa), "-subject", str(element_db),
-         "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
-         "-evalue", "1e-3", "-word_size", "7", "-max_target_seqs", "5",
-         "-out", str(sens_out)],
-        stderr=subprocess.DEVNULL,
-    )
-
-    # Parse standard hits: best hit per query
-    std_hits: dict[str, dict] = {}
-    if std_out.exists():
-        with open(std_out) as fh:
-            for line in fh:
-                cols = line.strip().split("\t")
-                if len(cols) < 6:
-                    continue
-                qname = cols[0]
-                if qname not in std_hits or float(cols[5]) > std_hits[qname].get("bitscore", 0):
-                    std_hits[qname] = {
-                        "element": cols[1], "identity": float(cols[2]),
-                        "aln_length": int(cols[3]), "bitscore": float(cols[5]),
-                    }
-
-    # Parse sensitive hits: best hit per query
-    sens_hits: dict[str, dict] = {}
-    if sens_out.exists():
-        with open(sens_out) as fh:
-            for line in fh:
-                cols = line.strip().split("\t")
-                if len(cols) < 6:
-                    continue
-                qname = cols[0]
-                if qname not in sens_hits or float(cols[5]) > sens_hits[qname].get("bitscore", 0):
-                    sens_hits[qname] = {
-                        "element": cols[1], "identity": float(cols[2]),
-                        "aln_length": int(cols[3]), "bitscore": float(cols[5]),
-                    }
-
-    # Classify each site
+    # Step 3: Classify each site based on host mapping
     tier_results: list[TierResult] = []
-    tier_ab: list[InsertionSite] = []
-    tier_c: list[InsertionSite] = []
+    assembly_sites: list[InsertionSite] = []
+    skip_sites: list[InsertionSite] = []
 
     for site in sites:
         key_5p = f"{site.site_id}_5p"
         key_3p = f"{site.site_id}_3p"
 
-        std_5p = std_hits.get(key_5p, {})
-        std_3p = std_hits.get(key_3p, {})
-        has_std_hit = (
-            (std_5p.get("identity", 0) >= 80 and std_5p.get("aln_length", 0) >= 20) or
-            (std_3p.get("identity", 0) >= 80 and std_3p.get("aln_length", 0) >= 20)
-        )
+        has_5p = bool(site.seed_5p) and len(site.seed_5p) >= 15
+        has_3p = bool(site.seed_3p) and len(site.seed_3p) >= 15
 
-        sens_5p = sens_hits.get(key_5p, {})
-        sens_3p = sens_hits.get(key_3p, {})
-        has_sens_hit = bool(sens_5p) or bool(sens_3p)
+        maps_5p, mapq_5p = host_map.get(key_5p, (False, -1))
+        maps_3p, mapq_3p = host_map.get(key_3p, (False, -1))
 
-        def _is_low_complexity(seq: str) -> bool:
-            if not seq or len(seq) < 10:
-                return False
-            return max(seq.upper().count(b) for b in "ACGT") / len(seq) > 0.60
+        clip_5p_len = len(site.seed_5p) if site.seed_5p else 0
+        clip_3p_len = len(site.seed_3p) if site.seed_3p else 0
 
-        clip_low_complexity = (
-            _is_low_complexity(site.seed_5p) or _is_low_complexity(site.seed_3p)
-        )
-        clip_short = (
-            (site.seed_5p and len(site.seed_5p) < 30) or
-            (site.seed_3p and len(site.seed_3p) < 30)
-        )
+        # Check if clips are too short for reliable mapping
+        short_5p = clip_5p_len < min_clip_for_mapping if has_5p else True
+        short_3p = clip_3p_len < min_clip_for_mapping if has_3p else True
 
-        if has_std_hit:
-            tier = "A"
-            reason = "standard_blast_hit"
-        elif has_sens_hit:
-            tier = "B"
-            reason = "sensitive_blast_only"
-        elif clip_low_complexity:
-            tier = "B"
-            reason = "low_complexity_clip"
-        elif clip_short:
-            tier = "B"
-            reason = "short_clip"
-        else:
+        if short_5p and short_3p:
+            # Both clips too short for confident mapping
+            tier = "D"
+            reason = "clips_too_short"
+        elif maps_5p and maps_3p and mapq_5p >= 10 and mapq_3p >= 10:
+            # Both sides map to host with good MAPQ → endogenous SV
             tier = "C"
-            reason = "no_element_hit"
-
-        best_std = std_5p if std_5p.get("bitscore", 0) >= std_3p.get("bitscore", 0) else std_3p
-        best_sens = sens_5p if sens_5p.get("bitscore", 0) >= sens_3p.get("bitscore", 0) else sens_3p
+            reason = "both_sides_host"
+        elif (not maps_5p) and (not maps_3p):
+            # Neither side maps to host → foreign DNA
+            if has_5p and has_3p and not short_5p and not short_3p:
+                tier = "A"
+                reason = "both_sides_foreign"
+            elif (has_5p and not short_5p) or (has_3p and not short_3p):
+                tier = "A"
+                reason = "foreign_no_host_match"
+            else:
+                tier = "D"
+                reason = "unmapped_short_clips"
+        elif maps_5p and not maps_3p:
+            if has_3p and not short_3p:
+                tier = "B"
+                reason = "3p_foreign_5p_host"
+            elif mapq_5p >= 10:
+                tier = "D"
+                reason = "5p_host_3p_missing"
+            else:
+                tier = "D"
+                reason = "5p_low_mapq_3p_missing"
+        elif maps_3p and not maps_5p:
+            if has_5p and not short_5p:
+                tier = "B"
+                reason = "5p_foreign_3p_host"
+            elif mapq_3p >= 10:
+                tier = "D"
+                reason = "3p_host_5p_missing"
+            else:
+                tier = "D"
+                reason = "3p_low_mapq_5p_missing"
+        elif (maps_5p and mapq_5p == 0) or (maps_3p and mapq_3p == 0):
+            # Multi-mapping, cannot determine
+            tier = "D"
+            reason = "mapq0_ambiguous"
+        else:
+            tier = "D"
+            reason = "unclassified"
 
         tr = TierResult(
-            site_id=site.site_id, tier=tier, reason=reason,
-            element_hit_std=best_std.get("element", ""),
-            element_identity_std=best_std.get("identity", 0),
-            element_aln_len_std=best_std.get("aln_length", 0),
-            element_hit_sens=best_sens.get("element", ""),
-            element_identity_sens=best_sens.get("identity", 0),
-            element_aln_len_sens=best_sens.get("aln_length", 0),
+            site_id=site.site_id,
+            chrom=site.host_chr,
+            pos=site.pos_5p or site.pos_3p or 0,
+            tier=tier,
+            reason=reason,
+            clip_5p_len=clip_5p_len,
+            clip_3p_len=clip_3p_len,
+            clip_5p_maps_host=maps_5p,
+            clip_3p_maps_host=maps_3p,
+            clip_5p_mapq=mapq_5p,
+            clip_3p_mapq=mapq_3p,
         )
         tier_results.append(tr)
 
-        if tier in ("A", "B"):
-            tier_ab.append(site)
+        if tier == "C":
+            skip_sites.append(site)
         else:
-            tier_c.append(site)
+            assembly_sites.append(site)
 
-    # Host mapping for Tier C sites (batch)
-    if tier_c:
-        tierc_seqs: dict[str, str] = {}
-        for site in tier_c:
-            if site.seed_5p:
-                tierc_seqs[f"{site.site_id}_5p"] = site.seed_5p
-            if site.seed_3p:
-                tierc_seqs[f"{site.site_id}_3p"] = site.seed_3p
+    # Step 4: Element DB annotation for Tier A/B clips (informational only)
+    foreign_seqs: dict[str, str] = {}
+    for site in assembly_sites:
+        if site.seed_5p and len(site.seed_5p) >= 20:
+            foreign_seqs[f"{site.site_id}_5p"] = site.seed_5p
+        if site.seed_3p and len(site.seed_3p) >= 20:
+            foreign_seqs[f"{site.site_id}_3p"] = site.seed_3p
 
-        tierc_host_set = _batch_check_maps_to_host(tierc_seqs, host_ref, tier_dir)
+    if foreign_seqs:
+        log(f"  Annotating {len(foreign_seqs)} foreign clips against element DB...")
+        clip_fa = tier_dir / "foreign_clips.fa"
+        with open(clip_fa, "w") as fh:
+            for name, seq in foreign_seqs.items():
+                fh.write(f">{name}\n{seq}\n")
 
+        blast_out = tier_dir / "element_annotation.tsv"
+        subprocess.run(
+            ["blastn", "-query", str(clip_fa), "-subject", str(element_db),
+             "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
+             "-evalue", "1e-5", "-max_target_seqs", "1",
+             "-out", str(blast_out)],
+            stderr=subprocess.DEVNULL,
+        )
+
+        # Parse best hit per query
+        elem_hits: dict[str, dict] = {}
+        if blast_out.exists():
+            with open(blast_out) as fh:
+                for line in fh:
+                    cols = line.strip().split("\t")
+                    if len(cols) >= 6:
+                        qname = cols[0]
+                        if qname not in elem_hits or float(cols[5]) > elem_hits[qname].get("bitscore", 0):
+                            elem_hits[qname] = {
+                                "element": cols[1],
+                                "identity": float(cols[2]),
+                                "aln_length": int(cols[3]),
+                                "bitscore": float(cols[5]),
+                            }
+
+        # Annotate tier results
         for tr in tier_results:
-            if tr.tier == "C":
-                tr.host_map_5p = f"{tr.site_id}_5p" in tierc_host_set
-                tr.host_map_3p = f"{tr.site_id}_3p" in tierc_host_set
-                tr.annotation = "endogenous_SV" if (tr.host_map_5p or tr.host_map_3p) else "unknown_non_element"
+            if tr.tier in ("A", "B", "D"):
+                hit_5p = elem_hits.get(f"{tr.site_id}_5p", {})
+                hit_3p = elem_hits.get(f"{tr.site_id}_3p", {})
+                best = hit_5p if hit_5p.get("bitscore", 0) >= hit_3p.get("bitscore", 0) else hit_3p
+                if best:
+                    tr.element_hit = True
+                    tr.element_id = best.get("element", "")
+                    tr.element_identity = best.get("identity", 0)
+                    tr.element_aln_len = best.get("aln_length", 0)
 
     shutil.rmtree(tier_dir, ignore_errors=True)
 
     n_a = sum(1 for t in tier_results if t.tier == "A")
     n_b = sum(1 for t in tier_results if t.tier == "B")
     n_c = sum(1 for t in tier_results if t.tier == "C")
-    log(f"  Tier classification: {n_a} Tier A, {n_b} Tier B, {n_c} Tier C")
+    n_d = sum(1 for t in tier_results if t.tier == "D")
+    log(f"  Tier A (foreign → assemble):     {n_a}")
+    log(f"  Tier B (partial foreign):         {n_b}")
+    log(f"  Tier C (endogenous SV → skip):    {n_c}")
+    log(f"  Tier D (ambiguous → assemble):    {n_d}")
+    log(f"  Assembly targets: {len(assembly_sites)} (A+B+D), skipped: {len(skip_sites)} (C)")
+
+    # Log Tier A/B details
     for tr in tier_results:
         if tr.tier in ("A", "B"):
-            log(f"    {tr.site_id}: TIER {tr.tier} ({tr.reason}) "
-                f"— {tr.element_hit_std or tr.element_hit_sens}")
+            elem_str = f", element={tr.element_id}" if tr.element_hit else ""
+            log(f"    {tr.site_id} {tr.chrom}:{tr.pos}: "
+                f"TIER {tr.tier} ({tr.reason}{elem_str})")
 
-    return tier_ab, tier_c, tier_results
+    return assembly_sites, skip_sites, tier_results
 
 
 def write_tier_classification(
@@ -804,15 +876,18 @@ def write_tier_classification(
 ) -> None:
     """Write site_tier_classification.tsv."""
     with open(output_path, "w") as fh:
-        fh.write("site_id\ttier\treason\t"
-                 "element_hit_std\telement_identity_std\telement_aln_len_std\t"
-                 "element_hit_sens\telement_identity_sens\telement_aln_len_sens\t"
-                 "host_map_5p\thost_map_3p\tannotation\n")
+        fh.write("site_id\tchrom\tpos\ttier\treason\t"
+                 "clip_5p_len\tclip_3p_len\t"
+                 "clip_5p_maps_host\tclip_3p_maps_host\t"
+                 "clip_5p_mapq\tclip_3p_mapq\t"
+                 "element_hit\telement_id\telement_identity\telement_aln_len\n")
         for tr in tier_results:
-            fh.write(f"{tr.site_id}\t{tr.tier}\t{tr.reason}\t"
-                     f"{tr.element_hit_std}\t{tr.element_identity_std}\t{tr.element_aln_len_std}\t"
-                     f"{tr.element_hit_sens}\t{tr.element_identity_sens}\t{tr.element_aln_len_sens}\t"
-                     f"{tr.host_map_5p}\t{tr.host_map_3p}\t{tr.annotation}\n")
+            fh.write(f"{tr.site_id}\t{tr.chrom}\t{tr.pos}\t{tr.tier}\t{tr.reason}\t"
+                     f"{tr.clip_5p_len}\t{tr.clip_3p_len}\t"
+                     f"{tr.clip_5p_maps_host}\t{tr.clip_3p_maps_host}\t"
+                     f"{tr.clip_5p_mapq}\t{tr.clip_3p_mapq}\t"
+                     f"{tr.element_hit}\t{tr.element_id}\t"
+                     f"{tr.element_identity}\t{tr.element_aln_len}\n")
     log(f"  Tier classification written: {output_path}")
 
 
@@ -2732,28 +2807,21 @@ def main() -> None:
             f"({site.confidence}, 5p={len(site.seed_5p)}bp, "
             f"3p={len(site.seed_3p)}bp)")
 
-    # ---- Phase 1.5: Tier Classification ----
-    log("\n--- Phase 1.5: Tier Classification ---")
-    tier_ab_sites, tier_c_sites, tier_results = classify_site_tiers(
-        sites, element_db, host_ref, step_dir,
+    # ---- Phase 1.5: Tier Classification (host-genome mapping) ----
+    log("\n--- Phase 1.5: Tier Classification (host mapping) ---")
+    assembly_sites, skip_sites, tier_results = classify_site_tiers(
+        sites, element_db, host_ref, step_dir, threads=args.threads,
     )
     write_tier_classification(
         tier_results, step_dir / "site_tier_classification.tsv",
     )
-    n_a = sum(1 for t in tier_results if t.tier == "A")
-    n_b = sum(1 for t in tier_results if t.tier == "B")
-    n_c = sum(1 for t in tier_results if t.tier == "C")
-    log(f"  Tier A (strong element hit): {n_a}")
-    log(f"  Tier B (sensitive/partial):  {n_b}")
-    log(f"  Tier C (no element, skip):   {n_c}")
-    log(f"  Assembly targets: {len(tier_ab_sites)} (Tier A+B)")
 
-    if not tier_ab_sites:
-        log("No Tier A/B sites — nothing to assemble.")
+    if not assembly_sites:
+        log("No assembly targets (all sites are endogenous SVs).")
         write_stats(step_dir / "s09_stats.txt", args.sample_name, len(sites), 0, [])
         return
 
-    sites = tier_ab_sites  # Only assemble element-positive sites
+    sites = assembly_sites  # Only assemble foreign/ambiguous sites
 
     # ---- Process each insertion site ----
     all_results = []
