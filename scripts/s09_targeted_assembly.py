@@ -5,8 +5,8 @@ strand-aware k-mer extension, and Pilon iterative gap filling.
 Pipeline:
   Phase 1: Scan host BAM for bidirectional soft-clip clusters → insertion sites
   Phase 2: Extract candidate reads from junction regions + unmapped pairs
-  Phase 3: Iterative k-mer extension + Pilon gap fill (max 15 rounds)
-  Phase 4: Annotate assembled insert via BLAST + border motif search
+  Phase 3: Iterative k-mer extension + minimap2 soft-clip extension + Pilon gap fill (max 15 rounds)
+  Phase 4: Annotate via local element_db BLAST + remote NCBI nt BLAST
 
 No external assembler (SPAdes, SSAKE, TASR) is used.
 External tools: minimap2, samtools, Pilon, blastn.
@@ -1484,6 +1484,212 @@ def refine_with_foreign_reads(
 # Overlap / merge detection
 # ---------------------------------------------------------------------------
 
+def _minimap2_extend(
+    contig: str,
+    r1_fq: Path,
+    r2_fq: Path,
+    workdir: Path,
+    threads: int = 4,
+    min_clip: int = 20,
+    min_depth: int = 2,
+    min_ratio: float = 0.6,
+) -> str:
+    """Extend contig using minimap2 soft-clip consensus.
+
+    Maps reads to contig, collects soft-clipped tails beyond contig ends,
+    and extends by majority vote. Handles repeats that k-mer extension
+    cannot resolve because minimap2 uses minimizer chaining with gap
+    penalties for placement, not exact k-mer lookup.
+
+    Returns extended contig (may be unchanged if no extension possible).
+    """
+    if len(contig) < 100:
+        return contig
+
+    ref_fa = workdir / "_mm2ext_ref.fa"
+    write_fasta(ref_fa, "contig", contig)
+
+    bam_path = workdir / "_mm2ext.bam"
+    subprocess.run(
+        f"minimap2 -ax sr -t {threads} --secondary=no "
+        f"{ref_fa} {r1_fq} {r2_fq} 2>/dev/null "
+        f"| samtools sort -@ 2 -o {bam_path}",
+        shell=True, check=True,
+    )
+    subprocess.run(["samtools", "index", str(bam_path)],
+                   stderr=subprocess.DEVNULL, check=True)
+
+    contig_len = len(contig)
+
+    # Collect right-side soft-clip extensions (reads extending past contig end)
+    right_tails: list[str] = []
+    # Collect left-side soft-clip extensions (reads extending before contig start)
+    left_tails: list[str] = []
+
+    with pysam.AlignmentFile(str(bam_path), "rb") as bam:
+        for read in bam.fetch():
+            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                continue
+            cigar = read.cigartuples
+            if not cigar:
+                continue
+            seq = read.query_sequence
+            if not seq:
+                continue
+
+            # Right extension: read maps near contig end, has right soft-clip
+            # cigar[-1] == (4, clip_len) means soft-clip at right end
+            if (cigar[-1][0] == 4 and cigar[-1][1] >= min_clip
+                    and read.reference_end is not None
+                    and read.reference_end >= contig_len - 10):
+                clip_len = cigar[-1][1]
+                tail = seq[-clip_len:]
+                right_tails.append(tail)
+
+            # Left extension: read maps near contig start, has left soft-clip
+            # cigar[0] == (4, clip_len) means soft-clip at left end
+            if (cigar[0][0] == 4 and cigar[0][1] >= min_clip
+                    and read.reference_start is not None
+                    and read.reference_start <= 10):
+                clip_len = cigar[0][1]
+                tail = seq[:clip_len]
+                left_tails.append(tail)
+
+    # Cleanup
+    for f in [ref_fa, bam_path, Path(f"{bam_path}.bai")]:
+        f.unlink(missing_ok=True)
+
+    extended = contig
+
+    # Right extension via majority vote on soft-clip tails
+    if len(right_tails) >= min_depth:
+        ext = _vote_extension(right_tails, min_depth, min_ratio)
+        if ext:
+            extended = extended + ext
+
+    # Left extension via majority vote on soft-clip tails (reverse direction)
+    if len(left_tails) >= min_depth:
+        # Reverse tails so we vote from the clip boundary outward
+        rev_tails = [t[::-1] for t in left_tails]
+        ext = _vote_extension(rev_tails, min_depth, min_ratio)
+        if ext:
+            extended = ext[::-1] + extended
+
+    return extended
+
+
+def _vote_extension(
+    tails: list[str], min_depth: int = 2, min_ratio: float = 0.6,
+) -> str:
+    """Majority-vote consensus from a list of tail sequences.
+
+    Each tail starts at the extension boundary and grows outward.
+    Returns the consensus extension string (may be empty).
+    """
+    ext_bases: list[str] = []
+    pos = 0
+    while True:
+        votes: Counter = Counter()
+        for t in tails:
+            if pos < len(t):
+                votes[t[pos]] += 1
+        total = sum(votes.values())
+        if total < min_depth:
+            break
+        best_base, best_count = votes.most_common(1)[0]
+        if best_count / total < min_ratio:
+            break
+        ext_bases.append(best_base)
+        pos += 1
+    return "".join(ext_bases)
+
+
+def _ssake_extend(
+    contig: str,
+    r1_fq: Path,
+    r2_fq: Path,
+    workdir: Path,
+    min_overlap: int = 20,
+) -> str:
+    """Extend contig using SSAKE's overlap-layout-consensus.
+
+    SSAKE uses a prefix tree for rapid read overlap detection,
+    complementing k-mer extension (greedy, exact-overlap) and
+    minimap2 extension (chain-based, soft-clip). SSAKE can resolve
+    moderately repetitive regions where k-mer extension stalls due
+    to its all-at-once prefix search over the full read set.
+
+    Runs via 'micromamba run -n ssake SSAKE' (separate Python 2.7 env).
+    Returns extended contig (unchanged if SSAKE fails or no growth).
+    """
+    if len(contig) < 50:
+        return contig
+
+    ssake_dir = workdir / "_ssake"
+    ssake_dir.mkdir(parents=True, exist_ok=True)
+
+    # SSAKE input: seed FASTA (-s) + reads FASTA (-f)
+    seed_fa = ssake_dir / "seed.fa"
+    with open(seed_fa, "w") as fh:
+        fh.write(f">seed\n{contig}\n")
+
+    # Convert paired FASTQ to interleaved FASTA for SSAKE
+    reads_fa = ssake_dir / "reads.fa"
+    n_reads = 0
+    with open(reads_fa, "w") as out:
+        for fq_path in (r1_fq, r2_fq):
+            if not fq_path.exists():
+                continue
+            with open(fq_path) as fq:
+                while True:
+                    header = fq.readline()
+                    if not header:
+                        break
+                    seq = fq.readline().strip()
+                    fq.readline()  # +
+                    fq.readline()  # qual
+                    if seq and len(seq) >= min_overlap:
+                        out.write(f">r{n_reads}\n{seq}\n")
+                        n_reads += 1
+
+    if n_reads < 10:
+        shutil.rmtree(ssake_dir, ignore_errors=True)
+        return contig
+
+    # Run SSAKE: -s seed, -f reads, -m min_overlap, -o 1 (1 pass), -w 1
+    ssake_prefix = ssake_dir / "ssake_out"
+    try:
+        subprocess.run(
+            ["micromamba", "run", "-n", "ssake", "SSAKE",
+             "-f", str(reads_fa),
+             "-s", str(seed_fa),
+             "-b", str(ssake_prefix),
+             "-m", str(min_overlap),
+             "-o", "1",        # single pass
+             "-w", "1",        # min reads for base call
+             ],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=120,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        shutil.rmtree(ssake_dir, ignore_errors=True)
+        return contig
+
+    # Read SSAKE contigs — pick longest that contains original seed
+    ssake_contigs = Path(f"{ssake_prefix}.contigs")
+    best = contig
+    if ssake_contigs.exists():
+        seqs = read_fasta(ssake_contigs)
+        for name, seq in seqs.items():
+            if len(seq) > len(best):
+                # Check the SSAKE contig extends the seed (contains it or overlaps)
+                if contig[:50] in seq or contig[-50:] in seq:
+                    best = seq
+
+    shutil.rmtree(ssake_dir, ignore_errors=True)
+    return best
+
+
 def _check_merge(contig_5p: str, contig_3p: str, min_overlap: int = 30) -> str | None:
     """Check if contig_5p and contig_3p overlap. Return merged seq or None."""
     if not contig_5p or not contig_3p:
@@ -1631,6 +1837,39 @@ def assemble_insert(
         log(f"    K-mer ext: 5p={prev_5p_len:,}→{len(contig_5p):,}, "
             f"3p={prev_3p_len:,}→{len(contig_3p):,} (+{ext_growth})")
 
+        # Step B2: minimap2 soft-clip extension (handles repeats k-mer can't)
+        mm2_dir = workdir / f"_mm2_r{rnd}"
+        mm2_dir.mkdir(parents=True, exist_ok=True)
+        pool_r1_mm2 = mm2_dir / "pool_R1.fq"
+        pool_r2_mm2 = mm2_dir / "pool_R2.fq"
+        _write_pool_fastq(extender, pool_r1_mm2, pool_r2_mm2)
+
+        pre_mm2_5p = len(contig_5p)
+        pre_mm2_3p = len(contig_3p)
+        if contig_5p:
+            contig_5p = _minimap2_extend(
+                contig_5p, pool_r1_mm2, pool_r2_mm2, mm2_dir,
+                threads=threads,
+            )
+        if contig_3p:
+            contig_3p = _minimap2_extend(
+                contig_3p, pool_r1_mm2, pool_r2_mm2, mm2_dir,
+                threads=threads,
+            )
+        mm2_growth = (len(contig_5p) - pre_mm2_5p) + (len(contig_3p) - pre_mm2_3p)
+        if mm2_growth > 0:
+            log(f"    mm2 ext:  5p={pre_mm2_5p:,}→{len(contig_5p):,}, "
+                f"3p={pre_mm2_3p:,}→{len(contig_3p):,} (+{mm2_growth})")
+            # Recruit new reads matching the mm2-extended region
+            r1_mm2, r2rc_mm2 = recruit_by_kmer(
+                contig_5p + contig_3p, unmapped_r1, unmapped_r2, k=recruit_k,
+            )
+            if r1_mm2:
+                n_mm2 = extender.add_seqs(r1_mm2 + r2rc_mm2)
+                if n_mm2:
+                    log(f"    mm2 recruit: {n_mm2} new seqs")
+        shutil.rmtree(mm2_dir, ignore_errors=True)
+
         # Step C: Check merge
         merged = _check_merge(contig_5p, contig_3p)
         if merged:
@@ -1665,6 +1904,33 @@ def assemble_insert(
                 write_fasta(final_fa, f"{site.site_id}_assembled_insert", final_seq)
                 log(f"  COMPLETE: Pilon filled gap → {len(final_seq):,}bp (round {rnd})")
                 return final_fa, rnd, "complete"
+
+        # Step D2: SSAKE overlap-layout-consensus extension
+        ssake_dir = workdir / f"_ssake_r{rnd}"
+        ssake_dir.mkdir(parents=True, exist_ok=True)
+        ssake_r1 = ssake_dir / "pool_R1.fq"
+        ssake_r2 = ssake_dir / "pool_R2.fq"
+        _write_pool_fastq(extender, ssake_r1, ssake_r2)
+
+        pre_ssake_5p = len(contig_5p)
+        pre_ssake_3p = len(contig_3p)
+        if contig_5p:
+            contig_5p = _ssake_extend(contig_5p, ssake_r1, ssake_r2, ssake_dir)
+        if contig_3p:
+            contig_3p = _ssake_extend(contig_3p, ssake_r1, ssake_r2, ssake_dir)
+        ssake_growth = (len(contig_5p) - pre_ssake_5p) + (len(contig_3p) - pre_ssake_3p)
+        if ssake_growth > 0:
+            log(f"    SSAKE:   5p={pre_ssake_5p:,}→{len(contig_5p):,}, "
+                f"3p={pre_ssake_3p:,}→{len(contig_3p):,} (+{ssake_growth})")
+            # Check merge after SSAKE
+            merged = _check_merge(contig_5p, contig_3p)
+            if merged:
+                final_fa = workdir / f"{site.site_id}_insert.fasta"
+                write_fasta(final_fa, f"{site.site_id}_assembled_insert", merged)
+                log(f"  COMPLETE: SSAKE+merge → {len(merged):,}bp (round {rnd})")
+                shutil.rmtree(ssake_dir, ignore_errors=True)
+                return final_fa, rnd, "complete"
+        shutil.rmtree(ssake_dir, ignore_errors=True)
 
         # Step E: Check termination
         total_rounds = rnd
@@ -1747,25 +2013,40 @@ def assemble_insert(
 # Phase 4: Annotation
 # ---------------------------------------------------------------------------
 
-def annotate_insert(
-    insert_fasta: Path,
-    element_db: Path,
-    output_dir: Path,
-    sample_name: str,
-) -> tuple[Path, Path]:
-    """Annotate insert with BLAST vs element_db + border motif search."""
-    annotation_tsv = output_dir / "element_annotation.tsv"
-    border_tsv = output_dir / "border_hits.tsv"
+def _parse_blast6(path: Path, min_len: int = 30) -> list[dict]:
+    """Parse BLAST outfmt-6 with 10+ columns into list of dicts."""
+    hits: list[dict] = []
+    if not path.exists():
+        return hits
+    with open(path) as fh:
+        for line in fh:
+            cols = line.rstrip().split("\t")
+            if len(cols) < 10:
+                continue
+            aln_len = int(cols[3])
+            if aln_len < min_len:
+                continue
+            hits.append({
+                "query": cols[0], "subject": cols[1],
+                "identity": float(cols[2]), "length": aln_len,
+                "q_start": int(cols[4]), "q_end": int(cols[5]),
+                "s_start": int(cols[6]), "s_end": int(cols[7]),
+                "evalue": float(cols[8]), "bitscore": float(cols[9]),
+            })
+    return hits
 
-    # BLAST vs element_db
-    db_prefix = output_dir / "element_blastdb"
+
+def _run_local_blast(
+    insert_fasta: Path, element_db: Path, output_dir: Path,
+) -> list[dict]:
+    """Local BLAST vs element_db. Fast, covers known GMO elements."""
+    db_prefix = output_dir / "_element_blastdb"
     subprocess.run(
         ["makeblastdb", "-in", str(element_db), "-dbtype", "nucl",
          "-out", str(db_prefix)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
     )
-
-    blast_out = output_dir / "blast_raw.tsv"
+    blast_out = output_dir / "_local_blast.tsv"
     subprocess.run(
         ["blastn", "-query", str(insert_fasta), "-db", str(db_prefix),
          "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send evalue bitscore",
@@ -1773,28 +2054,173 @@ def annotate_insert(
          "-out", str(blast_out)],
         stderr=subprocess.DEVNULL, check=True,
     )
+    hits = _parse_blast6(blast_out)
+    # Cleanup
+    blast_out.unlink(missing_ok=True)
+    for ext in [".nhr", ".nin", ".nsq", ".ndb", ".not", ".ntf", ".nto", ".njs"]:
+        Path(f"{db_prefix}{ext}").unlink(missing_ok=True)
+    log(f"  Local BLAST: {len(hits)} hits from element_db")
+    return hits
 
-    # Parse and write annotation
-    hits = []
-    with open(blast_out) as fin, open(annotation_tsv, "w") as fout:
-        fout.write("query\telement\tidentity\tlength\tq_start\tq_end\t"
-                   "s_start\ts_end\tevalue\n")
-        for line in fin:
-            cols = line.rstrip().split("\t")
-            if len(cols) >= 10:
-                hits.append(cols)
-                fout.write(f"{cols[0]}\t{cols[1]}\t{cols[2]}\t{cols[3]}\t"
-                           f"{cols[4]}\t{cols[5]}\t{cols[6]}\t{cols[7]}\t{cols[8]}\n")
 
-    if hits:
-        log(f"  BLAST hits: {len(hits)} elements found")
-        hits.sort(key=lambda x: int(x[4]))
-        for h in hits[:10]:
-            log(f"    {h[4]}-{h[5]}: {h[1]} ({h[2]}% identity, {h[3]}bp)")
+def _run_remote_blast(
+    insert_fasta: Path, output_dir: Path,
+    timeout: int = 600, max_retries: int = 2,
+) -> list[dict]:
+    """Remote BLAST vs NCBI nt. Slower, but annotates unknown regions."""
+    blast_out = output_dir / "_remote_blast.tsv"
+    for attempt in range(1, max_retries + 1):
+        log(f"  Remote BLAST vs NCBI nt (attempt {attempt}/{max_retries})...")
+        try:
+            proc = subprocess.run(
+                ["blastn", "-query", str(insert_fasta), "-db", "nt",
+                 "-remote",
+                 "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send evalue bitscore stitle",
+                 "-evalue", "1e-10", "-max_target_seqs", "10",
+                 "-out", str(blast_out)],
+                stderr=subprocess.PIPE, timeout=timeout,
+            )
+            if proc.returncode == 0 and blast_out.exists():
+                break
+            log(f"    Remote BLAST returned code {proc.returncode}")
+        except subprocess.TimeoutExpired:
+            log(f"    Remote BLAST timed out ({timeout}s)")
+        except FileNotFoundError:
+            log("    blastn not found — skipping remote BLAST")
+            return []
     else:
-        log("  No BLAST hits found against element database")
+        log("  Remote BLAST failed after all retries — skipping")
+        return []
 
-    # T-DNA border motif search
+    # Parse — outfmt has 11 columns (extra stitle), but _parse_blast6 needs 10+
+    hits: list[dict] = []
+    if blast_out.exists():
+        with open(blast_out) as fh:
+            for line in fh:
+                cols = line.rstrip().split("\t")
+                if len(cols) < 10:
+                    continue
+                aln_len = int(cols[3])
+                if aln_len < 30:
+                    continue
+                # Use stitle (col 10) as a readable subject description
+                stitle = cols[10] if len(cols) > 10 else cols[1]
+                hits.append({
+                    "query": cols[0],
+                    "subject": f"{cols[1]}|{stitle}",
+                    "identity": float(cols[2]), "length": aln_len,
+                    "q_start": int(cols[4]), "q_end": int(cols[5]),
+                    "s_start": int(cols[6]), "s_end": int(cols[7]),
+                    "evalue": float(cols[8]), "bitscore": float(cols[9]),
+                })
+        blast_out.unlink(missing_ok=True)
+
+    log(f"  Remote BLAST: {len(hits)} hits from NCBI nt")
+    return hits
+
+
+def _merge_annotations(
+    local_hits: list[dict], remote_hits: list[dict],
+) -> list[dict]:
+    """Merge local + remote hits, keeping best bitscore per query region.
+
+    For each position along the insert, prefer the hit with highest bitscore.
+    Local hits from element_db are preferred at equal score (more specific names).
+    """
+    # Tag source
+    for h in local_hits:
+        h["source"] = "element_db"
+    for h in remote_hits:
+        h["source"] = "ncbi_nt"
+
+    all_hits = local_hits + remote_hits
+    if not all_hits:
+        return []
+
+    # Group by query sequence
+    from collections import defaultdict as _dd
+    by_query: dict[str, list[dict]] = _dd(list)
+    for h in all_hits:
+        by_query[h["query"]].append(h)
+
+    merged: list[dict] = []
+    for qname, hits in by_query.items():
+        # Sort by bitscore descending, prefer element_db on tie
+        hits.sort(key=lambda h: (-h["bitscore"],
+                                  0 if h["source"] == "element_db" else 1))
+
+        # Greedy interval selection: pick best non-overlapping hits
+        # (allow 80% reciprocal overlap to keep significant alternatives)
+        selected: list[dict] = []
+        covered: list[tuple[int, int]] = []
+
+        for h in hits:
+            qs, qe = min(h["q_start"], h["q_end"]), max(h["q_start"], h["q_end"])
+            h_len = qe - qs + 1
+
+            # Check overlap with already-selected hits
+            dominated = False
+            for cs, ce in covered:
+                overlap = max(0, min(qe, ce) - max(qs, cs) + 1)
+                if overlap > 0.80 * h_len:
+                    dominated = True
+                    break
+            if not dominated:
+                selected.append(h)
+                covered.append((qs, qe))
+
+        merged.extend(selected)
+
+    merged.sort(key=lambda h: (h["query"], h["q_start"]))
+    return merged
+
+
+def annotate_insert(
+    insert_fasta: Path,
+    element_db: Path,
+    output_dir: Path,
+    sample_name: str,
+) -> tuple[Path, Path]:
+    """Annotate insert with local element_db BLAST + remote NCBI nt BLAST.
+
+    Runs both in sequence (local is fast, remote may take 1-5 min),
+    then merges by best bitscore per region. Output format is unchanged
+    for downstream report generation.
+    """
+    annotation_tsv = output_dir / "element_annotation.tsv"
+    border_tsv = output_dir / "border_hits.tsv"
+
+    # ---- Local BLAST (element_db) ----
+    local_hits = _run_local_blast(insert_fasta, element_db, output_dir)
+
+    # ---- Remote BLAST (NCBI nt) ----
+    remote_hits = _run_remote_blast(insert_fasta, output_dir)
+
+    # ---- Merge ----
+    merged = _merge_annotations(local_hits, remote_hits)
+    log(f"  Merged annotation: {len(merged)} regions "
+        f"({sum(1 for h in merged if h['source'] == 'element_db')} local, "
+        f"{sum(1 for h in merged if h['source'] == 'ncbi_nt')} remote)")
+
+    # ---- Write annotation TSV ----
+    with open(annotation_tsv, "w") as fout:
+        fout.write("query\telement\tidentity\tlength\tq_start\tq_end\t"
+                   "s_start\ts_end\tevalue\tsource\n")
+        for h in merged:
+            fout.write(f"{h['query']}\t{h['subject']}\t{h['identity']}\t"
+                       f"{h['length']}\t{h['q_start']}\t{h['q_end']}\t"
+                       f"{h['s_start']}\t{h['s_end']}\t{h['evalue']}\t"
+                       f"{h['source']}\n")
+
+    if merged:
+        for h in merged[:15]:
+            src = "L" if h["source"] == "element_db" else "R"
+            log(f"    {h['q_start']:>6}-{h['q_end']:<6} [{src}] "
+                f"{h['subject'][:60]} ({h['identity']:.1f}%, {h['length']}bp)")
+    else:
+        log("  No BLAST hits found")
+
+    # ---- T-DNA border motif search ----
     border_fa = output_dir / "_borders.fa"
     with open(border_fa, "w") as fh:
         fh.write(">RB_consensus\nTGGCAGGATATATTGTGGTGTAAAC\n")
@@ -1813,13 +2239,7 @@ def annotate_insert(
     else:
         log("  No border motifs found (may need manual inspection)")
 
-    # Cleanup
     border_fa.unlink(missing_ok=True)
-    blast_out.unlink(missing_ok=True)
-    for ext in [".nhr", ".nin", ".nsq", ".ndb", ".not", ".ntf", ".nto", ".njs"]:
-        p = Path(f"{db_prefix}{ext}")
-        p.unlink(missing_ok=True)
-
     return annotation_tsv, border_tsv
 
 
@@ -1848,8 +2268,8 @@ def generate_report(
     n_count = insert_seq.upper().count("N")
 
     # Read annotation hits (with orientation from s_start/s_end)
-    # elements: (q_start, q_end, element_name, s_strand)
-    elements: list[tuple[int, int, str, str]] = []
+    # elements: (q_start, q_end, element_name, s_strand, source)
+    elements: list[tuple[int, int, str, str, str]] = []
     orientation_by_elem: dict[str, set[str]] = defaultdict(set)
     if annotation_tsv.exists():
         with open(annotation_tsv) as fh:
@@ -1861,38 +2281,39 @@ def generate_report(
                     s_start = int(row["s_start"])
                     s_end = int(row["s_end"])
                     elem = row["element"]
+                    source = row.get("source", "element_db")
                     # Filter to current insert only
                     if row["query"] != insert_name:
                         continue
                     strand = "+" if s_start < s_end else "-"
-                    elements.append((q_start, q_end, elem, strand))
+                    elements.append((q_start, q_end, elem, strand, source))
                     orientation_by_elem[elem].add(strand)
                 except (ValueError, KeyError):
                     continue
     elements.sort(key=lambda x: x[0])
 
     # Deduplicate overlapping elements (keep longest per region)
-    deduped: list[tuple[int, int, str, str]] = []
-    for start, end, elem, strand in elements:
+    deduped: list[tuple[int, int, str, str, str]] = []
+    for start, end, elem, strand, source in elements:
         overlap = False
-        for i, (ds, de, dn, _ds) in enumerate(deduped):
+        for i, (ds, de, dn, _ds, _src) in enumerate(deduped):
             if start < de and end > ds:
                 if (end - start) > (de - ds):
-                    deduped[i] = (start, end, elem, strand)
+                    deduped[i] = (start, end, elem, strand, source)
                 overlap = True
                 break
         if not overlap:
-            deduped.append((start, end, elem, strand))
+            deduped.append((start, end, elem, strand, source))
     elements = sorted(deduped, key=lambda x: x[0])
 
     # Count element occurrences for multi-construct detection
     elem_counts: Counter = Counter()
-    for _, _, elem, _ in elements:
+    for _, _, elem, _, _ in elements:
         elem_counts[elem] += 1
 
     # Build linear map with orientation arrows
     linear_parts = []
-    for _, _, elem, strand in elements:
+    for _, _, elem, strand, _ in elements:
         short_name = elem.split("|")[0] if "|" in elem else (
             elem.split("_")[0] if "_" in elem else elem)
         arrow = "→" if strand == "+" else "←"
@@ -1958,10 +2379,11 @@ def generate_report(
         # Detailed element list
         if elements:
             fh.write("\nDetailed element positions:\n")
-            fh.write(f"{'Start':>8}  {'End':>8}  {'Dir':>3}  {'Element'}\n")
-            fh.write("-" * 60 + "\n")
-            for start, end, elem, strand in elements:
-                fh.write(f"{start:>8}  {end:>8}  {strand:>3}  {elem}\n")
+            fh.write(f"{'Start':>8}  {'End':>8}  {'Dir':>3}  {'Src':>5}  {'Element'}\n")
+            fh.write("-" * 70 + "\n")
+            for start, end, elem, strand, source in elements:
+                src_tag = "local" if source == "element_db" else "NCBI"
+                fh.write(f"{start:>8}  {end:>8}  {strand:>3}  {src_tag:>5}  {elem}\n")
 
         # Multi-copy detection
         multi = {e: c for e, c in elem_counts.items() if c >= 2}
