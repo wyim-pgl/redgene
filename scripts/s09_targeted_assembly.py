@@ -590,91 +590,30 @@ def find_softclip_junctions(
 
 
 # ---------------------------------------------------------------------------
-# Tier classification: host-genome mapping approach
+# Transgene-positive identification
 # ---------------------------------------------------------------------------
-# Principle: clips that map back to host = endogenous SV (skip).
-#            clips that do NOT map to host = foreign DNA (assemble).
-#            Element DB is for annotation AFTER classification, not filtering.
+# Strategy: Instead of asking "is this clip in the host?" (fails with wrong
+# cultivar reference), ask "is this clip from a transgene?"
+# Uses blastn-short against transgene_db (element DB + UniVec vectors).
+# Any transgene hit = assembly target. No hit = skip.
 
 @dataclass
 class TierResult:
-    """Tier classification for one insertion site."""
+    """Classification result for one insertion site."""
     site_id: str
     chrom: str = ""
     pos: int = 0
-    tier: str = ""              # "A", "B", "C", "D"
-    reason: str = ""
+    transgene_positive: bool = False
     clip_5p_len: int = 0
     clip_3p_len: int = 0
-    clip_5p_maps_host: bool = False
-    clip_3p_maps_host: bool = False
-    clip_5p_nhits: int = 0      # number of host BLAST hits
-    clip_3p_nhits: int = 0
-    element_hit: bool = False   # annotation only, not used for classification
-    element_id: str = ""
-    element_identity: float = 0
-    element_aln_len: int = 0
-    univec_hit: bool = False    # annotation only, not used for classification
-    univec_id: str = ""
-
-
-def _batch_host_map_bowtie2(
-    clip_seqs: dict[str, str], host_ref: Path, workdir: Path,
-    threads: int = 4,
-) -> set[str]:
-    """Map clip sequences to host genome via bowtie2 --very-sensitive-local.
-
-    bowtie2 is designed for short reads (20bp+) and handles 20-70bp clips
-    reliably, unlike minimap2 (long-read mapper, min seed ~19bp fails on
-    short clips) or BLAST (requires arbitrary identity/coverage thresholds).
-
-    Returns set of clip IDs that map to the host genome.
-    Any mapping = clip is host-derived (endogenous).
-    """
-    if not clip_seqs:
-        return set()
-
-    # Check / build bowtie2 index
-    bt2_idx = str(host_ref)
-    if not Path(f"{bt2_idx}.1.bt2").exists():
-        log("  Building bowtie2 index for host genome...")
-        subprocess.run(
-            ["bowtie2-build", "--threads", str(threads),
-             str(host_ref), bt2_idx],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-
-    # Write clip sequences as FASTA
-    clip_fa = workdir / "_tier_clips.fa"
-    with open(clip_fa, "w") as fh:
-        for name, seq in clip_seqs.items():
-            fh.write(f">{name}\n{seq}\n")
-
-    # Map with bowtie2: --very-sensitive-local for max sensitivity on short seqs
-    # --no-unal: only output mapped clips (saves parsing)
-    sam_out = workdir / "_tier_clips_vs_host.sam"
-    subprocess.run(
-        ["bowtie2", "--very-sensitive-local", "--no-unal",
-         "-f", "-x", bt2_idx, "-U", str(clip_fa),
-         "-S", str(sam_out), "--threads", str(threads)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-
-    # Parse SAM: any non-header line = this clip mapped to host
-    mapped: set[str] = set()
-    if sam_out.exists():
-        with open(sam_out) as fh:
-            for line in fh:
-                if line.startswith("@"):
-                    continue
-                cols = line.split("\t", 2)
-                if cols:
-                    mapped.add(cols[0])
-
-    clip_fa.unlink(missing_ok=True)
-    sam_out.unlink(missing_ok=True)
-
-    return mapped
+    hit_5p: str = ""            # best transgene_db hit for 5p clip
+    hit_5p_identity: float = 0
+    hit_5p_aln_len: int = 0
+    hit_5p_source: str = ""     # "element_db" or "univec"
+    hit_3p: str = ""
+    hit_3p_identity: float = 0
+    hit_3p_aln_len: int = 0
+    hit_3p_source: str = ""
 
 
 def classify_site_tiers(
@@ -683,20 +622,16 @@ def classify_site_tiers(
     host_ref: Path,
     workdir: Path,
     threads: int = 4,
-    min_clip_for_mapping: int = 20,
+    min_identity: float = 80.0,
+    min_aln_len: int = 20,
 ) -> tuple[list[InsertionSite], list[InsertionSite], list[TierResult]]:
-    """Classify sites by mapping clip sequences to host genome with bowtie2.
+    """Classify sites by transgene-positive identification.
 
-    bowtie2 --very-sensitive-local handles 20bp+ clips reliably (unlike
-    minimap2 which is a long-read mapper, or BLAST which needs thresholds).
+    BLASTs all clip sequences against transgene_db (element DB + UniVec)
+    using blastn-short (optimized for 20-80bp queries).
 
-    Any bowtie2 mapping = clip exists in host genome = endogenous.
-    No mapping = clip is foreign DNA.
-
-    Tier A (foreign):    NEITHER clip maps to host → assemble
-    Tier B (partial):    one side maps, other does not → assemble
-    Tier C (endogenous): BOTH sides map to host → skip
-    Tier D (ambiguous):  clip too short (<20bp) → assemble
+    TRANSGENE-POSITIVE: at least one clip hits transgene_db → assemble
+    TRANSGENE-NEGATIVE: no clip hits transgene_db → skip
 
     Returns (assembly_sites, skip_sites, all_tier_results).
     """
@@ -706,6 +641,31 @@ def classify_site_tiers(
     tier_dir = workdir / "_tier_classification"
     tier_dir.mkdir(parents=True, exist_ok=True)
 
+    # Locate transgene_db (element_db + UniVec combined)
+    transgene_db = element_db.parent / "transgene_db.fa"
+    if not transgene_db.exists():
+        # Build transgene_db by combining element_db + univec
+        univec_db = Path(__file__).resolve().parent.parent / "db" / "univec_vectors.fa"
+        log("  Building transgene_db (element DB + UniVec)...")
+        with open(transgene_db, "w") as out:
+            if element_db.exists():
+                out.write(element_db.read_text())
+            if univec_db.exists():
+                out.write(univec_db.read_text())
+        # Build BLAST index
+        subprocess.run(
+            ["makeblastdb", "-in", str(transgene_db), "-dbtype", "nucl"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    # Ensure BLAST DB index exists
+    if not transgene_db.with_suffix(".fa.ndb").exists() and \
+       not Path(str(transgene_db) + ".ndb").exists():
+        subprocess.run(
+            ["makeblastdb", "-in", str(transgene_db), "-dbtype", "nucl"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
     # Step 1: Collect all clip sequences
     clip_seqs: dict[str, str] = {}
     for site in sites:
@@ -714,13 +674,55 @@ def classify_site_tiers(
         if site.seed_3p and len(site.seed_3p) >= 15:
             clip_seqs[f"{site.site_id}_3p"] = site.seed_3p
 
-    log(f"  Mapping {len(clip_seqs)} clip sequences to host genome "
-        f"(bowtie2 --very-sensitive-local, any hit = endogenous)...")
+    log(f"  BLASTing {len(clip_seqs)} clip sequences against transgene_db "
+        f"(blastn-short, {transgene_db.name})...")
 
-    # Step 2: bowtie2 mapping — any hit = clip is host-derived
-    host_hit_set = _batch_host_map_bowtie2(
-        clip_seqs, host_ref, tier_dir, threads)
-    log(f"  {len(host_hit_set)} / {len(clip_seqs)} clips mapped to host")
+    # Step 2: Write clips and BLAST against transgene_db
+    clip_fa = tier_dir / "all_clips.fa"
+    with open(clip_fa, "w") as fh:
+        for name, seq in clip_seqs.items():
+            fh.write(f">{name}\n{seq}\n")
+
+    blast_out = tier_dir / "transgene_blast.tsv"
+    subprocess.run(
+        ["blastn", "-task", "blastn-short",
+         "-query", str(clip_fa), "-db", str(transgene_db),
+         "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
+         "-evalue", "1e-5", "-max_target_seqs", "3",
+         "-num_threads", str(threads),
+         "-out", str(blast_out)],
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Step 3: Parse hits — best hit per query with identity/length filter
+    hits: dict[str, dict] = {}
+    if blast_out.exists():
+        with open(blast_out) as fh:
+            for line in fh:
+                cols = line.strip().split("\t")
+                if len(cols) < 6:
+                    continue
+                qname = cols[0]
+                pident = float(cols[2])
+                aln_len = int(cols[3])
+                bitscore = float(cols[5])
+
+                if pident < min_identity or aln_len < min_aln_len:
+                    continue
+
+                if qname not in hits or bitscore > hits[qname]["bitscore"]:
+                    sseqid = cols[1]
+                    source = "univec" if sseqid.startswith("univec|") else "element_db"
+                    hits[qname] = {
+                        "element": sseqid,
+                        "identity": pident,
+                        "aln_length": aln_len,
+                        "bitscore": bitscore,
+                        "source": source,
+                    }
+
+    log(f"  {len(hits)} clips hit transgene_db (identity>={min_identity}%, "
+        f"aln>={min_aln_len}bp)")
 
     # Step 4: Classify each site
     tier_results: list[TierResult] = []
@@ -731,188 +733,50 @@ def classify_site_tiers(
         key_5p = f"{site.site_id}_5p"
         key_3p = f"{site.site_id}_3p"
 
-        has_5p = bool(site.seed_5p) and len(site.seed_5p) >= 15
-        has_3p = bool(site.seed_3p) and len(site.seed_3p) >= 15
+        hit_5p = hits.get(key_5p, {})
+        hit_3p = hits.get(key_3p, {})
 
-        # bowtie2 mapped = clip exists in host genome = endogenous
-        maps_5p = key_5p in host_hit_set
-        maps_3p = key_3p in host_hit_set
-
-        clip_5p_len = len(site.seed_5p) if site.seed_5p else 0
-        clip_3p_len = len(site.seed_3p) if site.seed_3p else 0
-
-        # Clips shorter than minimap2 min seed length cannot be mapped
-        short_5p = clip_5p_len < min_clip_for_mapping if has_5p else True
-        short_3p = clip_3p_len < min_clip_for_mapping if has_3p else True
-
-        if short_5p and short_3p:
-            tier = "D"
-            reason = "clips_too_short"
-        elif maps_5p and maps_3p:
-            # Both sides exist in host genome → endogenous SV/TE
-            tier = "C"
-            reason = "both_sides_host"
-        elif (not maps_5p) and (not maps_3p):
-            # Neither side exists in host → foreign DNA
-            if (has_5p and not short_5p) or (has_3p and not short_3p):
-                tier = "A"
-                reason = "both_sides_foreign"
-            else:
-                tier = "D"
-                reason = "unmapped_short_clips"
-        elif maps_5p and not maps_3p:
-            if has_3p and not short_3p:
-                tier = "B"
-                reason = "3p_foreign_5p_host"
-            else:
-                # Only one side exists, other side missing/short
-                tier = "C"
-                reason = "one_side_host_other_missing"
-        elif maps_3p and not maps_5p:
-            if has_5p and not short_5p:
-                tier = "B"
-                reason = "5p_foreign_3p_host"
-            else:
-                tier = "C"
-                reason = "one_side_host_other_missing"
-        else:
-            tier = "D"
-            reason = "unclassified"
+        is_positive = bool(hit_5p) or bool(hit_3p)
 
         tr = TierResult(
             site_id=site.site_id,
             chrom=site.host_chr,
             pos=site.pos_5p or site.pos_3p or 0,
-            tier=tier,
-            reason=reason,
-            clip_5p_len=clip_5p_len,
-            clip_3p_len=clip_3p_len,
-            clip_5p_maps_host=maps_5p,
-            clip_3p_maps_host=maps_3p,
-            clip_5p_nhits=1 if maps_5p else 0,
-            clip_3p_nhits=1 if maps_3p else 0,
+            transgene_positive=is_positive,
+            clip_5p_len=len(site.seed_5p) if site.seed_5p else 0,
+            clip_3p_len=len(site.seed_3p) if site.seed_3p else 0,
+            hit_5p=hit_5p.get("element", ""),
+            hit_5p_identity=hit_5p.get("identity", 0),
+            hit_5p_aln_len=hit_5p.get("aln_length", 0),
+            hit_5p_source=hit_5p.get("source", ""),
+            hit_3p=hit_3p.get("element", ""),
+            hit_3p_identity=hit_3p.get("identity", 0),
+            hit_3p_aln_len=hit_3p.get("aln_length", 0),
+            hit_3p_source=hit_3p.get("source", ""),
         )
         tier_results.append(tr)
 
-        if tier == "C":
-            skip_sites.append(site)
-        else:
+        if is_positive:
             assembly_sites.append(site)
-
-    # Step 4: Element DB annotation for Tier A/B clips (informational only)
-    foreign_seqs: dict[str, str] = {}
-    for site in assembly_sites:
-        if site.seed_5p and len(site.seed_5p) >= 20:
-            foreign_seqs[f"{site.site_id}_5p"] = site.seed_5p
-        if site.seed_3p and len(site.seed_3p) >= 20:
-            foreign_seqs[f"{site.site_id}_3p"] = site.seed_3p
-
-    if foreign_seqs:
-        log(f"  Annotating {len(foreign_seqs)} foreign clips against element DB...")
-        clip_fa = tier_dir / "foreign_clips.fa"
-        with open(clip_fa, "w") as fh:
-            for name, seq in foreign_seqs.items():
-                fh.write(f">{name}\n{seq}\n")
-
-        blast_out = tier_dir / "element_annotation.tsv"
-        subprocess.run(
-            ["blastn", "-query", str(clip_fa), "-subject", str(element_db),
-             "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
-             "-evalue", "1e-5", "-max_target_seqs", "1",
-             "-out", str(blast_out)],
-            stderr=subprocess.DEVNULL,
-        )
-
-        # Parse best hit per query
-        elem_hits: dict[str, dict] = {}
-        if blast_out.exists():
-            with open(blast_out) as fh:
-                for line in fh:
-                    cols = line.strip().split("\t")
-                    if len(cols) >= 6:
-                        qname = cols[0]
-                        if qname not in elem_hits or float(cols[5]) > elem_hits[qname].get("bitscore", 0):
-                            elem_hits[qname] = {
-                                "element": cols[1],
-                                "identity": float(cols[2]),
-                                "aln_length": int(cols[3]),
-                                "bitscore": float(cols[5]),
-                            }
-
-        # Annotate tier results
-        for tr in tier_results:
-            if tr.tier in ("A", "B", "D"):
-                hit_5p = elem_hits.get(f"{tr.site_id}_5p", {})
-                hit_3p = elem_hits.get(f"{tr.site_id}_3p", {})
-                best = hit_5p if hit_5p.get("bitscore", 0) >= hit_3p.get("bitscore", 0) else hit_3p
-                if best:
-                    tr.element_hit = True
-                    tr.element_id = best.get("element", "")
-                    tr.element_identity = best.get("identity", 0)
-                    tr.element_aln_len = best.get("aln_length", 0)
-
-    # Step 5: UniVec annotation for Tier A/B clips (informational only)
-    univec_db = Path(__file__).resolve().parent.parent / "db" / "univec_vectors.fa"
-    if univec_db.exists() and foreign_seqs:
-        log(f"  Annotating {len(foreign_seqs)} foreign clips against UniVec DB...")
-        # Reuse the clip_fa written above; if not written yet, write it now
-        if not clip_fa.exists():
-            with open(clip_fa, "w") as fh:
-                for name, seq in foreign_seqs.items():
-                    fh.write(f">{name}\n{seq}\n")
-
-        univec_blast_out = tier_dir / "univec_annotation.tsv"
-        subprocess.run(
-            ["blastn", "-query", str(clip_fa), "-subject", str(univec_db),
-             "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
-             "-evalue", "1e-5", "-max_target_seqs", "1",
-             "-out", str(univec_blast_out)],
-            stderr=subprocess.DEVNULL,
-        )
-
-        # Parse best hit per query
-        univec_hits: dict[str, dict] = {}
-        if univec_blast_out.exists():
-            with open(univec_blast_out) as fh:
-                for line in fh:
-                    cols = line.strip().split("\t")
-                    if len(cols) >= 6:
-                        qname = cols[0]
-                        if qname not in univec_hits or float(cols[5]) > univec_hits[qname].get("bitscore", 0):
-                            univec_hits[qname] = {
-                                "univec_id": cols[1],
-                                "bitscore": float(cols[5]),
-                            }
-
-        # Annotate tier results with UniVec hits
-        for tr in tier_results:
-            if tr.tier in ("A", "B", "D"):
-                hit_5p = univec_hits.get(f"{tr.site_id}_5p", {})
-                hit_3p = univec_hits.get(f"{tr.site_id}_3p", {})
-                best = hit_5p if hit_5p.get("bitscore", 0) >= hit_3p.get("bitscore", 0) else hit_3p
-                if best:
-                    tr.univec_hit = True
-                    tr.univec_id = best.get("univec_id", "")
+        else:
+            skip_sites.append(site)
 
     shutil.rmtree(tier_dir, ignore_errors=True)
 
-    n_a = sum(1 for t in tier_results if t.tier == "A")
-    n_b = sum(1 for t in tier_results if t.tier == "B")
-    n_c = sum(1 for t in tier_results if t.tier == "C")
-    n_d = sum(1 for t in tier_results if t.tier == "D")
-    log(f"  Tier A (foreign → assemble):     {n_a}")
-    log(f"  Tier B (partial foreign):         {n_b}")
-    log(f"  Tier C (endogenous SV → skip):    {n_c}")
-    log(f"  Tier D (ambiguous → assemble):    {n_d}")
-    log(f"  Assembly targets: {len(assembly_sites)} (A+B+D), skipped: {len(skip_sites)} (C)")
+    n_pos = len(assembly_sites)
+    n_neg = len(skip_sites)
+    log(f"  Transgene-positive (assemble): {n_pos}")
+    log(f"  Transgene-negative (skip):     {n_neg}")
 
-    # Log Tier A/B details
+    # Log positive site details
     for tr in tier_results:
-        if tr.tier in ("A", "B"):
-            elem_str = f", element={tr.element_id}" if tr.element_hit else ""
-            uvec_str = f", univec={tr.univec_id}" if tr.univec_hit else ""
-            log(f"    {tr.site_id} {tr.chrom}:{tr.pos}: "
-                f"TIER {tr.tier} ({tr.reason}{elem_str}{uvec_str})")
+        if tr.transgene_positive:
+            parts = []
+            if tr.hit_5p:
+                parts.append(f"5p={tr.hit_5p} ({tr.hit_5p_identity:.0f}%/{tr.hit_5p_aln_len}bp)")
+            if tr.hit_3p:
+                parts.append(f"3p={tr.hit_3p} ({tr.hit_3p_identity:.0f}%/{tr.hit_3p_aln_len}bp)")
+            log(f"    {tr.site_id} {tr.chrom}:{tr.pos}: {', '.join(parts)}")
 
     return assembly_sites, skip_sites, tier_results
 
@@ -923,21 +787,16 @@ def write_tier_classification(
 ) -> None:
     """Write site_tier_classification.tsv."""
     with open(output_path, "w") as fh:
-        fh.write("site_id\tchrom\tpos\ttier\treason\t"
+        fh.write("site_id\tchrom\tpos\ttransgene_positive\t"
                  "clip_5p_len\tclip_3p_len\t"
-                 "clip_5p_maps_host\tclip_3p_maps_host\t"
-                 "clip_5p_nhits\tclip_3p_nhits\t"
-                 "element_hit\telement_id\telement_identity\telement_aln_len\t"
-                 "univec_hit\tunivec_id\n")
+                 "hit_5p\thit_5p_identity\thit_5p_aln_len\thit_5p_source\t"
+                 "hit_3p\thit_3p_identity\thit_3p_aln_len\thit_3p_source\n")
         for tr in tier_results:
-            fh.write(f"{tr.site_id}\t{tr.chrom}\t{tr.pos}\t{tr.tier}\t{tr.reason}\t"
+            fh.write(f"{tr.site_id}\t{tr.chrom}\t{tr.pos}\t{tr.transgene_positive}\t"
                      f"{tr.clip_5p_len}\t{tr.clip_3p_len}\t"
-                     f"{tr.clip_5p_maps_host}\t{tr.clip_3p_maps_host}\t"
-                     f"{tr.clip_5p_nhits}\t{tr.clip_3p_nhits}\t"
-                     f"{tr.element_hit}\t{tr.element_id}\t"
-                     f"{tr.element_identity}\t{tr.element_aln_len}\t"
-                     f"{tr.univec_hit}\t{tr.univec_id}\n")
-    log(f"  Tier classification written: {output_path}")
+                     f"{tr.hit_5p}\t{tr.hit_5p_identity}\t{tr.hit_5p_aln_len}\t{tr.hit_5p_source}\t"
+                     f"{tr.hit_3p}\t{tr.hit_3p_identity}\t{tr.hit_3p_aln_len}\t{tr.hit_3p_source}\n")
+    log(f"  Classification written: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -2856,8 +2715,8 @@ def main() -> None:
             f"({site.confidence}, 5p={len(site.seed_5p)}bp, "
             f"3p={len(site.seed_3p)}bp)")
 
-    # ---- Phase 1.5: Tier Classification (host-genome mapping) ----
-    log("\n--- Phase 1.5: Tier Classification (host mapping) ---")
+    # ---- Phase 1.5: Transgene-positive identification ----
+    log("\n--- Phase 1.5: Transgene-positive identification ---")
     assembly_sites, skip_sites, tier_results = classify_site_tiers(
         sites, element_db, host_ref, step_dir,
         threads=args.threads,
@@ -2867,11 +2726,11 @@ def main() -> None:
     )
 
     if not assembly_sites:
-        log("No assembly targets (all sites are endogenous SVs).")
+        log("No transgene-positive sites found. Nothing to assemble.")
         write_stats(step_dir / "s09_stats.txt", args.sample_name, len(sites), 0, [])
         return
 
-    sites = assembly_sites  # Only assemble foreign/ambiguous sites
+    sites = assembly_sites  # Only assemble transgene-positive sites
 
     # ---- Process each insertion site ----
     all_results = []
