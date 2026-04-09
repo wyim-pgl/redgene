@@ -586,17 +586,234 @@ def find_softclip_junctions(
     log(f"  Validated: {len(validated_sites)} insertion sites "
         f"({sum(1 for s in validated_sites if s.has_element_hits)} with element hits)")
 
-    # Limit: all element-hit sites + top N non-element sites
-    MAX_NON_ELEMENT = 5
-    element_sites = [s for s in validated_sites if s.has_element_hits]
-    non_element_sites = [s for s in validated_sites if not s.has_element_hits]
-    validated_sites = element_sites + non_element_sites[:MAX_NON_ELEMENT]
-    if len(non_element_sites) > MAX_NON_ELEMENT:
-        log(f"  Keeping {len(element_sites)} element-hit + "
-            f"{MAX_NON_ELEMENT} top non-element sites "
-            f"(dropped {len(non_element_sites) - MAX_NON_ELEMENT})")
-
     return validated_sites
+
+
+# ---------------------------------------------------------------------------
+# Tier classification: element-based filtering before assembly
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TierResult:
+    """Tier classification for one insertion site."""
+    site_id: str
+    tier: str               # "A", "B", "C"
+    reason: str
+    element_hit_std: str = ""
+    element_identity_std: float = 0
+    element_aln_len_std: int = 0
+    element_hit_sens: str = ""
+    element_identity_sens: float = 0
+    element_aln_len_sens: int = 0
+    host_map_5p: bool = False
+    host_map_3p: bool = False
+    annotation: str = ""
+
+
+def classify_site_tiers(
+    sites: list[InsertionSite],
+    element_db: Path,
+    host_ref: Path,
+    workdir: Path,
+) -> tuple[list[InsertionSite], list[InsertionSite], list[TierResult]]:
+    """Classify validated sites into Tier A/B/C based on element DB screening.
+
+    Tier A: Standard BLAST hit >=80% identity over >=20bp -> assemble
+    Tier B: Only sensitive BLAST hit, or low-complexity/short clip -> assemble (flagged)
+    Tier C: No element hit at all -> skip assembly
+
+    Returns (tier_ab_sites, tier_c_sites, all_tier_results).
+    """
+    if not sites:
+        return [], [], []
+
+    tier_dir = workdir / "_tier_classification"
+    tier_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect all clip sequences for batch BLAST
+    clip_seqs: dict[str, str] = {}
+    for site in sites:
+        if site.seed_5p and len(site.seed_5p) >= 15:
+            clip_seqs[f"{site.site_id}_5p"] = site.seed_5p
+        if site.seed_3p and len(site.seed_3p) >= 15:
+            clip_seqs[f"{site.site_id}_3p"] = site.seed_3p
+
+    if not clip_seqs:
+        log("  Tier classification: no clip sequences to classify")
+        results = [TierResult(s.site_id, "B", "no_clips") for s in sites]
+        return sites, [], results
+
+    # Write all clips to one FASTA
+    clip_fa = tier_dir / "all_clips.fa"
+    with open(clip_fa, "w") as fh:
+        for name, seq in clip_seqs.items():
+            fh.write(f">{name}\n{seq}\n")
+
+    # Standard BLAST (evalue 1e-5)
+    std_out = tier_dir / "std_blast.tsv"
+    subprocess.run(
+        ["blastn", "-query", str(clip_fa), "-subject", str(element_db),
+         "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
+         "-evalue", "1e-5", "-max_target_seqs", "5",
+         "-out", str(std_out)],
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Sensitive BLAST (evalue 1e-3, word_size 7)
+    sens_out = tier_dir / "sens_blast.tsv"
+    subprocess.run(
+        ["blastn", "-query", str(clip_fa), "-subject", str(element_db),
+         "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
+         "-evalue", "1e-3", "-word_size", "7", "-max_target_seqs", "5",
+         "-out", str(sens_out)],
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Parse standard hits: best hit per query
+    std_hits: dict[str, dict] = {}
+    if std_out.exists():
+        with open(std_out) as fh:
+            for line in fh:
+                cols = line.strip().split("\t")
+                if len(cols) < 6:
+                    continue
+                qname = cols[0]
+                if qname not in std_hits or float(cols[5]) > std_hits[qname].get("bitscore", 0):
+                    std_hits[qname] = {
+                        "element": cols[1], "identity": float(cols[2]),
+                        "aln_length": int(cols[3]), "bitscore": float(cols[5]),
+                    }
+
+    # Parse sensitive hits: best hit per query
+    sens_hits: dict[str, dict] = {}
+    if sens_out.exists():
+        with open(sens_out) as fh:
+            for line in fh:
+                cols = line.strip().split("\t")
+                if len(cols) < 6:
+                    continue
+                qname = cols[0]
+                if qname not in sens_hits or float(cols[5]) > sens_hits[qname].get("bitscore", 0):
+                    sens_hits[qname] = {
+                        "element": cols[1], "identity": float(cols[2]),
+                        "aln_length": int(cols[3]), "bitscore": float(cols[5]),
+                    }
+
+    # Classify each site
+    tier_results: list[TierResult] = []
+    tier_ab: list[InsertionSite] = []
+    tier_c: list[InsertionSite] = []
+
+    for site in sites:
+        key_5p = f"{site.site_id}_5p"
+        key_3p = f"{site.site_id}_3p"
+
+        std_5p = std_hits.get(key_5p, {})
+        std_3p = std_hits.get(key_3p, {})
+        has_std_hit = (
+            (std_5p.get("identity", 0) >= 80 and std_5p.get("aln_length", 0) >= 20) or
+            (std_3p.get("identity", 0) >= 80 and std_3p.get("aln_length", 0) >= 20)
+        )
+
+        sens_5p = sens_hits.get(key_5p, {})
+        sens_3p = sens_hits.get(key_3p, {})
+        has_sens_hit = bool(sens_5p) or bool(sens_3p)
+
+        def _is_low_complexity(seq: str) -> bool:
+            if not seq or len(seq) < 10:
+                return False
+            return max(seq.upper().count(b) for b in "ACGT") / len(seq) > 0.60
+
+        clip_low_complexity = (
+            _is_low_complexity(site.seed_5p) or _is_low_complexity(site.seed_3p)
+        )
+        clip_short = (
+            (site.seed_5p and len(site.seed_5p) < 30) or
+            (site.seed_3p and len(site.seed_3p) < 30)
+        )
+
+        if has_std_hit:
+            tier = "A"
+            reason = "standard_blast_hit"
+        elif has_sens_hit:
+            tier = "B"
+            reason = "sensitive_blast_only"
+        elif clip_low_complexity:
+            tier = "B"
+            reason = "low_complexity_clip"
+        elif clip_short:
+            tier = "B"
+            reason = "short_clip"
+        else:
+            tier = "C"
+            reason = "no_element_hit"
+
+        best_std = std_5p if std_5p.get("bitscore", 0) >= std_3p.get("bitscore", 0) else std_3p
+        best_sens = sens_5p if sens_5p.get("bitscore", 0) >= sens_3p.get("bitscore", 0) else sens_3p
+
+        tr = TierResult(
+            site_id=site.site_id, tier=tier, reason=reason,
+            element_hit_std=best_std.get("element", ""),
+            element_identity_std=best_std.get("identity", 0),
+            element_aln_len_std=best_std.get("aln_length", 0),
+            element_hit_sens=best_sens.get("element", ""),
+            element_identity_sens=best_sens.get("identity", 0),
+            element_aln_len_sens=best_sens.get("aln_length", 0),
+        )
+        tier_results.append(tr)
+
+        if tier in ("A", "B"):
+            tier_ab.append(site)
+        else:
+            tier_c.append(site)
+
+    # Host mapping for Tier C sites (batch)
+    if tier_c:
+        tierc_seqs: dict[str, str] = {}
+        for site in tier_c:
+            if site.seed_5p:
+                tierc_seqs[f"{site.site_id}_5p"] = site.seed_5p
+            if site.seed_3p:
+                tierc_seqs[f"{site.site_id}_3p"] = site.seed_3p
+
+        tierc_host_set = _batch_check_maps_to_host(tierc_seqs, host_ref, tier_dir)
+
+        for tr in tier_results:
+            if tr.tier == "C":
+                tr.host_map_5p = f"{tr.site_id}_5p" in tierc_host_set
+                tr.host_map_3p = f"{tr.site_id}_3p" in tierc_host_set
+                tr.annotation = "endogenous_SV" if (tr.host_map_5p or tr.host_map_3p) else "unknown_non_element"
+
+    shutil.rmtree(tier_dir, ignore_errors=True)
+
+    n_a = sum(1 for t in tier_results if t.tier == "A")
+    n_b = sum(1 for t in tier_results if t.tier == "B")
+    n_c = sum(1 for t in tier_results if t.tier == "C")
+    log(f"  Tier classification: {n_a} Tier A, {n_b} Tier B, {n_c} Tier C")
+    for tr in tier_results:
+        if tr.tier in ("A", "B"):
+            log(f"    {tr.site_id}: TIER {tr.tier} ({tr.reason}) "
+                f"— {tr.element_hit_std or tr.element_hit_sens}")
+
+    return tier_ab, tier_c, tier_results
+
+
+def write_tier_classification(
+    tier_results: list[TierResult],
+    output_path: Path,
+) -> None:
+    """Write site_tier_classification.tsv."""
+    with open(output_path, "w") as fh:
+        fh.write("site_id\ttier\treason\t"
+                 "element_hit_std\telement_identity_std\telement_aln_len_std\t"
+                 "element_hit_sens\telement_identity_sens\telement_aln_len_sens\t"
+                 "host_map_5p\thost_map_3p\tannotation\n")
+        for tr in tier_results:
+            fh.write(f"{tr.site_id}\t{tr.tier}\t{tr.reason}\t"
+                     f"{tr.element_hit_std}\t{tr.element_identity_std}\t{tr.element_aln_len_std}\t"
+                     f"{tr.element_hit_sens}\t{tr.element_identity_sens}\t{tr.element_aln_len_sens}\t"
+                     f"{tr.host_map_5p}\t{tr.host_map_3p}\t{tr.annotation}\n")
+    log(f"  Tier classification written: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -2508,12 +2725,35 @@ def main() -> None:
         write_stats(step_dir / "s09_stats.txt", args.sample_name, 0, 0, [])
         return
 
-    log(f"\nProcessing {len(sites)} insertion site(s):")
+    log(f"\nPhase 1 found {len(sites)} insertion site(s):")
     for site in sites:
         log(f"  {site.site_id}: {site.host_chr}:{site.pos_5p}"
             f"{f'-{site.pos_3p}' if site.pos_3p else ''} "
             f"({site.confidence}, 5p={len(site.seed_5p)}bp, "
             f"3p={len(site.seed_3p)}bp)")
+
+    # ---- Phase 1.5: Tier Classification ----
+    log("\n--- Phase 1.5: Tier Classification ---")
+    tier_ab_sites, tier_c_sites, tier_results = classify_site_tiers(
+        sites, element_db, host_ref, step_dir,
+    )
+    write_tier_classification(
+        tier_results, step_dir / "site_tier_classification.tsv",
+    )
+    n_a = sum(1 for t in tier_results if t.tier == "A")
+    n_b = sum(1 for t in tier_results if t.tier == "B")
+    n_c = sum(1 for t in tier_results if t.tier == "C")
+    log(f"  Tier A (strong element hit): {n_a}")
+    log(f"  Tier B (sensitive/partial):  {n_b}")
+    log(f"  Tier C (no element, skip):   {n_c}")
+    log(f"  Assembly targets: {len(tier_ab_sites)} (Tier A+B)")
+
+    if not tier_ab_sites:
+        log("No Tier A/B sites — nothing to assemble.")
+        write_stats(step_dir / "s09_stats.txt", args.sample_name, len(sites), 0, [])
+        return
+
+    sites = tier_ab_sites  # Only assemble element-positive sites
 
     # ---- Process each insertion site ----
     all_results = []
