@@ -614,6 +614,8 @@ class TierResult:
     element_id: str = ""
     element_identity: float = 0
     element_aln_len: int = 0
+    univec_hit: bool = False    # annotation only, not used for classification
+    univec_id: str = ""
 
 
 def _batch_host_map_bowtie2(
@@ -849,6 +851,49 @@ def classify_site_tiers(
                     tr.element_identity = best.get("identity", 0)
                     tr.element_aln_len = best.get("aln_length", 0)
 
+    # Step 5: UniVec annotation for Tier A/B clips (informational only)
+    univec_db = Path(__file__).resolve().parent.parent / "db" / "univec_vectors.fa"
+    if univec_db.exists() and foreign_seqs:
+        log(f"  Annotating {len(foreign_seqs)} foreign clips against UniVec DB...")
+        # Reuse the clip_fa written above; if not written yet, write it now
+        if not clip_fa.exists():
+            with open(clip_fa, "w") as fh:
+                for name, seq in foreign_seqs.items():
+                    fh.write(f">{name}\n{seq}\n")
+
+        univec_blast_out = tier_dir / "univec_annotation.tsv"
+        subprocess.run(
+            ["blastn", "-query", str(clip_fa), "-subject", str(univec_db),
+             "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
+             "-evalue", "1e-5", "-max_target_seqs", "1",
+             "-out", str(univec_blast_out)],
+            stderr=subprocess.DEVNULL,
+        )
+
+        # Parse best hit per query
+        univec_hits: dict[str, dict] = {}
+        if univec_blast_out.exists():
+            with open(univec_blast_out) as fh:
+                for line in fh:
+                    cols = line.strip().split("\t")
+                    if len(cols) >= 6:
+                        qname = cols[0]
+                        if qname not in univec_hits or float(cols[5]) > univec_hits[qname].get("bitscore", 0):
+                            univec_hits[qname] = {
+                                "univec_id": cols[1],
+                                "bitscore": float(cols[5]),
+                            }
+
+        # Annotate tier results with UniVec hits
+        for tr in tier_results:
+            if tr.tier in ("A", "B", "D"):
+                hit_5p = univec_hits.get(f"{tr.site_id}_5p", {})
+                hit_3p = univec_hits.get(f"{tr.site_id}_3p", {})
+                best = hit_5p if hit_5p.get("bitscore", 0) >= hit_3p.get("bitscore", 0) else hit_3p
+                if best:
+                    tr.univec_hit = True
+                    tr.univec_id = best.get("univec_id", "")
+
     shutil.rmtree(tier_dir, ignore_errors=True)
 
     n_a = sum(1 for t in tier_results if t.tier == "A")
@@ -865,8 +910,9 @@ def classify_site_tiers(
     for tr in tier_results:
         if tr.tier in ("A", "B"):
             elem_str = f", element={tr.element_id}" if tr.element_hit else ""
+            uvec_str = f", univec={tr.univec_id}" if tr.univec_hit else ""
             log(f"    {tr.site_id} {tr.chrom}:{tr.pos}: "
-                f"TIER {tr.tier} ({tr.reason}{elem_str})")
+                f"TIER {tr.tier} ({tr.reason}{elem_str}{uvec_str})")
 
     return assembly_sites, skip_sites, tier_results
 
@@ -881,14 +927,16 @@ def write_tier_classification(
                  "clip_5p_len\tclip_3p_len\t"
                  "clip_5p_maps_host\tclip_3p_maps_host\t"
                  "clip_5p_nhits\tclip_3p_nhits\t"
-                 "element_hit\telement_id\telement_identity\telement_aln_len\n")
+                 "element_hit\telement_id\telement_identity\telement_aln_len\t"
+                 "univec_hit\tunivec_id\n")
         for tr in tier_results:
             fh.write(f"{tr.site_id}\t{tr.chrom}\t{tr.pos}\t{tr.tier}\t{tr.reason}\t"
                      f"{tr.clip_5p_len}\t{tr.clip_3p_len}\t"
                      f"{tr.clip_5p_maps_host}\t{tr.clip_3p_maps_host}\t"
                      f"{tr.clip_5p_nhits}\t{tr.clip_3p_nhits}\t"
                      f"{tr.element_hit}\t{tr.element_id}\t"
-                     f"{tr.element_identity}\t{tr.element_aln_len}\n")
+                     f"{tr.element_identity}\t{tr.element_aln_len}\t"
+                     f"{tr.univec_hit}\t{tr.univec_id}\n")
     log(f"  Tier classification written: {output_path}")
 
 
