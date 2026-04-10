@@ -791,10 +791,17 @@ All coverages detected both junction coordinates (Chr18:51,882,860 and 51,882,90
 
 ---
 
-## Step 9: Targeted Insert Assembly (Pilon Gap Filling)
+## Step 9: Targeted Insert Assembly (Multi-Assembler Gap Filling)
 
 ### Overview
-Junction-guided iterative Pilon gap filling to resolve full transgene insertion cassettes. Uses pseudo-reference construction (host flanks + junction contig insert portions + N-gap) with iterative Pilon polishing.
+Four-phase targeted assembly to resolve full transgene insertion cassettes:
+- **Phase 1**: Soft-clip junction detection from host BAM — bidirectional clustering of soft-clipped reads to identify candidate insertion sites
+- **Phase 1.5**: Transgene-positive identification — BLAST all clip sequences (20-80bp) against a combined transgene database (131 EUginius GMO elements + 5,288 NCBI UniVec vector sequences, adapters/primers removed) using blastn-short (word_size=7, optimized for short queries). Sites where at least one clip matches a known transgene element (>=80% identity, >=20bp alignment) are classified as transgene-positive (assembly targets). Sites with no transgene hit are skipped as likely endogenous structural variants.
+- **Phase 2**: Candidate read extraction from junction regions + unmapped pairs
+- **Phase 3**: Iterative 4-assembler loop (k-mer greedy extension, minimap2 soft-clip extension, Pilon gap fill, SSAKE overlap-layout-consensus), converging when all 4 show zero growth (max 15 rounds)
+- **Phase 4**: Annotation via local element DB BLAST + remote NCBI nt BLAST
+
+**Key design decision**: Host-mapping based filtering (minimap2, bowtie2, BLAST) was evaluated but rejected because cultivar-specific presence/absence variants (PAV) in non-reference cultivars produce false "foreign" classifications. Transgene-positive identification avoids this: any construct uses known regulatory elements (CaMV 35S, nos, nptII, etc.) or vector backbones (pBI, pCAMBIA) which are in the transgene DB. blastn-short is required because standard megablast (word_size=28) cannot seed on 20-30bp clips.
 
 ### Submitted Jobs
 

@@ -29,16 +29,13 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
-import os
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import pysam
 
@@ -47,6 +44,25 @@ import pysam
 # ---------------------------------------------------------------------------
 
 STEP = "s09_targeted_assembly"
+
+# ---------------------------------------------------------------------------
+# Host-endogenous exclusion thresholds (used in classify_site_tiers)
+# ---------------------------------------------------------------------------
+# DB-level: BLAST transgene_db entries vs host genome to find host-derived
+# elements (e.g., P-Act1-rice in a rice genome). Two tiers handle cultivar
+# drift — P-Act1 hits Nipponbare at ~78%/39% due to Xiushui vs Nipponbare.
+HOST_ENDO_T1_PIDENT = 90.0   # Tier 1 (clean host): min % identity
+HOST_ENDO_T1_QCOVS = 50.0    # Tier 1: min query coverage %
+HOST_ENDO_T2_PIDENT = 75.0   # Tier 2 (divergent host): min % identity
+HOST_ENDO_T2_QCOVS = 30.0    # Tier 2: min query coverage %
+
+# Per-clip host verification: stricter than DB-level because individual clips
+# are short (~20-50 bp), so even moderate-identity host hits are significant.
+# DB-level Tier 2 uses 75% because full-length elements (500-3000 bp) may
+# diverge across cultivars; per-clip uses 95% because a 30 bp clip hitting
+# host at <95% is too noisy to trust as evidence of host origin.
+CLIP_HOST_PIDENT = 95.0       # Per-clip host check: min % identity
+CLIP_HOST_MIN_LEN = 30        # Per-clip host check: min alignment length
 
 
 def log(msg: str) -> None:
@@ -616,6 +632,113 @@ class TierResult:
     hit_3p_source: str = ""
 
 
+def _filter_host_endogenous(
+    transgene_db: Path,
+    host_ref: Path,
+    tier_dir: Path,
+    workdir: Path,
+    threads: int,
+) -> tuple[Path, set[str]]:
+    """BLAST transgene_db vs host genome to remove host-derived entries.
+
+    Returns (blast_db, exclude_ids): blast_db is the filtered DB path
+    (or original if nothing excluded), exclude_ids are the removed entries.
+    """
+    blast_db = transgene_db
+    exclude_ids: set[str] = set()
+    exclude_details: dict[str, str] = {}
+
+    # Ensure host BLAST DB exists
+    host_blast_db_exists = (
+        host_ref.with_suffix(".fa.ndb").exists()
+        or Path(str(host_ref) + ".ndb").exists()
+    )
+    if not host_blast_db_exists:
+        log("  Host BLAST DB not found — creating with makeblastdb...")
+        result = subprocess.run(
+            ["makeblastdb", "-in", str(host_ref), "-dbtype", "nucl"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            host_blast_db_exists = True
+        else:
+            log("  WARNING: makeblastdb failed, skipping host-endogenous exclusion")
+
+    if not host_blast_db_exists:
+        log("  WARNING: Host BLAST DB unavailable, skipping host-endogenous exclusion")
+        return blast_db, exclude_ids
+
+    host_hits_out = tier_dir / "host_endogenous_hits.tsv"
+    log("  BLAST transgene_db vs host genome to find host-endogenous entries...")
+    result = subprocess.run(
+        ["blastn", "-task", "blastn",
+         "-query", str(transgene_db), "-db", str(host_ref),
+         "-outfmt", "6 qseqid qlen sseqid pident length qcovs",
+         "-evalue", "1e-10", "-max_target_seqs", "1",
+         "-num_threads", str(threads),
+         "-out", str(host_hits_out)],
+        stderr=subprocess.DEVNULL,
+    )
+    if result.returncode != 0:
+        log("  WARNING: host-endogenous BLAST failed (rc={result.returncode})")
+        return blast_db, exclude_ids
+
+    if host_hits_out.exists():
+        with open(host_hits_out) as fh:
+            for line in fh:
+                cols = line.strip().split("\t")
+                if len(cols) < 6:
+                    continue
+                qseqid = cols[0]
+                pident = float(cols[3])
+                qcovs = float(cols[5])
+                tier1 = pident >= HOST_ENDO_T1_PIDENT and qcovs >= HOST_ENDO_T1_QCOVS
+                tier2 = pident >= HOST_ENDO_T2_PIDENT and qcovs >= HOST_ENDO_T2_QCOVS
+                if tier1 or tier2:
+                    tier_label = "T1" if tier1 else "T2"
+                    exclude_ids.add(qseqid)
+                    exclude_details[qseqid] = (
+                        f"[{tier_label}] pident={pident:.1f}%, qcovs={qcovs:.0f}%"
+                    )
+
+    if exclude_ids:
+        filtered_db = tier_dir / "transgene_db_clean.fa"
+        n_total = 0
+        n_excluded = 0
+        with open(transgene_db) as fin, open(filtered_db, "w") as fout:
+            write = True
+            for line in fin:
+                if line.startswith(">"):
+                    n_total += 1
+                    seq_id = line[1:].split()[0]
+                    if seq_id in exclude_ids:
+                        n_excluded += 1
+                        write = False
+                    else:
+                        write = True
+                        fout.write(line)
+                elif write:
+                    fout.write(line)
+        log(f"  Host-endogenous exclusion: removed {n_excluded}/{n_total} entries")
+        for eid in sorted(exclude_ids):
+            log(f"    excluded: {eid} ({exclude_details[eid]})")
+        subprocess.run(
+            ["makeblastdb", "-in", str(filtered_db), "-dbtype", "nucl"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        blast_db = filtered_db
+    else:
+        log("  Host-endogenous exclusion: no entries matched host genome")
+
+    # Persist to workdir so Phase 4 can use for FALSE_POSITIVE post-filter
+    persist_path = workdir / "host_endogenous_ids.txt"
+    with open(persist_path, "w") as fh:
+        for eid in sorted(exclude_ids):
+            fh.write(f"{eid}\t{exclude_details.get(eid, '')}\n")
+
+    return blast_db, exclude_ids
+
+
 def classify_site_tiers(
     sites: list[InsertionSite],
     element_db: Path,
@@ -666,6 +789,10 @@ def classify_site_tiers(
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
 
+    blast_db, exclude_ids = _filter_host_endogenous(
+        transgene_db, host_ref, tier_dir, workdir, threads
+    )
+
     # Step 1: Collect all clip sequences
     clip_seqs: dict[str, str] = {}
     for site in sites:
@@ -675,7 +802,7 @@ def classify_site_tiers(
             clip_seqs[f"{site.site_id}_3p"] = site.seed_3p
 
     log(f"  BLASTing {len(clip_seqs)} clip sequences against transgene_db "
-        f"(blastn-short, {transgene_db.name})...")
+        f"(blastn-short, {blast_db.name})...")
 
     # Step 2: Write clips and BLAST against transgene_db
     clip_fa = tier_dir / "all_clips.fa"
@@ -684,15 +811,17 @@ def classify_site_tiers(
             fh.write(f">{name}\n{seq}\n")
 
     blast_out = tier_dir / "transgene_blast.tsv"
-    subprocess.run(
+    result = subprocess.run(
         ["blastn", "-task", "blastn-short",
-         "-query", str(clip_fa), "-db", str(transgene_db),
+         "-query", str(clip_fa), "-db", str(blast_db),
          "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
          "-evalue", "1e-5", "-max_target_seqs", "3",
          "-num_threads", str(threads),
          "-out", str(blast_out)],
         stderr=subprocess.DEVNULL,
     )
+    if result.returncode != 0:
+        log(f"  WARNING: transgene BLAST failed (rc={result.returncode})")
 
     # Step 3: Parse hits — best hit per query with identity/length filter
     hits: dict[str, dict] = {}
@@ -723,6 +852,62 @@ def classify_site_tiers(
 
     log(f"  {len(hits)} clips hit transgene_db (identity>={min_identity}%, "
         f"aln>={min_aln_len}bp)")
+
+    # Step 3.5: Per-clip host verification
+    # Some divergent host elements (e.g., I-actin rice intron) escape DB-level
+    # exclusion because their full-entry qcovs is low, but the SHORT clip we
+    # match against them happens to be a 100% conserved window. To catch this,
+    # BLAST each transgene-hit clip back against the host genome with
+    # blastn-short. If the clip ALSO hits the host at >=95% identity over
+    # >=30bp, it's an endogenous conserved sequence — drop it.
+    if hits and host_blast_db_exists:
+        hit_clip_fa = tier_dir / "hit_clips.fa"
+        with open(hit_clip_fa, "w") as fh:
+            for qname in hits:
+                fh.write(f">{qname}\n{clip_seqs[qname]}\n")
+
+        host_clip_blast = tier_dir / "hit_clips_vs_host.tsv"
+        log(f"  Per-clip host verification: BLAST {len(hits)} hit clips "
+            f"vs host genome (blastn-short)...")
+        result = subprocess.run(
+            ["blastn", "-task", "blastn-short",
+             "-query", str(hit_clip_fa), "-db", str(host_ref),
+             "-outfmt", "6 qseqid sseqid pident length evalue",
+             "-evalue", "1e-5", "-max_target_seqs", "1",
+             "-num_threads", str(threads),
+             "-out", str(host_clip_blast)],
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            log(f"  WARNING: per-clip host BLAST failed (rc={result.returncode})")
+
+        host_endogenous_clips: dict[str, tuple[float, int]] = {}
+        if host_clip_blast.exists():
+            with open(host_clip_blast) as fh:
+                for line in fh:
+                    cols = line.strip().split("\t")
+                    if len(cols) < 5:
+                        continue
+                    qname = cols[0]
+                    pident = float(cols[2])
+                    length = int(cols[3])
+                    if pident >= CLIP_HOST_PIDENT and length >= CLIP_HOST_MIN_LEN:
+                        # Keep best (longest) hit per clip
+                        prev = host_endogenous_clips.get(qname)
+                        if prev is None or length > prev[1]:
+                            host_endogenous_clips[qname] = (pident, length)
+
+        if host_endogenous_clips:
+            log(f"  Per-clip host filter: dropping {len(host_endogenous_clips)} "
+                f"clips that match host (pident>=95%, length>=30bp)")
+            for qname, (pid, ln) in sorted(host_endogenous_clips.items()):
+                hit = hits[qname]
+                log(f"    dropped: {qname} → {hit['element']} "
+                    f"(host hit: {pid:.0f}%/{ln}bp)")
+                del hits[qname]
+            log(f"  After host verification: {len(hits)} transgene-only clips remain")
+        else:
+            log("  Per-clip host filter: no clips matched host")
 
     # Step 4: Classify each site
     tier_results: list[TierResult] = []
@@ -778,7 +963,7 @@ def classify_site_tiers(
                 parts.append(f"3p={tr.hit_3p} ({tr.hit_3p_identity:.0f}%/{tr.hit_3p_aln_len}bp)")
             log(f"    {tr.site_id} {tr.chrom}:{tr.pos}: {', '.join(parts)}")
 
-    return assembly_sites, skip_sites, tier_results
+    return assembly_sites, skip_sites, tier_results, exclude_ids
 
 
 def write_tier_classification(
@@ -962,13 +1147,28 @@ def extract_candidate_reads(
     out_r2: Path,
     flank: int = 5000,
     threads: int = 4,
+    min_clip: int = 20,
+    junction_window: int = 20,
 ) -> int:
-    """Extract reads for assembly from junction regions.
+    """Extract reads for assembly from junction regions, phased by allele.
 
-    1. samtools view for junction ±flank regions
-    2. Extract read names, then samtools view -N for both mates
-    3. Also extract all-unmapped pairs (flag 12)
-    4. Merge, name-sort, convert to paired FASTQ
+    For hemizygous insertions, mixing WT-allele and insertion-allele reads
+    causes assembly ambiguity. We phase reads using soft-clip diagnostics:
+
+    1. Scan junction position(s) ±junction_window
+    2. INSERTION-allele: reads with soft-clip at junction position
+       (these span the host→T-DNA boundary)
+    3. WT-allele: reads that span the junction position WITHOUT a clip
+       at that boundary (they read straight through → no insertion)
+    4. AMBIGUOUS: distal reads (>junction_window from junction).
+       These are kept ONLY IF their mate is not classified as WT.
+       A distal read paired with a WT-classified mate is excluded
+       (the WT evidence from the mate overrides the distal's ambiguity).
+    5. Mate propagation: if any read in a pair is insertion-allele,
+       the whole pair is insertion-allele (insertion wins ties).
+    6. Output: insertion-allele + ambiguous-without-WT-mate pairs,
+       excluding pairs where any mate has WT evidence and no mate
+       has insertion evidence (exclude = wt_reads - insertion_reads).
     """
     tmp_dir = out_r1.parent
 
@@ -996,20 +1196,84 @@ def extract_candidate_reads(
         stderr=subprocess.DEVNULL, check=True,
     )
 
-    # Collect read names
-    result = subprocess.run(
-        ["samtools", "view", str(region_bam)],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, text=True,
-    )
-    names = set()
-    for line in result.stdout.splitlines():
-        names.add(line.split("\t", 1)[0])
+    # Phase reads by allele using pysam
+    insertion_reads: set[str] = set()
+    wt_reads: set[str] = set()
+    distal_reads: set[str] = set()
+
+    with pysam.AlignmentFile(str(region_bam), "rb") as bam:
+        for read in bam.fetch(until_eof=True):
+            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                continue
+            qname = read.query_name
+            if qname is None:
+                continue
+            cigar = read.cigartuples
+            if not cigar:
+                distal_reads.add(qname)
+                continue
+
+            ref_start = read.reference_start  # 0-based
+            ref_end = read.reference_end       # exclusive
+            if ref_start is None or ref_end is None:
+                distal_reads.add(qname)
+                continue
+
+            classified = False
+            for pos in positions:
+                pos0 = pos - 1  # convert to 0-based
+                # Distance check: is read NEAR this junction at all?
+                if ref_end < pos0 - junction_window or ref_start > pos0 + junction_window:
+                    continue
+
+                # INSERTION diagnostic: soft-clip end touches junction
+                left_clip = cigar[0][1] if cigar[0][0] == 4 else 0
+                right_clip = cigar[-1][1] if cigar[-1][0] == 4 else 0
+
+                # Right soft-clip → break point is at ref_end → matches 5p junction
+                is_insertion = False
+                if right_clip >= min_clip and abs(ref_end - pos0) <= junction_window:
+                    is_insertion = True
+                # Left soft-clip → break point is at ref_start → matches 3p junction
+                if left_clip >= min_clip and abs(ref_start - pos0) <= junction_window:
+                    is_insertion = True
+
+                if is_insertion:
+                    insertion_reads.add(qname)
+                    classified = True
+                    break
+
+                # WT diagnostic: spans junction (start before & end after) WITHOUT clip
+                # at that boundary
+                if ref_start <= pos0 - junction_window and ref_end >= pos0 + junction_window:
+                    # No clip at the junction boundary
+                    if right_clip < min_clip and left_clip < min_clip:
+                        wt_reads.add(qname)
+                        classified = True
+                        break
+
+            if not classified:
+                distal_reads.add(qname)
+
+    # Mate propagation: insertion wins over WT.
+    # samtools view -N fetches BOTH mates by name, so we only need a name set.
+    # A pair is excluded if ANY mate has WT evidence (spans junction w/o clip)
+    # AND no mate is insertion-classified. Distal does NOT rescue WT: the
+    # 3' mate of a pair is ~300bp away from the junction and gets classified
+    # as distal, but that doesn't contradict the 5' mate's WT observation.
+    all_names = insertion_reads | wt_reads | distal_reads
+    exclude_names = wt_reads - insertion_reads
+    keep_names = all_names - exclude_names
+
+    log(f"    Phasing: {len(insertion_reads):,} insertion-allele, "
+        f"{len(wt_reads):,} WT-allele, {len(distal_reads):,} distal/ambiguous")
+    log(f"    Excluded {len(exclude_names):,} pure-WT pairs")
 
     namelist = tmp_dir / f"_{site.site_id}_names.txt"
     with open(namelist, "w") as fh:
-        for n in sorted(names):
+        for n in sorted(keep_names):
             fh.write(n + "\n")
-    log(f"    Junction region reads: {len(names):,} read names")
+    log(f"    Junction region reads (phased): {len(keep_names):,} read names")
 
     # Extract both mates from full BAM
     both_mates_bam = tmp_dir / f"_{site.site_id}_mates.bam"
@@ -2453,10 +2717,13 @@ def generate_report(
     annotation_tsv: Path,
     border_tsv: Path,
     site: InsertionSite,
+    # NOTE: verdict logic (CANDIDATE/FALSE_POSITIVE/UNKNOWN) is embedded here.
+    # If a verdict-only mode is needed later, extract into compute_verdict().
     n_rounds: int,
     status: str,
     output_dir: Path,
-) -> Path:
+    host_endogenous_ids: set[str] | None = None,
+) -> tuple[Path, str]:
     """Generate human-readable linear map report."""
     report_path = output_dir / f"{site.site_id}_report.txt"
 
@@ -2465,7 +2732,7 @@ def generate_report(
     if not seqs:
         with open(report_path, "w") as fh:
             fh.write("No insert assembled.\n")
-        return report_path
+        return report_path, "NO_ASSEMBLY"
 
     insert_name = list(seqs.keys())[0]
     insert_seq = seqs[insert_name]
@@ -2516,6 +2783,33 @@ def generate_report(
     for _, _, elem, _, _ in elements:
         elem_counts[elem] += 1
 
+    # ---- Phase 4 post-filter: host-endogenous verdict ----
+    # If every annotated element was excluded at the DB-level host BLAST
+    # (Tier 1 or Tier 2), the whole assembly is host-endogenous noise.
+    # A single genuinely foreign element is enough to keep the site.
+    host_endo = host_endogenous_ids or set()
+    unique_elems = set(elem_counts)
+    foreign_elems: set[str] = set()
+    endo_elems: set[str] = set()
+    for elem in unique_elems:
+        if elem in host_endo:
+            endo_elems.add(elem)
+        else:
+            foreign_elems.add(elem)
+    # Need at least one annotation AND at least one foreign element to keep it.
+    if unique_elems and not foreign_elems:
+        verdict = "FALSE_POSITIVE"
+        verdict_reason = (
+            "all annotated elements are host-endogenous "
+            "(matched host genome at Tier 1/2 BLAST threshold)"
+        )
+    elif not unique_elems:
+        verdict = "UNKNOWN"
+        verdict_reason = "no element annotations"
+    else:
+        verdict = "CANDIDATE"
+        verdict_reason = ""
+
     # Build linear map with orientation arrows
     linear_parts = []
     for _, _, elem, strand, _ in elements:
@@ -2562,6 +2856,10 @@ def generate_report(
         fh.write("\n")
         fh.write(f"Assembly status: {status.upper()} (round {n_rounds})\n")
         fh.write(f"Structure: {structure}\n")
+        fh.write(f"Verdict: {verdict}")
+        if verdict_reason:
+            fh.write(f" — {verdict_reason}")
+        fh.write("\n")
         if n_borders > 0:
             fh.write(f"T-DNA borders found: {n_borders}\n")
         fh.write("\n")
@@ -2603,8 +2901,19 @@ def generate_report(
             for elem in sorted(bidirectional_elems):
                 fh.write(f"  {elem}\n")
 
-    log(f"  Report written: {report_path}")
-    return report_path
+        # Foreign vs host-endogenous element breakdown
+        if host_endo and unique_elems:
+            fh.write(f"\nForeign elements (not in host genome): {len(foreign_elems)}\n")
+            for elem in sorted(foreign_elems):
+                fh.write(f"  + {elem}\n")
+            if endo_elems:
+                fh.write(f"Host-endogenous elements "
+                         f"(excluded at DB-level BLAST): {len(endo_elems)}\n")
+                for elem in sorted(endo_elems):
+                    fh.write(f"  - {elem}\n")
+
+    log(f"  Report written: {report_path} [{verdict}]")
+    return report_path, verdict
 
 
 # ---------------------------------------------------------------------------
@@ -2628,6 +2937,7 @@ def write_stats(
             fh.write(f"{prefix}_remaining_ns\t{r['remaining_ns']}\n")
             fh.write(f"{prefix}_assembly_rounds\t{r['rounds']}\n")
             fh.write(f"{prefix}_status\t{r['status']}\n")
+            fh.write(f"{prefix}_verdict\t{r.get('verdict', 'NO_ASSEMBLY')}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -2662,16 +2972,11 @@ def main() -> None:
                         help="Flank size for candidate read extraction (bp)")
     parser.add_argument("--min-clip", type=int, default=20,
                         help="Minimum soft-clip length for junction detection")
-    # Backward-compat args (unused)
-    parser.add_argument("--junction-contigs", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--host-paf", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--construct-paf", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--construct-ref", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--junction-window", type=int, default=20,
+                        help="Window (bp) around junction for allele phasing "
+                             "(reads within this distance classified as junction-proximal)")
     parser.add_argument("--s03-r1", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--s03-r2", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--min-overlap", type=int, default=20, help=argparse.SUPPRESS)
-    parser.add_argument("--min-depth", type=int, default=2, help=argparse.SUPPRESS)
-    parser.add_argument("--min-ratio", type=float, default=0.7, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     step_dir = Path(args.outdir) / args.sample_name / STEP
@@ -2717,7 +3022,7 @@ def main() -> None:
 
     # ---- Phase 1.5: Transgene-positive identification ----
     log("\n--- Phase 1.5: Transgene-positive identification ---")
-    assembly_sites, skip_sites, tier_results = classify_site_tiers(
+    assembly_sites, skip_sites, tier_results, host_endo_ids = classify_site_tiers(
         sites, element_db, host_ref, step_dir,
         threads=args.threads,
     )
@@ -2746,6 +3051,8 @@ def main() -> None:
             n_cand = extract_candidate_reads(
                 host_bam, site, cand_r1, cand_r2,
                 flank=args.flank, threads=args.threads,
+                min_clip=args.min_clip,
+                junction_window=args.junction_window,
             )
             log(f"  Candidate reads: {n_cand:,} pairs")
         else:
@@ -2816,18 +3123,33 @@ def main() -> None:
             combined_insert, element_db, step_dir, args.sample_name,
         )
 
+        # host_endo_ids returned directly from classify_site_tiers (no file I/O)
+        log(f"  Using {len(host_endo_ids)} host-endogenous element IDs "
+            f"for post-filter verdict")
+
         # Generate report for each site
+        verdict_counts: Counter = Counter()
+        verdict_by_site: dict[str, str] = {}
         for site in sites:
             site_fa = step_dir / f"{site.site_id}_insert.fasta"
             if site_fa.exists():
                 result_info = next(
                     (r for r in all_results if r["site_id"] == site.site_id), None)
                 if result_info:
-                    generate_report(
+                    _, verdict = generate_report(
                         site_fa, ann_tsv, border_tsv,
                         site, result_info["rounds"], result_info["status"],
                         step_dir,
+                        host_endogenous_ids=host_endo_ids,
                     )
+                    verdict_counts[verdict] += 1
+                    verdict_by_site[site.site_id] = verdict
+
+        # Attach verdict onto the per-site results so the final summary reflects it.
+        for r in all_results:
+            r["verdict"] = verdict_by_site.get(r["site_id"], "NO_ASSEMBLY")
+        log(f"  Phase 4 verdicts: "
+            f"{dict(verdict_counts) if verdict_counts else '(none)'}")
 
     # ---- Write stats ----
     write_stats(
@@ -2839,8 +3161,9 @@ def main() -> None:
     log(f"=== Step 9 complete ===")
     log(f"Output: {step_dir}")
     for r in all_results:
+        v = r.get("verdict", "NO_ASSEMBLY")
         log(f"  {r['site_id']}: {r['insert_length']:,}bp, "
-            f"{r['remaining_ns']} Ns, {r['rounds']} rounds → {r['status']}")
+            f"{r['remaining_ns']} Ns, {r['rounds']} rounds → {r['status']} [{v}]")
 
 
 if __name__ == "__main__":
