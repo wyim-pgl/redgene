@@ -1,2 +1,0 @@
-chrom	pos	type	size	indel_seq	freq	dp	count	zygosity	effect	gene	aa_change	details	grna_idx	site_type
-SLM_r2.0ch04	2635445	insertion	1	T	0.3076923076923077	13	4	heterozygous	frameshift	LOC101257358		Frameshift insertion of 1bp (T) in LOC101257358	1	on-target

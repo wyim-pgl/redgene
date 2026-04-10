@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Step 10: Estimate transgene copy number from read depth ratio.
+"""Step 7: Estimate transgene copy number from read depth ratio.
 
 Compares median read depth on the construct BAM (Step 2) to the genome-wide
-median depth from the host BAM (Step 7). The ratio estimates copy number:
+median depth from the host BAM (Step 4). The ratio estimates copy number:
 
     copy_number = construct_median_depth / genome_median_depth
     ~0.5 = hemizygous single-copy
     ~1.0 = homozygous single-copy
 
-Cross-validates with junction count from Step 6 (2 junctions = single
-insertion site, >2 may indicate multi-copy).
+Cross-validates with candidate site count from Step 5 (1 site = single
+locus, >1 may indicate multi-locus).
 
 Output:
-    {outdir}/{sample}/s10_copynumber/copynumber.tsv
+    {outdir}/{sample}/s07_copynumber/copynumber.tsv
 """
 
 import argparse
@@ -23,7 +23,7 @@ from pathlib import Path
 
 def log(msg: str) -> None:
     """Print message to stderr."""
-    print(f"[s10_copynumber] {msg}", file=sys.stderr, flush=True)
+    print(f"[s07_copynumber] {msg}", file=sys.stderr, flush=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--construct-bam", type=Path, required=True,
                         help="Construct-mapped BAM (from s02_construct_map)")
     parser.add_argument("--host-bam", type=Path, required=True,
-                        help="Host-mapped BAM (from s07_host_map)")
+                        help="Host-mapped BAM (from s04_host_map)")
     parser.add_argument("--construct-ref", type=Path, required=True,
                         help="Construct reference FASTA")
     parser.add_argument("--host-ref", type=Path, required=True,
@@ -42,8 +42,8 @@ def parse_args() -> argparse.Namespace:
                         help="Base output directory")
     parser.add_argument("--sample-name", type=str, required=True,
                         help="Sample name for output file naming")
-    parser.add_argument("--junctions", type=Path, required=True,
-                        help="Junctions TSV from s06_junction")
+    parser.add_argument("--site-stats", type=Path, default=None,
+                        help="s05 stats file for site count cross-validation (optional)")
     return parser.parse_args()
 
 
@@ -152,17 +152,20 @@ def get_host_median_depth(bam: Path, max_positions: int = 1_000_000) -> tuple[fl
     return float(median), len(depths)
 
 
-def count_junctions(junctions_path: Path) -> int:
-    """Count the number of junction rows in junctions.tsv (excluding header)."""
-    if not junctions_path.exists():
+def count_candidate_sites(site_stats: Path | None) -> int:
+    """Count CANDIDATE sites from s05 stats file.
+
+    Reads s05_stats.txt and counts lines with verdict=CANDIDATE.
+    Returns 0 if no stats file provided or not found.
+    """
+    if site_stats is None or not site_stats.exists():
         return 0
 
     count = 0
-    with open(junctions_path) as fh:
-        for i, line in enumerate(fh):
-            if i == 0:
-                continue  # skip header
-            if line.strip():
+    with open(site_stats) as fh:
+        for line in fh:
+            parts = line.strip().split("\t", 1)
+            if len(parts) == 2 and parts[0].endswith("_verdict") and parts[1] == "CANDIDATE":
                 count += 1
     return count
 
@@ -185,38 +188,36 @@ def classify_copy_number(depth_ratio: float) -> tuple[float, str]:
         return round(depth_ratio, 1), f"multi-copy (~{depth_ratio:.1f}x)"
 
 
-def assess_junction_validation(junction_count: int, estimated_copies: float) -> str:
-    """Cross-validate copy number estimate with junction count.
+def assess_site_validation(site_count: int, estimated_copies: float) -> str:
+    """Cross-validate copy number estimate with candidate site count from s05.
 
-    2 junctions = single insertion site (consistent with single-copy)
-    >2 junctions = possible multi-copy or complex insertion
-    0-1 junctions = incomplete junction detection
+    1 site = single insertion locus (consistent with single/tandem copy)
+    >1 sites = possible multi-locus insertion
+    0 sites = no candidate sites found
 
     Returns:
         Validation status string.
     """
-    if junction_count == 0:
-        return "no_junctions_detected"
-    elif junction_count == 1:
-        return "partial_junction_only"
-    elif junction_count == 2:
+    if site_count == 0:
+        return "no_candidate_sites"
+    elif site_count == 1:
         if estimated_copies <= 1.5:
-            return "consistent_single_insertion"
+            return "consistent_single_locus"
         else:
-            return "depth_suggests_multicopy_but_single_locus"
+            return "depth_suggests_multicopy_single_locus"
     else:
-        # >2 junctions
+        # >1 sites
         if estimated_copies > 1.5:
-            return "consistent_multicopy"
+            return "consistent_multi_locus"
         else:
-            return "multiple_junctions_but_low_depth"
+            return "multiple_sites_but_low_depth"
 
 
 def determine_confidence(
     construct_median: float,
     host_median: float,
-    junction_count: int,
-    junction_validation: str,
+    site_count: int,
+    site_validation: str,
 ) -> str:
     """Determine overall confidence in the copy number estimate."""
     if host_median < 1.0:
@@ -224,9 +225,9 @@ def determine_confidence(
     if construct_median < 1.0:
         return "Low"  # No construct coverage
 
-    if junction_count >= 2 and "consistent" in junction_validation:
+    if site_count >= 1 and "consistent" in site_validation:
         return "High"
-    elif junction_count >= 1:
+    elif site_count >= 1:
         return "Medium"
     else:
         return "Low"
@@ -239,10 +240,10 @@ def run_copynumber(
     host_ref: Path,
     outdir: Path,
     sample_name: str,
-    junctions_path: Path,
+    site_stats: Path | None = None,
 ) -> None:
     """Estimate copy number and write results."""
-    step_dir = outdir / sample_name / "s10_copynumber"
+    step_dir = outdir / sample_name / "s07_copynumber"
     step_dir.mkdir(parents=True, exist_ok=True)
 
     copynumber_tsv = step_dir / "copynumber.tsv"
@@ -253,7 +254,6 @@ def run_copynumber(
         ("Host BAM", host_bam),
         ("Construct ref", construct_ref),
         ("Host ref", host_ref),
-        ("Junctions TSV", junctions_path),
     ]:
         if not path.exists():
             log(f"ERROR: {label} not found: {path}")
@@ -262,7 +262,8 @@ def run_copynumber(
     log(f"Sample: {sample_name}")
     log(f"Construct BAM: {construct_bam}")
     log(f"Host BAM: {host_bam}")
-    log(f"Junctions: {junctions_path}")
+    if site_stats:
+        log(f"Site stats: {site_stats}")
 
     # Calculate construct median depth
     log("Calculating construct median depth...")
@@ -289,16 +290,16 @@ def run_copynumber(
     estimated_copies, copy_description = classify_copy_number(depth_ratio)
     log(f"  Estimated copies: {estimated_copies} ({copy_description})")
 
-    # Count junctions and cross-validate
-    junction_count = count_junctions(junctions_path)
-    log(f"  Junction count: {junction_count}")
+    # Count candidate sites and cross-validate
+    site_count = count_candidate_sites(site_stats)
+    log(f"  Candidate site count: {site_count}")
 
-    junction_validation = assess_junction_validation(junction_count, estimated_copies)
-    log(f"  Junction validation: {junction_validation}")
+    site_validation = assess_site_validation(site_count, estimated_copies)
+    log(f"  Site validation: {site_validation}")
 
     # Determine confidence
     confidence = determine_confidence(
-        construct_median, host_median, junction_count, junction_validation,
+        construct_median, host_median, site_count, site_validation,
     )
     log(f"  Confidence: {confidence}")
 
@@ -310,8 +311,8 @@ def run_copynumber(
         "depth_ratio",
         "estimated_copies",
         "copy_description",
-        "junction_count",
-        "junction_validation",
+        "candidate_sites",
+        "site_validation",
         "confidence",
     ])
     row = "\t".join([
@@ -321,8 +322,8 @@ def run_copynumber(
         f"{depth_ratio:.4f}",
         f"{estimated_copies:.1f}",
         copy_description,
-        str(junction_count),
-        junction_validation,
+        str(site_count),
+        site_validation,
         confidence,
     ])
 
@@ -338,8 +339,8 @@ def run_copynumber(
     log(f"  Host median depth:      {host_median:.1f}x")
     log(f"  Depth ratio:            {depth_ratio:.3f}")
     log(f"  Estimated copies:       {estimated_copies:.1f} ({copy_description})")
-    log(f"  Junction count:         {junction_count}")
-    log(f"  Junction validation:    {junction_validation}")
+    log(f"  Candidate sites:        {site_count}")
+    log(f"  Site validation:        {site_validation}")
     log(f"  Confidence:             {confidence}")
     log("Done.")
 
@@ -353,7 +354,7 @@ def main() -> None:
         args.host_ref,
         args.outdir,
         args.sample_name,
-        args.junctions,
+        site_stats=args.site_stats,
     )
 
 

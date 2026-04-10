@@ -15,14 +15,17 @@ RedGene is an assembly-based Illumina WGS pipeline for characterizing transgenic
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate redgene
 
-# Run all steps for one sample
-python run_pipeline.py --sample rice_G281 --steps 1-6 --threads 16
+# Run core pipeline (QC → construct map → extract → host map → insert assembly)
+python run_pipeline.py --sample rice_G281 --steps 1-5 --threads 16
 
-# Run specific steps
-python run_pipeline.py --sample rice_G281 --steps 7,8,10 --threads 16
+# Run full pipeline (+ CRISPR indel + copy number)
+python run_pipeline.py --sample rice_G281 --steps 1-7 --threads 16
+
+# Re-run insert assembly only (skip slow NCBI remote BLAST)
+python run_pipeline.py --sample rice_G281 --steps 5 --threads 16 --no-remote-blast
 
 # Dry run (preview commands)
-python run_pipeline.py --sample rice_G281 --steps 1-6 --dry-run
+python run_pipeline.py --sample rice_G281 --steps 1-5 --dry-run
 
 # Run individual step scripts directly
 python scripts/s01_qc.py --r1 reads_R1.fq.gz --r2 reads_R2.fq.gz \
@@ -38,52 +41,47 @@ sbatch run_clean.sh   # Runs rice + all tomato samples end-to-end including visu
 ```bash
 # CRISPResso2-style editing profile
 python scripts/viz/plot_editing_profile.py \
-  --treatment-bam results/{sample}/s07_host_map/{sample}_host.bam \
-  --wt-bam results/tomato_WT/s07_host_map/tomato_WT_host.bam \
+  --treatment-bam results/{sample}/s04_host_map/{sample}_host.bam \
+  --wt-bam results/tomato_WT/s04_host_map/tomato_WT_host.bam \
   --host-ref db/SLM_r2.0.pmol.fasta \
-  --grna-targets results/{sample}/s08_indel/grna_targets.tsv \
-  --editing-sites results/{sample}/s08_indel/editing_sites.tsv \
+  --grna-targets results/{sample}/s06_indel/grna_targets.tsv \
+  --editing-sites results/{sample}/s06_indel/editing_sites.tsv \
   --sample-name {sample} --outdir results
 
 # Variant effect annotation (easyGWAS-style)
 python scripts/viz/plot_editing_effects.py \
-  --editing-sites results/{sample}/s08_indel/editing_sites.tsv \
+  --editing-sites results/{sample}/s06_indel/editing_sites.tsv \
   --gff db/SLM_r2.0.gff3.gz --host-ref db/SLM_r2.0.pmol.fasta \
-  --sample-name {sample} --outdir results
-
-# Junction gene context
-python scripts/viz/plot_junction_gene.py \
-  --junctions results/{sample}/s06_junction/junctions.tsv \
-  --gff db/SLM_r2.0.gff3.gz \
-  --contigs results/{sample}/s04_assembly/contigs.fasta \
   --sample-name {sample} --outdir results
 ```
 
 ## Architecture
 
-`run_pipeline.py` orchestrates 10 analysis steps by calling standalone scripts in `scripts/` via subprocess. Config is loaded from `config.yaml` (YAML with per-sample settings). Each step script accepts `--outdir`, `--sample-name`, and step-specific arguments. Inter-step dependencies are wired in `build_step_cmd()` in run_pipeline.py.
+`run_pipeline.py` orchestrates 7 analysis steps by calling standalone scripts in `scripts/` via subprocess. Config is loaded from `config.yaml` (YAML with per-sample settings). Each step script accepts `--outdir`, `--sample-name`, and step-specific arguments. Inter-step dependencies are wired in `build_step_cmd()` in run_pipeline.py.
 
 ### Pipeline flow and step dependencies
 ```
-[1] fastp QC → [2] bwa → construct BAM → [3] extract reads + mates
-  → [3b] WT homology filter (optional) → [4] SPAdes assembly
-  → [5] minimap2 contigs → host+construct PAF → [6] junction detection
-  → [7] bwa → host BAM (bottleneck: ~5-7h) → [8] CRISPR indel detection
-  → [10] copy number (depth ratio)
+[1] fastp QC → [2] bwa → construct+UniVec BAM → [3] extract reads + mates
+  → [3b] WT homology filter (optional)
+  → [4] bwa → host BAM (bottleneck: ~5-7h)
+  → [5] Targeted insert assembly + FP filtering  ★ CORE STEP
+  → [6] CRISPR indel detection (optional, needs WT)
+  → [7] copy number (depth ratio)
 ```
 
-Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5-7h per sample). Steps 8 and 10 require step 7 output. Step 8 also requires a WT sample BAM for comparison.
+Steps 1-3 are fast (<30 min each). Step 4 is the bottleneck (~5-7h per sample). Step 5 is the core: finds insertion sites from host BAM soft-clips, assembles inserts, annotates elements, and applies 4 post-assembly false positive filters (host-fraction, construct-flanking, chimeric, alternative-locus). Steps 6 and 7 are optional downstream analyses.
 
 ### Key scripts
 | Script | Purpose |
 |--------|---------|
-| `scripts/s03_extract_reads.py` | Most critical — extracts construct-hitting reads + mates |
+| `scripts/s03_extract_reads.py` | Extracts construct-hitting reads + mates |
 | `scripts/s03b_homology_filter.py` | WT-based filtering of host-derived false positives |
-| `scripts/s06_junction.py` | Chimeric contig detection → junction coordinates |
-| `scripts/s08_indel_detection.py` | CRISPR editing detection (pileup-based, NOT bcftools) |
+| `scripts/s05_insert_assembly.py` | **CORE** — targeted assembly + 4 FP filters (host-fraction, construct-flanking, chimeric, alt-locus) |
+| `scripts/s06_indel.py` | CRISPR editing detection (pileup-based, NOT bcftools) |
+| `scripts/s07_copynumber.py` | Depth-ratio copy number estimation |
 | `scripts/viz/plot_editing_profile.py` | CRISPResso2-style nucleotide quilt |
 | `scripts/viz/plot_editing_effects.py` | Variant effect annotation (frameshift/synonymous/etc.) |
-| `scripts/viz/plot_junction_gene.py` | Junction with gene/exon/CDS context from GFF3 |
+| `scripts/viz/plot_sample_summary.py` | 6-panel publication summary figure |
 
 ## Critical Design Decisions
 
@@ -92,10 +90,11 @@ Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5-7h per sample). 
 3. **-Q 0 base quality** in gRNA-guided mode: CRISPR indel anchor bases sometimes have Q18, below the Q20 default threshold
 4. **WT-based homology filtering** is essential: plant T-DNA constructs contain host-derived promoters (Ubi1, Act1, TA29) that create MAPQ=60 false positives
 5. **Element database** (131 EUginius elements) instead of requiring exact vector sequence — needs lower identity threshold (0.70 vs 0.90)
+6. **Alternative-locus filter** (Filter D): minimap2-based check that catches host genomic DNA mis-assembled via construct-element homology (e.g., CaMV 35S promoter copies in host genome)
 
 ## Config Format
 
-`config.yaml` defines samples with: `host_reference`, `construct_reference`, `reads.r1/r2`, optional `wt_control` (sample key for WT BAM), optional `grna` (path to gRNA file for step 8). See existing entries for examples.
+`config.yaml` defines samples with: `host_reference`, `construct_reference`, `reads.r1/r2`, optional `wt_control` (sample key for WT BAM), optional `grna` (path to gRNA file for step 6). See existing entries for examples.
 
 ## Reference Data (in db/, gitignored)
 
@@ -131,7 +130,7 @@ Steps 1-6 are fast (<30 min each). Step 7 is the bottleneck (~5-7h per sample). 
 ## SLURM Settings
 
 - Partition: `cpu-s1-pgl-0`, Account: `cpu-s1-pgl-0`
-- Resources: 16 CPUs, 64G RAM, 24h (for full pipeline with step 7)
+- Resources: 16 CPUs, 64G RAM, 24h (for full pipeline with step 4 host mapping)
 - See `run_clean.sh` for sbatch configuration
 
 ## Environment

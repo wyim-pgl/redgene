@@ -23,7 +23,7 @@ Color scheme (easyGWAS-inspired):
 
 Usage:
   python plot_editing_effects.py \
-    --editing-sites results/{sample}/s08_indel/editing_sites.tsv \
+    --editing-sites results/{sample}/s06_indel/editing_sites.tsv \
     --gff db/genome.gff3 \
     --host-ref db/host.fa \
     --sample-name {sample} \
@@ -635,7 +635,7 @@ def main() -> None:
     parser.add_argument("--outdir", type=Path, required=True)
     args = parser.parse_args()
 
-    out_dir = args.outdir / args.sample_name / "s08_indel"
+    out_dir = args.outdir / args.sample_name / "s06_indel"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Load editing sites

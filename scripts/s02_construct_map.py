@@ -22,6 +22,13 @@ def parse_args() -> argparse.Namespace:
                         help="Trimmed reverse reads (from s01_qc)")
     parser.add_argument("--construct-ref", type=Path, required=True,
                         help="Construct reference FASTA")
+    default_univec = Path(__file__).resolve().parent.parent / "db" / "univec_plant_vectors.fa"
+    parser.add_argument("--univec", type=Path, default=default_univec,
+                        help="UniVec plant vectors FASTA (default: db/univec_plant_vectors.fa, "
+                             "use --no-univec to disable)"
+    )
+    parser.add_argument("--no-univec", action="store_true",
+                        help="Disable UniVec plant vector inclusion")
     parser.add_argument("--outdir", type=Path, required=True,
                         help="Base output directory")
     parser.add_argument("--threads", type=int, default=8,
@@ -50,8 +57,40 @@ def index_reference(ref: Path) -> None:
         subprocess.run(["samtools", "faidx", str(ref)], check=True)
 
 
+def _build_combined_ref(construct_ref: Path, univec: Path | None,
+                        step_dir: Path) -> Path:
+    """Combine construct ref + UniVec plant vectors into a single FASTA.
+
+    Returns the path to use for BWA mapping (original if no UniVec,
+    combined file if UniVec provided).
+    """
+    if univec is None or not univec.exists():
+        return construct_ref
+
+    combined = step_dir / "construct_plus_univec.fa"
+    print(f"[s02_construct_map] Combining construct ref + UniVec plant vectors",
+          file=sys.stderr)
+    construct_text = construct_ref.read_text()
+    univec_text = univec.read_text()
+    with open(combined, "w") as out:
+        out.write(construct_text)
+        if not construct_text.endswith("\n"):
+            out.write("\n")
+        out.write(univec_text)
+
+    n_construct = sum(1 for line in construct_text.splitlines()
+                      if line.startswith(">"))
+    n_univec = sum(1 for line in univec_text.splitlines()
+                   if line.startswith(">"))
+    print(f"[s02_construct_map]   Construct: {n_construct} seqs, "
+          f"UniVec plant: {n_univec} seqs, "
+          f"Combined: {n_construct + n_univec} seqs", file=sys.stderr)
+    return combined
+
+
 def run_mapping(r1: Path, r2: Path, construct_ref: Path, outdir: Path,
-                threads: int, sample_name: str) -> None:
+                threads: int, sample_name: str,
+                univec: Path | None = None) -> None:
     """Map reads to construct, sort, index, and report stats."""
     # Create output directory
     step_dir = outdir / sample_name / "s02_construct_map"
@@ -68,15 +107,18 @@ def run_mapping(r1: Path, r2: Path, construct_ref: Path, outdir: Path,
             print(f"ERROR: {label} not found: {path}", file=sys.stderr)
             sys.exit(1)
 
+    # Build combined reference (construct + UniVec plant vectors)
+    mapping_ref = _build_combined_ref(construct_ref, univec, step_dir)
+
     # Index reference if needed
-    index_reference(construct_ref)
+    index_reference(mapping_ref)
 
     # Map with bwa mem, pipe to samtools sort
     print(f"[s02_construct_map] Mapping reads to construct: {sample_name}",
           file=sys.stderr)
     print(f"[s02_construct_map] R1: {r1}", file=sys.stderr)
     print(f"[s02_construct_map] R2: {r2}", file=sys.stderr)
-    print(f"[s02_construct_map] Reference: {construct_ref}", file=sys.stderr)
+    print(f"[s02_construct_map] Reference: {mapping_ref}", file=sys.stderr)
 
     rg_tag = f"@RG\\tID:{sample_name}\\tSM:{sample_name}\\tPL:ILLUMINA"
 
@@ -85,7 +127,7 @@ def run_mapping(r1: Path, r2: Path, construct_ref: Path, outdir: Path,
         "bwa", "mem",
         "-t", str(threads),
         "-R", rg_tag,
-        str(construct_ref),
+        str(mapping_ref),
         str(r1),
         str(r2),
     ]
@@ -203,8 +245,9 @@ def run_mapping(r1: Path, r2: Path, construct_ref: Path, outdir: Path,
 
 def main() -> None:
     args = parse_args()
+    univec = None if args.no_univec else args.univec
     run_mapping(args.r1, args.r2, args.construct_ref, args.outdir,
-                args.threads, args.sample_name)
+                args.threads, args.sample_name, univec=univec)
 
 
 if __name__ == "__main__":

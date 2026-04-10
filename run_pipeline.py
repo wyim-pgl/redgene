@@ -3,6 +3,15 @@
 
 Runs the pipeline steps sequentially for each sample defined in config.yaml.
 Each step invokes the corresponding script in scripts/ via subprocess.
+
+Pipeline (7 steps):
+  1. QC + trim (fastp)
+  2. Map reads to construct + UniVec (bwa mem)
+  3. Extract construct-hitting reads + mates
+  4. Map all reads to host genome (bwa mem)  [bottleneck: 5-7h]
+  5. Targeted insert assembly + FP filtering  [CORE STEP]
+  6. CRISPR indel detection (optional, needs WT control)
+  7. Copy number estimation
 """
 
 from __future__ import annotations
@@ -24,28 +33,20 @@ STEP_SCRIPTS: dict[str, str] = {
     "1": "scripts/s01_qc.py",
     "2": "scripts/s02_construct_map.py",
     "3": "scripts/s03_extract_reads.py",
-    "4": "scripts/s04_assembly.py",
-    "5": "scripts/s05_contig_map.py",
-    "6": "scripts/s06_junction.py",
-    "7": "scripts/s07_host_map.py",
-    "8": "scripts/s08_indel_detection.py",
-    "9": "scripts/s09_targeted_assembly.py",
-    "10": "scripts/s10_copynumber.py",
-    "11": "scripts/s11_multiqc.py",
+    "4": "scripts/s04_host_map.py",
+    "5": "scripts/s05_insert_assembly.py",
+    "6": "scripts/s06_indel.py",
+    "7": "scripts/s07_copynumber.py",
 }
 
 STEP_NAMES: dict[str, str] = {
     "1": "QC + trim (fastp)",
-    "2": "Map reads to construct (bwa mem)",
+    "2": "Map reads to construct + UniVec (bwa mem)",
     "3": "Extract construct-hitting reads + mates",
-    "4": "Local assembly (SPAdes)",
-    "5": "Map contigs to host (minimap2)",
-    "6": "Chimeric contig / junction detection",
-    "7": "Map all reads to host (bwa mem)",
-    "8": "CRISPR indel detection (treatment vs WT)",
-    "9": "Targeted insert assembly (Pilon gap fill)",
-    "10": "Copy number estimation",
-    "11": "MultiQC report generation",
+    "4": "Map all reads to host (bwa mem)",
+    "5": "Targeted insert assembly + FP filtering",
+    "6": "CRISPR indel detection (treatment vs WT)",
+    "7": "Copy number estimation",
 }
 
 # ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ log = logging.getLogger("pipeline")
 
 
 def parse_steps(step_spec: str) -> list[str]:
-    """Parse a step specification like '1-6', '1,2,5', '1-6,10' into a sorted
+    """Parse a step specification like '1-5', '1,2,5', '1-5,7' into a sorted
     list of step keys.  Only steps present in STEP_SCRIPTS are accepted."""
     steps: set[str] = set()
     for part in step_spec.split(","):
@@ -135,6 +136,7 @@ def build_step_cmd(
     outdir: Path,
     threads: int,
     base_dir: Path,
+    no_remote_blast: bool = False,
 ) -> list[str]:
     """Build the command-line arguments for a specific step."""
     script = str(base_dir / STEP_SCRIPTS[step])
@@ -148,10 +150,8 @@ def build_step_cmd(
     s01 = outdir / sname / "s01_qc"
     s02 = outdir / sname / "s02_construct_map"
     s03 = outdir / sname / "s03_extract"
-    s04 = outdir / sname / "s04_assembly"
-    s05 = outdir / sname / "s05_contig_map"
-    s06 = outdir / sname / "s06_junction"
-    s07 = outdir / sname / "s07_host_map"
+    s04 = outdir / sname / "s04_host_map"
+    s05 = outdir / sname / "s05_insert_assembly"
 
     reads = sample_cfg.get("reads", {})
     construct_ref = rp(sample_cfg["construct_reference"])
@@ -180,54 +180,43 @@ def build_step_cmd(
                 "--threads", str(threads)]
     elif step == "4":
         return [sys.executable, script,
-                "--r1", str(s03 / f"{sname}_construct_R1.fq.gz"),
-                "--r2", str(s03 / f"{sname}_construct_R2.fq.gz"),
-                "--outdir", str(outdir),
-                "--threads", str(threads),
-                "--sample-name", sname]
-    elif step == "5":
-        return [sys.executable, script,
-                "--contigs", str(s04 / "contigs.fasta"),
-                "--host-ref", host_ref,
-                "--construct-ref", construct_ref,
-                "--outdir", str(outdir),
-                "--threads", str(threads),
-                "--sample-name", sname]
-    elif step == "6":
-        cmd = [sys.executable, script,
-                "--host-paf", str(s05 / f"{sname}_contigs_to_host.paf"),
-                "--construct-paf", str(s05 / f"{sname}_contigs_to_construct.paf"),
-                "--contigs", str(s04 / "contigs.fasta"),
-                "--outdir", str(outdir),
-                "--sample-name", sname]
-        # Lower thresholds for element_db (fragmented references):
-        # - identity: element_db alignments ~0.84, below default 0.90
-        # - coverage: element_db doesn't cover full vector, so combined
-        #   host+construct coverage on chimeric contigs is lower
-        if "element_db" in construct_ref or "_combined_db" in construct_ref:
-            cmd.extend(["--min-identity", "0.70",
-                         "--min-coverage-frac", "0.30"])
-        return cmd
-    elif step == "7":
-        return [sys.executable, script,
                 "--r1", str(s01 / f"{sname}_R1.fq.gz"),
                 "--r2", str(s01 / f"{sname}_R2.fq.gz"),
                 "--host-ref", host_ref,
                 "--outdir", str(outdir),
                 "--threads", str(threads),
                 "--sample-name", sname]
-    elif step == "8":
-        # Step 8 needs a WT BAM for comparison - look for it in config
+    elif step == "5":
+        # Check for WT-filtered reads (s03b output), fall back to s03
+        s03_r1 = s03 / f"{sname}_filtered_R1.fq.gz"
+        s03_r2 = s03 / f"{sname}_filtered_R2.fq.gz"
+        if not s03_r1.exists():
+            s03_r1 = s03 / f"{sname}_construct_R1.fq.gz"
+            s03_r2 = s03 / f"{sname}_construct_R2.fq.gz"
+        cmd = [sys.executable, script,
+               "--host-bam", str(s04 / f"{sname}_host.bam"),
+               "--host-ref", host_ref,
+               "--element-db", construct_ref,
+               "--construct-ref", construct_ref,
+               "--s03-r1", str(s03_r1),
+               "--s03-r2", str(s03_r2),
+               "--outdir", str(outdir),
+               "--sample-name", sname,
+               "--threads", str(threads)]
+        if no_remote_blast:
+            cmd.append("--no-remote-blast")
+        return cmd
+    elif step == "6":
+        # Step 6 needs a WT BAM for comparison
         wt_sample = sample_cfg.get("wt_control")
         if wt_sample is None:
-            # Try to auto-detect WT sample from config
-            log.warning("No wt_control specified for %s; step 8 may fail", sname)
-            wt_bam = Path("/dev/null")  # placeholder
+            log.warning("No wt_control specified for %s; step 6 may fail", sname)
+            wt_bam = Path("/dev/null")
         else:
-            wt_bam = outdir / wt_sample / "s07_host_map" / f"{wt_sample}_host.bam"
+            wt_bam = outdir / wt_sample / "s04_host_map" / f"{wt_sample}_host.bam"
 
         cmd = [sys.executable, script,
-               "--treatment-bam", str(s07 / f"{sname}_host.bam"),
+               "--treatment-bam", str(s04 / f"{sname}_host.bam"),
                "--wt-bam", str(wt_bam),
                "--host-ref", host_ref,
                "--outdir", str(outdir),
@@ -238,43 +227,21 @@ def build_step_cmd(
         if grna:
             cmd.extend(["--grna", grna])
 
-        # Add junctions if available
-        junctions = s06 / "junctions.tsv"
-        if junctions.exists():
-            cmd.extend(["--junctions", str(junctions)])
-
         return cmd
-    elif step == "9":
-        # Check for WT-filtered reads (s03b output), fall back to s03
-        s03_r1 = s03 / f"{sname}_filtered_R1.fq.gz"
-        s03_r2 = s03 / f"{sname}_filtered_R2.fq.gz"
-        if not s03_r1.exists():
-            s03_r1 = s03 / f"{sname}_construct_R1.fq.gz"
-            s03_r2 = s03 / f"{sname}_construct_R2.fq.gz"
-        return [sys.executable, script,
-               "--junctions", str(s06 / "junctions.tsv"),
-               "--host-bam", str(s07 / f"{sname}_host.bam"),
-               "--host-ref", host_ref,
-               "--element-db", construct_ref,
-               "--s03-r1", str(s03_r1),
-               "--s03-r2", str(s03_r2),
-               "--outdir", str(outdir),
-               "--sample-name", sname,
-               "--threads", str(threads)]
-    elif step == "10":
-        return [sys.executable, script,
+    elif step == "7":
+        # Copy number: junctions optional (use s05 site count if available)
+        cmd = [sys.executable, script,
                 "--construct-bam", str(s02 / f"{sname}_construct.bam"),
-                "--host-bam", str(s07 / f"{sname}_host.bam"),
+                "--host-bam", str(s04 / f"{sname}_host.bam"),
                 "--construct-ref", construct_ref,
                 "--host-ref", host_ref,
                 "--outdir", str(outdir),
-                "--sample-name", sname,
-                "--junctions", str(s06 / "junctions.tsv")]
-    elif step == "11":
-        return [sys.executable, script,
-                "--outdir", str(outdir),
-                "--sample-name", sname,
-                "--title", f"RedGene Report — {sname}"]
+                "--sample-name", sname]
+        # Pass s05 stats for cross-validation if available
+        s05_stats = s05 / "s05_stats.txt"
+        if s05_stats.exists():
+            cmd.extend(["--site-stats", str(s05_stats)])
+        return cmd
     else:
         sys.exit(f"ERROR: No command builder for step {step}")
 
@@ -287,6 +254,7 @@ def run_step(
     threads: int,
     base_dir: Path,
     dry_run: bool,
+    no_remote_blast: bool = False,
 ) -> None:
     """Execute a single pipeline step for one sample."""
     script = base_dir / STEP_SCRIPTS[step]
@@ -295,7 +263,8 @@ def run_step(
     if not script.exists() and not dry_run:
         sys.exit(f"ERROR: Script not found: {script}")
 
-    cmd = build_step_cmd(step, sample_key, sample_cfg, outdir, threads, base_dir)
+    cmd = build_step_cmd(step, sample_key, sample_cfg, outdir, threads, base_dir,
+                         no_remote_blast=no_remote_blast)
 
     log.info("Step %s: %s  [%s]", step, label, sample_key)
     if dry_run:
@@ -322,9 +291,10 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python run_pipeline.py                          # all samples, steps 1-6\n"
+            "  python run_pipeline.py                          # all samples, steps 1-5\n"
             "  python run_pipeline.py --sample rice_G281       # one sample\n"
-            "  python run_pipeline.py --steps 1-6,10           # core + copy number\n"
+            "  python run_pipeline.py --steps 1-5,7            # core + copy number\n"
+            "  python run_pipeline.py --steps 5                # re-run insert assembly\n"
             "  python run_pipeline.py --dry-run                # preview commands\n"
         ),
     )
@@ -337,8 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sample key to process (default: all samples in config)",
     )
     parser.add_argument(
-        "--steps", type=str, default="1-6",
-        help="Steps to run, e.g. '1-6', '1-6,7,10' (default: 1-6)",
+        "--steps", type=str, default="1-5",
+        help="Steps to run, e.g. '1-5', '1-7', '5' (default: 1-5)",
     )
     parser.add_argument(
         "--threads", type=int, default=None,
@@ -351,6 +321,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Print commands without executing them",
+    )
+    parser.add_argument(
+        "--no-remote-blast", action="store_true",
+        help="Skip remote NCBI nt BLAST in step 5 (use local element_db only)",
     )
     return parser
 
@@ -412,6 +386,7 @@ def main() -> None:
                 threads=threads,
                 base_dir=base_dir,
                 dry_run=args.dry_run,
+                no_remote_blast=args.no_remote_blast,
             )
 
         log.info("=== Sample %s: all steps completed ===\n", sample_key)

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Step 7: Map all trimmed reads to the host reference genome with bwa mem.
+"""Step 4: Map all trimmed reads to the host reference genome with bwa mem.
 
 Maps paired-end reads to the host genome, sorts and indexes the BAM,
 generates flagstat, and calculates genome-wide depth statistics.
-These results are used downstream for copy number estimation (Step 10).
+These results are used downstream for copy number estimation (Step 7).
 """
 
 import argparse
@@ -15,7 +15,7 @@ from pathlib import Path
 
 def log(msg: str) -> None:
     """Print message to stderr."""
-    print(f"[s07_host_map] {msg}", file=sys.stderr, flush=True)
+    print(f"[s04_host_map] {msg}", file=sys.stderr, flush=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,7 +58,7 @@ def run_mapping(r1: Path, r2: Path, host_ref: Path, outdir: Path,
                 threads: int, sample_name: str) -> None:
     """Map reads to host genome, sort, index, and report stats."""
     # Create output directory
-    step_dir = outdir / sample_name / "s07_host_map"
+    step_dir = outdir / sample_name / "s04_host_map"
     step_dir.mkdir(parents=True, exist_ok=True)
 
     bam_file = step_dir / f"{sample_name}_host.bam"

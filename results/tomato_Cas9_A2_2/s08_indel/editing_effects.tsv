@@ -1,5 +1,0 @@
-chrom	pos	type	size	indel_seq	freq	dp	count	zygosity	effect	gene	aa_change	details	grna_idx	site_type
-SLM_r2.0ch04	2635440	deletion	9	GTGAGCCAT	0.16666666666666666	6	1	low-frequency	in-frame_deletion	LOC101257358	del 3aa (GEPW)	In-frame 9bp deletion removes 3 amino acid(s) at position 236 in LOC101257358	1	on-target
-SLM_r2.0ch04	2635443	deletion	1	A	0.3333333333333333	6	2	heterozygous	frameshift	LOC101257358		Frameshift deletion of 1bp (A) in LOC101257358	1	on-target
-SLM_r2.0ch04	2635444	insertion	1	G	0.16666666666666666	6	1	low-frequency	frameshift	LOC101257358		Frameshift insertion of 1bp (G) in LOC101257358	1	on-target
-SLM_r2.0ch04	2635445	deletion	1	C	0.16666666666666666	6	1	low-frequency	frameshift	LOC101257358		Frameshift deletion of 1bp (C) in LOC101257358	1	on-target

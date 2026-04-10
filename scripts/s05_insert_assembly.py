@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step 9 — Targeted insert assembly via soft-clip junction detection,
+"""Step 5 — Targeted insert assembly via soft-clip junction detection,
 strand-aware k-mer extension, and Pilon iterative gap filling.
 
 Pipeline:
@@ -21,7 +21,7 @@ Outputs:
   - element_annotation.tsv — BLAST hits along insert
   - border_hits.tsv      — T-DNA border motif locations
   - insert_report.txt    — human-readable linear map
-  - s09_stats.txt        — convergence and assembly statistics
+  - s05_stats.txt        — convergence and assembly statistics
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ import pysam
 # Logging
 # ---------------------------------------------------------------------------
 
-STEP = "s09_targeted_assembly"
+STEP = "s05_insert_assembly"
 
 # ---------------------------------------------------------------------------
 # Host-endogenous exclusion thresholds (used in classify_site_tiers)
@@ -63,6 +63,40 @@ HOST_ENDO_T2_QCOVS = 30.0    # Tier 2: min query coverage %
 # host at <95% is too noisy to trust as evidence of host origin.
 CLIP_HOST_PIDENT = 95.0       # Per-clip host check: min % identity
 CLIP_HOST_MIN_LEN = 30        # Per-clip host check: min alignment length
+
+# Post-assembly host-fraction filter: BLAST assembled insert vs host genome.
+# A chimeric assembly artifact has high host fraction AND only a tiny non-host
+# gap.  True insertions also have high host fraction (junction contigs span
+# host→T-DNA→host), but the non-host gap is large (≥1 kb of T-DNA).
+# Both conditions must hold to call FALSE_POSITIVE:
+#   host_fraction ≥ INSERT_HOST_FRACTION  AND  largest_gap < INSERT_MIN_FOREIGN_GAP
+# Example: insertion_22966 = 96% host, 461bp gap → FP.
+#          insertion_32461 = 87% host, 2800bp gap → true CANDIDATE.
+INSERT_HOST_FRACTION = 0.80     # host coverage threshold
+INSERT_MIN_FOREIGN_GAP = 500    # non-host gap must be ≥ this to be real T-DNA
+INSERT_HOST_MIN_PIDENT = 90.0   # min identity for host alignment to count
+
+# Construct-flanking filter: if a construct reference entry contains host
+# genomic DNA at its ends (common when constructs are cloned with flanking),
+# sites at those host coordinates are false detections.
+CONSTRUCT_FLANK_PIDENT = 95.0   # min identity for construct→host flanking hit
+CONSTRUCT_FLANK_MIN_LEN = 50    # min alignment length
+CONSTRUCT_FLANK_SLOP = 500      # bp slop when checking site overlap
+
+# Multi-locus chimeric filter: if an assembled insert's host-aligned portions
+# map to ≥2 different chromosomes (besides the site's own), the assembly
+# merged reads from unrelated loci sharing element homology.
+# Uses strict identity (≥98%) to distinguish actual chimeric DNA pieces from
+# low-level element homologies (e.g., 35S promoter paralogs at 80-90%).
+CHIMERIC_MIN_PIDENT = 98.0      # strict identity for chimeric detection
+CHIMERIC_MIN_OFFTARGET_BP = 150 # min bp on off-target chromosome to count
+
+# Filter D: Alternative-locus mapping — assembled insert maps as single
+# alignment to a different host locus, indicating host genomic DNA
+# mis-assembled via construct-element homology.
+ALTLOCUS_MIN_COVERAGE = 0.70   # min fraction of insert covered by primary alignment
+ALTLOCUS_MIN_MAPQ = 20         # min mapping quality
+ALTLOCUS_SLOP = 10_000         # bp: within this distance = same locus (don't flag)
 
 
 def log(msg: str) -> None:
@@ -400,7 +434,7 @@ def find_softclip_junctions(
 
     # Step 3: Pair forward/reverse clusters at same position
     sites: list[InsertionSite] = []
-    site_idx = 0
+    used_ids: set[str] = set()
 
     for chrom in set(list(right_clips.keys()) + list(left_clips.keys())):
         r_clusters = _cluster(right_clips.get(chrom, []), cluster_window)
@@ -429,7 +463,14 @@ def find_softclip_junctions(
                 if len(r_consensus) < min_clip or len(l_consensus) < min_clip:
                     continue
 
-                site_idx += 1
+                anchor_pos = min(r_pos, l_pos)
+                sid = f"insertion_{chrom}_{anchor_pos}"
+                if sid in used_ids:
+                    suffix = 2
+                    while f"{sid}_{suffix}" in used_ids:
+                        suffix += 1
+                    sid = f"{sid}_{suffix}"
+                used_ids.add(sid)
                 jc_5p = JunctionCluster(
                     host_chr=chrom, position=r_pos,
                     clip_direction="right",
@@ -444,7 +485,7 @@ def find_softclip_junctions(
                 )
 
                 site = InsertionSite(
-                    site_id=f"insertion_{site_idx}",
+                    site_id=sid,
                     host_chr=chrom,
                     junction_5p=jc_5p,
                     junction_3p=jc_3p,
@@ -459,7 +500,13 @@ def find_softclip_junctions(
                 if len(r_seqs) >= 5:
                     r_consensus = _build_consensus(r_seqs, "right")
                     if len(r_consensus) >= min_clip:
-                        site_idx += 1
+                        sid = f"insertion_{chrom}_{r_pos}"
+                        if sid in used_ids:
+                            suffix = 2
+                            while f"{sid}_{suffix}" in used_ids:
+                                suffix += 1
+                            sid = f"{sid}_{suffix}"
+                        used_ids.add(sid)
                         jc_5p = JunctionCluster(
                             host_chr=chrom, position=r_pos,
                             clip_direction="right",
@@ -467,7 +514,7 @@ def find_softclip_junctions(
                             n_reads=len(r_seqs),
                         )
                         site = InsertionSite(
-                            site_id=f"insertion_{site_idx}",
+                            site_id=sid,
                             host_chr=chrom,
                             junction_5p=jc_5p,
                             seed_5p=r_consensus,
@@ -484,7 +531,13 @@ def find_softclip_junctions(
                 continue
             l_consensus = _build_consensus(l_seqs, "left")
             if len(l_consensus) >= min_clip:
-                site_idx += 1
+                sid = f"insertion_{chrom}_{l_pos}"
+                if sid in used_ids:
+                    suffix = 2
+                    while f"{sid}_{suffix}" in used_ids:
+                        suffix += 1
+                    sid = f"{sid}_{suffix}"
+                used_ids.add(sid)
                 jc_3p = JunctionCluster(
                     host_chr=chrom, position=l_pos,
                     clip_direction="left",
@@ -492,7 +545,7 @@ def find_softclip_junctions(
                     n_reads=len(l_seqs),
                 )
                 site = InsertionSite(
-                    site_id=f"insertion_{site_idx}",
+                    site_id=sid,
                     host_chr=chrom,
                     junction_3p=jc_3p,
                     seed_3p=l_consensus,
@@ -680,7 +733,7 @@ def _filter_host_endogenous(
         stderr=subprocess.DEVNULL,
     )
     if result.returncode != 0:
-        log("  WARNING: host-endogenous BLAST failed (rc={result.returncode})")
+        log(f"  WARNING: host-endogenous BLAST failed (rc={result.returncode})")
         return blast_db, exclude_ids
 
     if host_hits_out.exists():
@@ -730,7 +783,7 @@ def _filter_host_endogenous(
     else:
         log("  Host-endogenous exclusion: no entries matched host genome")
 
-    # Persist to workdir so Phase 4 can use for FALSE_POSITIVE post-filter
+    # Write for debugging/auditability (Phase 4 receives exclude_ids directly)
     persist_path = workdir / "host_endogenous_ids.txt"
     with open(persist_path, "w") as fh:
         for eid in sorted(exclude_ids):
@@ -747,7 +800,7 @@ def classify_site_tiers(
     threads: int = 4,
     min_identity: float = 80.0,
     min_aln_len: int = 20,
-) -> tuple[list[InsertionSite], list[InsertionSite], list[TierResult]]:
+) -> tuple[list[InsertionSite], list[InsertionSite], list[TierResult], set[str]]:
     """Classify sites by transgene-positive identification.
 
     BLASTs all clip sequences against transgene_db (element DB + UniVec)
@@ -756,10 +809,10 @@ def classify_site_tiers(
     TRANSGENE-POSITIVE: at least one clip hits transgene_db → assemble
     TRANSGENE-NEGATIVE: no clip hits transgene_db → skip
 
-    Returns (assembly_sites, skip_sites, all_tier_results).
+    Returns (assembly_sites, skip_sites, all_tier_results, host_endo_ids).
     """
     if not sites:
-        return [], [], []
+        return [], [], [], set()
 
     tier_dir = workdir / "_tier_classification"
     tier_dir.mkdir(parents=True, exist_ok=True)
@@ -860,6 +913,10 @@ def classify_site_tiers(
     # BLAST each transgene-hit clip back against the host genome with
     # blastn-short. If the clip ALSO hits the host at >=95% identity over
     # >=30bp, it's an endogenous conserved sequence — drop it.
+    host_blast_db_exists = (
+        host_ref.with_suffix(".fa.ndb").exists()
+        or Path(str(host_ref) + ".ndb").exists()
+    )
     if hits and host_blast_db_exists:
         hit_clip_fa = tier_dir / "hit_clips.fa"
         with open(hit_clip_fa, "w") as fh:
@@ -899,7 +956,7 @@ def classify_site_tiers(
 
         if host_endogenous_clips:
             log(f"  Per-clip host filter: dropping {len(host_endogenous_clips)} "
-                f"clips that match host (pident>=95%, length>=30bp)")
+                f"clips that match host (pident>={CLIP_HOST_PIDENT}%, length>={CLIP_HOST_MIN_LEN}bp)")
             for qname, (pid, ln) in sorted(host_endogenous_clips.items()):
                 hit = hits[qname]
                 log(f"    dropped: {qname} → {hit['element']} "
@@ -1035,7 +1092,7 @@ def legacy_junctions_to_sites(
         by_chr.setdefault(j.host_chr, []).append(j)
 
     sites: list[InsertionSite] = []
-    site_idx = 0
+    used_ids: set[str] = set()
 
     for chrom, juncs in by_chr.items():
         juncs.sort(key=lambda j: j.junction_pos_host)
@@ -1053,9 +1110,16 @@ def legacy_junctions_to_sites(
                     paired_idx = k
                     break
 
-            site_idx += 1
+            anchor_pos = j1.junction_pos_host
+            sid = f"insertion_{chrom}_{anchor_pos}"
+            if sid in used_ids:
+                suffix = 2
+                while f"{sid}_{suffix}" in used_ids:
+                    suffix += 1
+                sid = f"{sid}_{suffix}"
+            used_ids.add(sid)
             site = InsertionSite(
-                site_id=f"insertion_{site_idx}",
+                site_id=sid,
                 host_chr=chrom,
             )
 
@@ -1189,12 +1253,13 @@ def extract_candidate_reads(
 
     # Extract reads from junction regions
     region_bam = tmp_dir / f"_{site.site_id}_regions.bam"
-    subprocess.run(
-        ["samtools", "view", "-b", "-@", str(threads),
-         str(host_bam)] + regions,
-        stdout=open(region_bam, "wb"),
-        stderr=subprocess.DEVNULL, check=True,
-    )
+    with open(region_bam, "wb") as bam_fh:
+        subprocess.run(
+            ["samtools", "view", "-b", "-@", str(threads),
+             str(host_bam)] + regions,
+            stdout=bam_fh,
+            stderr=subprocess.DEVNULL, check=True,
+        )
 
     # Phase reads by allele using pysam
     insertion_reads: set[str] = set()
@@ -1277,20 +1342,22 @@ def extract_candidate_reads(
 
     # Extract both mates from full BAM
     both_mates_bam = tmp_dir / f"_{site.site_id}_mates.bam"
-    subprocess.run(
-        ["samtools", "view", "-b", "-N", str(namelist),
-         "-@", str(threads), str(host_bam)],
-        stdout=open(both_mates_bam, "wb"),
-        stderr=subprocess.DEVNULL, check=True,
-    )
+    with open(both_mates_bam, "wb") as bam_fh:
+        subprocess.run(
+            ["samtools", "view", "-b", "-N", str(namelist),
+             "-@", str(threads), str(host_bam)],
+            stdout=bam_fh,
+            stderr=subprocess.DEVNULL, check=True,
+        )
 
     # Also get all-unmapped pairs (both mates unmapped, flag 12)
     unmapped_bam = tmp_dir / f"_{site.site_id}_unmapped.bam"
-    subprocess.run(
-        ["samtools", "view", "-b", "-f", "12", "-@", str(threads), str(host_bam)],
-        stdout=open(unmapped_bam, "wb"),
-        stderr=subprocess.DEVNULL, check=True,
-    )
+    with open(unmapped_bam, "wb") as bam_fh:
+        subprocess.run(
+            ["samtools", "view", "-b", "-f", "12", "-@", str(threads), str(host_bam)],
+            stdout=bam_fh,
+            stderr=subprocess.DEVNULL, check=True,
+        )
 
     # Merge
     merged_bam = tmp_dir / f"_{site.site_id}_merged.bam"
@@ -2200,7 +2267,7 @@ def assemble_insert(
     element_db: Path,
     workdir: Path,
     threads: int = 4,
-    max_rounds: int = 15,
+    max_rounds: int = 8,
     ext_k: int = 15,
     recruit_k: int = 25,
     gap_size: int = 1000,
@@ -2649,6 +2716,7 @@ def annotate_insert(
     element_db: Path,
     output_dir: Path,
     sample_name: str,
+    no_remote_blast: bool = False,
 ) -> tuple[Path, Path]:
     """Annotate insert with local element_db BLAST + remote NCBI nt BLAST.
 
@@ -2663,7 +2731,11 @@ def annotate_insert(
     local_hits = _run_local_blast(insert_fasta, element_db, output_dir)
 
     # ---- Remote BLAST (NCBI nt) ----
-    remote_hits = _run_remote_blast(insert_fasta, output_dir)
+    if no_remote_blast:
+        log("  Remote BLAST skipped (--no-remote-blast)")
+        remote_hits = []
+    else:
+        remote_hits = _run_remote_blast(insert_fasta, output_dir)
 
     # ---- Merge ----
     merged = _merge_annotations(local_hits, remote_hits)
@@ -2712,6 +2784,274 @@ def annotate_insert(
     return annotation_tsv, border_tsv
 
 
+# ---------------------------------------------------------------------------
+# Post-assembly host-fraction filter
+# ---------------------------------------------------------------------------
+
+def _find_construct_flanking_regions(
+    construct_ref: Path,
+    host_ref: Path,
+    workdir: Path,
+    threads: int = 4,
+) -> list[tuple[str, int, int]]:
+    """BLAST construct reference vs host to find host-flanking regions.
+
+    Some construct references include host genomic flanking DNA at their ends
+    (e.g., rice_G281 has 201bp of Chr11 at positions 8758-8958).  Soft-clip
+    sites at these host coordinates are false detections.
+
+    Returns list of (host_chr, start, end) tuples for flanking regions.
+    """
+    if not construct_ref.exists():
+        return []
+
+    blast_out = workdir / "_construct_vs_host_flanking.tsv"
+    result = subprocess.run(
+        ["blastn", "-task", "megablast",
+         "-query", str(construct_ref), "-db", str(host_ref),
+         "-outfmt", "6 qseqid qlen qstart qend sseqid sstart send pident length",
+         "-evalue", "1e-20", "-max_target_seqs", "5",
+         "-num_threads", str(threads),
+         "-out", str(blast_out)],
+        stderr=subprocess.DEVNULL,
+    )
+    if result.returncode != 0 or not blast_out.exists():
+        return []
+
+    flanking: list[tuple[str, int, int]] = []
+    with open(blast_out) as fh:
+        for line in fh:
+            cols = line.strip().split("\t")
+            if len(cols) < 9:
+                continue
+            qlen = int(cols[1])
+            q_start = int(cols[2])
+            q_end = int(cols[3])
+            s_chr = cols[4]
+            s_start = int(cols[5])
+            s_end = int(cols[6])
+            pident = float(cols[7])
+            aln_len = int(cols[8])
+
+            if pident < CONSTRUCT_FLANK_PIDENT or aln_len < CONSTRUCT_FLANK_MIN_LEN:
+                continue
+
+            # Only count hits near the ends of a construct entry (flanking),
+            # not internal matches (e.g., host-derived promoters handled
+            # separately by _filter_host_endogenous).
+            near_start = q_start <= 100
+            near_end = q_end >= qlen - 100
+            if not (near_start or near_end):
+                continue
+
+            lo = min(s_start, s_end)
+            hi = max(s_start, s_end)
+            flanking.append((s_chr, lo, hi))
+
+    if flanking:
+        log(f"  Construct-flanking regions found: {len(flanking)}")
+        for chrom, lo, hi in flanking:
+            log(f"    {chrom}:{lo:,}-{hi:,} ({hi - lo + 1}bp)")
+
+    return flanking
+
+
+def _site_overlaps_flanking(
+    site_chr: str,
+    site_pos: int,
+    flanking_regions: list[tuple[str, int, int]],
+    slop: int = CONSTRUCT_FLANK_SLOP,
+) -> tuple[bool, str]:
+    """Check if a detection site overlaps a construct-flanking host region."""
+    for chrom, lo, hi in flanking_regions:
+        if chrom == site_chr and lo - slop <= site_pos <= hi + slop:
+            return True, f"{chrom}:{lo:,}-{hi:,}"
+    return False, ""
+
+
+def _check_chimeric_assembly(
+    insert_fasta: Path,
+    host_ref: Path,
+    site_chr: str,
+    workdir: Path,
+    threads: int = 4,
+) -> tuple[bool, list[tuple[str, int]]]:
+    """Check if assembled insert contains DNA from multiple host chromosomes.
+
+    Returns (is_chimeric, off_target_hits) where off_target_hits is a list of
+    (chromosome, aligned_bp) for chromosomes other than site_chr.
+    """
+    blast_out = workdir / f"_{insert_fasta.stem}_vs_host_chrom.tsv"
+    # Reuse existing BLAST output if available (from _blast_insert_vs_host)
+    if not blast_out.exists():
+        result = subprocess.run(
+            ["blastn", "-task", "megablast",
+             "-query", str(insert_fasta), "-db", str(host_ref),
+             "-outfmt", "6 qseqid qstart qend sseqid pident length",
+             "-evalue", "1e-10", "-max_target_seqs", "10",
+             "-num_threads", str(threads),
+             "-out", str(blast_out)],
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode != 0 or not blast_out.exists():
+            return False, []
+
+    # Accumulate aligned bp per chromosome (strict identity to avoid
+    # counting element-level homologies as chimeric evidence)
+    chr_bp: dict[str, int] = defaultdict(int)
+    with open(blast_out) as fh:
+        for line in fh:
+            cols = line.strip().split("\t")
+            if len(cols) < 6:
+                continue
+            s_chr = cols[3]
+            pident = float(cols[4])
+            aln_len = int(cols[5])
+            if pident >= CHIMERIC_MIN_PIDENT:
+                chr_bp[s_chr] += aln_len
+
+    # Find off-target chromosomes with significant coverage
+    off_target: list[tuple[str, int]] = []
+    for chrom, bp in sorted(chr_bp.items(), key=lambda x: -x[1]):
+        if chrom != site_chr and bp >= CHIMERIC_MIN_OFFTARGET_BP:
+            off_target.append((chrom, bp))
+
+    is_chimeric = len(off_target) >= 2
+    return is_chimeric, off_target
+
+
+def _check_alternative_locus(
+    insert_fasta: Path,
+    host_ref: Path,
+    site_chr: str,
+    site_pos: int,
+    workdir: Path,
+    threads: int = 4,
+) -> tuple[bool, str, int, float, int]:
+    """Check if insert maps as single alignment to an alternative host locus.
+
+    Returns (is_alt_locus, alt_chr, alt_pos, coverage, mapq).
+    If the primary minimap2 alignment covers >=70% of the insert and maps
+    to a different locus than the insertion site, the insert is likely
+    host genomic DNA mis-assembled via construct-element homology.
+    """
+    result = subprocess.run(
+        ["minimap2", "-c", "--secondary=no", "-t", str(threads),
+         str(host_ref), str(insert_fasta)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return False, "", 0, 0.0, 0
+
+    # Parse PAF — use first primary alignment
+    for line in result.stdout.strip().split("\n"):
+        cols = line.split("\t")
+        if len(cols) < 12:
+            continue
+        qlen = int(cols[1])
+        qstart = int(cols[2])
+        qend = int(cols[3])
+        t_chr = cols[5]
+        t_start = int(cols[7])
+        mapq = int(cols[11])
+
+        if qlen == 0:
+            continue
+        coverage = (qend - qstart) / qlen
+        if coverage < ALTLOCUS_MIN_COVERAGE or mapq < ALTLOCUS_MIN_MAPQ:
+            continue
+
+        # Check if this is a different locus from the insertion site
+        same_locus = (t_chr == site_chr
+                      and abs(t_start - site_pos) < ALTLOCUS_SLOP)
+        if not same_locus:
+            return True, t_chr, t_start, coverage, mapq
+
+    return False, "", 0, 0.0, 0
+
+
+def _blast_insert_vs_host(
+    insert_fasta: Path,
+    host_ref: Path,
+    workdir: Path,
+    threads: int = 4,
+) -> tuple[float, int, int, int]:
+    """BLAST assembled insert against host genome to measure host-fraction.
+
+    Returns (host_fraction, host_covered_bp, insert_length, largest_foreign_gap).
+    host_fraction = fraction of insert positions covered by host alignments.
+    largest_foreign_gap = longest contiguous stretch NOT covered by host.
+    """
+    seqs = read_fasta(insert_fasta)
+    if not seqs:
+        return 0.0, 0, 0, 0
+    insert_seq = list(seqs.values())[0]
+    insert_len = len(insert_seq)
+    if insert_len == 0:
+        return 0.0, 0, 0, 0
+
+    # Use _chrom variant filename so _check_chimeric_assembly can reuse it
+    blast_out = workdir / f"_{insert_fasta.stem}_vs_host_chrom.tsv"
+    if not blast_out.exists():
+        result = subprocess.run(
+            ["blastn", "-task", "megablast",
+             "-query", str(insert_fasta), "-db", str(host_ref),
+             "-outfmt", "6 qseqid qstart qend sseqid pident length",
+             "-evalue", "1e-10", "-max_target_seqs", "10",
+             "-num_threads", str(threads),
+             "-out", str(blast_out)],
+            stderr=subprocess.DEVNULL,
+        )
+    if not blast_out.exists():
+        return 0.0, 0, insert_len, insert_len
+
+    # Merge overlapping host-aligned intervals to compute non-redundant coverage
+    intervals: list[tuple[int, int]] = []
+    with open(blast_out) as fh:
+        for line in fh:
+            cols = line.strip().split("\t")
+            if len(cols) < 6:
+                continue
+            pident = float(cols[4])
+            if pident < INSERT_HOST_MIN_PIDENT:
+                continue
+            q_start = int(cols[1])
+            q_end = int(cols[2])
+            lo, hi = min(q_start, q_end), max(q_start, q_end)
+            intervals.append((lo, hi))
+
+    if not intervals:
+        return 0.0, 0, insert_len, insert_len
+
+    # Merge overlapping intervals
+    intervals.sort()
+    merged: list[tuple[int, int]] = [intervals[0]]
+    for lo, hi in intervals[1:]:
+        if lo <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
+
+    host_bp = sum(hi - lo + 1 for lo, hi in merged)
+
+    # Compute largest gap between host-aligned regions (= foreign/T-DNA region)
+    # Include gaps at start and end of insert
+    gaps: list[int] = []
+    gaps.append(merged[0][0] - 1)                    # gap before first host hit
+    for i in range(1, len(merged)):
+        gaps.append(merged[i][0] - merged[i - 1][1] - 1)
+    gaps.append(insert_len - merged[-1][1])           # gap after last host hit
+    largest_gap = max(gaps) if gaps else 0
+
+    # Exclude N-runs from denominator (Ns are gap-fill placeholders, not real sequence)
+    n_count = insert_seq.upper().count("N")
+    effective_len = insert_len - n_count
+    if effective_len <= 0:
+        return 0.0, host_bp, insert_len, largest_gap
+
+    return host_bp / effective_len, host_bp, insert_len, largest_gap
+
+
 def generate_report(
     insert_fasta: Path,
     annotation_tsv: Path,
@@ -2723,6 +3063,9 @@ def generate_report(
     status: str,
     output_dir: Path,
     host_endogenous_ids: set[str] | None = None,
+    host_ref: Path | None = None,
+    threads: int = 4,
+    construct_flanking: list[tuple[str, int, int]] | None = None,
 ) -> tuple[Path, str]:
     """Generate human-readable linear map report."""
     report_path = output_dir / f"{site.site_id}_report.txt"
@@ -2809,6 +3152,77 @@ def generate_report(
     else:
         verdict = "CANDIDATE"
         verdict_reason = ""
+
+    # ---- Post-assembly false-positive filters (applied to CANDIDATE only) ----
+    # Filter A: Host-fraction + small gap → chimeric assembly artifact
+    host_fraction = 0.0
+    host_bp = 0
+    largest_gap = 0
+    # Filter B: Construct-flanking overlap
+    flanking_hit = ""
+    # Filter C: Multi-locus chimeric assembly
+    is_chimeric = False
+    off_target_chrs: list[tuple[str, int]] = []
+    # Filter D: Alternative host locus
+    alt_locus_hit = False
+    alt_locus_info = ""
+
+    if verdict == "CANDIDATE" and host_ref is not None:
+        # Filter A: host-fraction with non-host gap check
+        host_fraction, host_bp, _, largest_gap = _blast_insert_vs_host(
+            insert_fasta, host_ref, output_dir, threads=threads,
+        )
+        if (host_fraction >= INSERT_HOST_FRACTION
+                and largest_gap < INSERT_MIN_FOREIGN_GAP):
+            verdict = "FALSE_POSITIVE"
+            verdict_reason = (
+                f"assembled insert is {host_fraction:.0%} host genome "
+                f"({host_bp:,}/{insert_len - n_count:,}bp) with only "
+                f"{largest_gap}bp non-host gap "
+                f"(need ≥{INSERT_MIN_FOREIGN_GAP}bp for real T-DNA)"
+            )
+
+    if verdict == "CANDIDATE" and construct_flanking:
+        # Filter B: site coordinates overlap with construct→host flanking
+        site_pos = site.pos_5p
+        overlaps, flanking_hit = _site_overlaps_flanking(
+            site.host_chr, site_pos, construct_flanking,
+        )
+        if overlaps:
+            verdict = "FALSE_POSITIVE"
+            verdict_reason = (
+                f"site {site.host_chr}:{site_pos:,} overlaps construct-flanking "
+                f"region {flanking_hit} — host DNA in construct reference"
+            )
+
+    if verdict == "CANDIDATE" and host_ref is not None:
+        # Filter C: assembled insert spans ≥2 off-target chromosomes
+        is_chimeric, off_target_chrs = _check_chimeric_assembly(
+            insert_fasta, host_ref, site.host_chr, output_dir, threads=threads,
+        )
+        if is_chimeric:
+            off_str = ", ".join(f"{c}:{bp}bp" for c, bp in off_target_chrs)
+            verdict = "FALSE_POSITIVE"
+            verdict_reason = (
+                f"chimeric assembly — host-aligned portions span "
+                f"{len(off_target_chrs)} off-target chromosomes ({off_str})"
+            )
+
+    if verdict == "CANDIDATE" and host_ref is not None:
+        # Filter D: insert maps as single alignment to alternative host locus
+        alt_locus_hit, alt_chr, alt_pos, alt_cov, alt_mapq = \
+            _check_alternative_locus(
+                insert_fasta, host_ref, site.host_chr, site.pos_5p,
+                output_dir, threads=threads,
+            )
+        if alt_locus_hit:
+            alt_locus_info = f"{alt_chr}:{alt_pos:,}"
+            verdict = "FALSE_POSITIVE"
+            verdict_reason = (
+                f"assembled insert maps to alternative host locus "
+                f"{alt_locus_info} "
+                f"(coverage={alt_cov:.0%}, MAPQ={alt_mapq})"
+            )
 
     # Build linear map with orientation arrows
     linear_parts = []
@@ -2912,6 +3326,22 @@ def generate_report(
                 for elem in sorted(endo_elems):
                     fh.write(f"  - {elem}\n")
 
+        # Post-assembly filter diagnostics
+        if host_fraction > 0:
+            fh.write(f"\nHost-fraction analysis: {host_fraction:.1%} host "
+                     f"({host_bp:,}/{insert_len - n_count:,}bp at "
+                     f"≥{INSERT_HOST_MIN_PIDENT}% identity), "
+                     f"largest non-host gap: {largest_gap:,}bp\n")
+        if flanking_hit:
+            fh.write(f"Construct-flanking overlap: site overlaps {flanking_hit}\n")
+        if off_target_chrs:
+            off_str = ", ".join(f"{c}:{bp}bp" for c, bp in off_target_chrs)
+            tag = " → chimeric" if is_chimeric else ""
+            fh.write(f"Off-target chromosomes in assembly: {off_str}{tag}\n")
+        if alt_locus_info:
+            fh.write(f"Alternative host locus: insert maps to "
+                     f"{alt_locus_info}\n")
+
     log(f"  Report written: {report_path} [{verdict}]")
     return report_path, verdict
 
@@ -2946,7 +3376,7 @@ def write_stats(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Step 9: Targeted insert assembly "
+        description="Step 5: Targeted insert assembly "
                     "(soft-clip detection + k-mer extension + Pilon gap fill)")
     parser.add_argument("--junctions", default=None,
                         help="junctions.tsv from step 6 (fallback if soft-clip "
@@ -2960,7 +3390,7 @@ def main() -> None:
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--sample-name", required=True)
     parser.add_argument("--threads", type=int, default=8)
-    parser.add_argument("--max-rounds", type=int, default=15,
+    parser.add_argument("--max-rounds", type=int, default=8,
                         help="Max alternating extension+Pilon rounds")
     parser.add_argument("--seed-k", type=int, default=15,
                         help="k-mer size for seed extension")
@@ -2975,6 +3405,10 @@ def main() -> None:
     parser.add_argument("--junction-window", type=int, default=20,
                         help="Window (bp) around junction for allele phasing "
                              "(reads within this distance classified as junction-proximal)")
+    parser.add_argument("--construct-ref", default=None,
+                        help="Construct reference FASTA (for flanking detection)")
+    parser.add_argument("--no-remote-blast", action="store_true",
+                        help="Skip remote NCBI nt BLAST (use local element_db only)")
     parser.add_argument("--s03-r1", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--s03-r2", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -2986,7 +3420,7 @@ def main() -> None:
     host_ref = Path(args.host_ref)
     element_db = Path(args.element_db)
 
-    log(f"=== Step 9: Targeted Insert Assembly for {args.sample_name} ===")
+    log(f"=== Step 5: Targeted Insert Assembly for {args.sample_name} ===")
     log(f"  Host BAM: {host_bam}")
     log(f"  Host ref: {host_ref}")
     log(f"  Element DB: {element_db}")
@@ -3001,7 +3435,7 @@ def main() -> None:
     if not sites and args.junctions:
         junctions_path = Path(args.junctions)
         if junctions_path.exists() and junctions_path.stat().st_size > 0:
-            log("No soft-clip sites found, falling back to step 6 junctions...")
+            log("No soft-clip sites found, falling back to legacy junctions file...")
             legacy_juncs = parse_legacy_junctions(junctions_path)
             if legacy_juncs:
                 sites = legacy_junctions_to_sites(legacy_juncs, host_bam)
@@ -3010,7 +3444,7 @@ def main() -> None:
 
     if not sites:
         log("No insertion sites found. Nothing to assemble.")
-        write_stats(step_dir / "s09_stats.txt", args.sample_name, 0, 0, [])
+        write_stats(step_dir / "s05_stats.txt", args.sample_name, 0, 0, [])
         return
 
     log(f"\nPhase 1 found {len(sites)} insertion site(s):")
@@ -3032,7 +3466,7 @@ def main() -> None:
 
     if not assembly_sites:
         log("No transgene-positive sites found. Nothing to assemble.")
-        write_stats(step_dir / "s09_stats.txt", args.sample_name, len(sites), 0, [])
+        write_stats(step_dir / "s05_stats.txt", args.sample_name, len(sites), 0, [])
         return
 
     sites = assembly_sites  # Only assemble transgene-positive sites
@@ -3121,11 +3555,22 @@ def main() -> None:
         log("=== Phase 4: Annotation ===")
         ann_tsv, border_tsv = annotate_insert(
             combined_insert, element_db, step_dir, args.sample_name,
+            no_remote_blast=args.no_remote_blast,
         )
 
         # host_endo_ids returned directly from classify_site_tiers (no file I/O)
         log(f"  Using {len(host_endo_ids)} host-endogenous element IDs "
             f"for post-filter verdict")
+
+        # Detect construct-flanking regions (host DNA in construct reference)
+        construct_flanking: list[tuple[str, int, int]] = []
+        if args.construct_ref:
+            construct_path = Path(args.construct_ref)
+            if construct_path.exists():
+                log("  Detecting construct-flanking host regions...")
+                construct_flanking = _find_construct_flanking_regions(
+                    construct_path, host_ref, step_dir, threads=args.threads,
+                )
 
         # Generate report for each site
         verdict_counts: Counter = Counter()
@@ -3141,6 +3586,9 @@ def main() -> None:
                         site, result_info["rounds"], result_info["status"],
                         step_dir,
                         host_endogenous_ids=host_endo_ids,
+                        host_ref=host_ref,
+                        threads=args.threads,
+                        construct_flanking=construct_flanking,
                     )
                     verdict_counts[verdict] += 1
                     verdict_by_site[site.site_id] = verdict
@@ -3153,12 +3601,12 @@ def main() -> None:
 
     # ---- Write stats ----
     write_stats(
-        step_dir / "s09_stats.txt", args.sample_name,
+        step_dir / "s05_stats.txt", args.sample_name,
         len(sites), 0, all_results,
     )
 
     log(f"\n{'=' * 60}")
-    log(f"=== Step 9 complete ===")
+    log(f"=== Step 5 complete ===")
     log(f"Output: {step_dir}")
     for r in all_results:
         v = r.get("verdict", "NO_ASSEMBLY")

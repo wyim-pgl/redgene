@@ -34,88 +34,49 @@ def generate_custom_data(outdir: Path, samples: list[str]) -> Path:
     mqc_dir = outdir / "multiqc_custom_data"
     mqc_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---- Assembly stats (custom table) ----
-    asm_rows = []
+    # ---- Insert assembly summary (from s05_stats.txt) ----
+    site_rows = []
     for sample in samples:
-        stats_file = outdir / sample / "s04_assembly" / "assembly_stats.txt"
+        stats_file = outdir / sample / "s05_insert_assembly" / "s05_stats.txt"
         if not stats_file.exists():
             continue
         stats = {}
         with open(stats_file) as f:
             for line in f:
-                if ":" in line:
-                    k, v = line.strip().split(":", 1)
-                    stats[k.strip()] = v.strip()
-        asm_rows.append({
+                parts = line.strip().split("\t", 1)
+                if len(parts) == 2:
+                    stats[parts[0]] = parts[1]
+
+        n_sites = int(stats.get("insertion_sites", 0))
+        n_candidates = sum(1 for k, v in stats.items()
+                           if k.endswith("_verdict") and v == "CANDIDATE")
+        n_fp = sum(1 for k, v in stats.items()
+                   if k.endswith("_verdict") and v == "FALSE_POSITIVE")
+        site_rows.append({
             "Sample": sample,
-            "Total contigs": stats.get("Total contigs", ""),
-            "Total length": stats.get("Total length (bp)", ""),
-            "N50": stats.get("N50", ""),
-            "Longest contig": stats.get("Longest contig", ""),
+            "Sites": n_sites,
+            "Candidates": n_candidates,
+            "False positives": n_fp,
         })
 
-    if asm_rows:
-        asm_file = mqc_dir / "assembly_stats_mqc.tsv"
-        with open(asm_file, "w") as f:
-            f.write("# id: 'assembly_stats'\n")
-            f.write("# section_name: 'Assembly Statistics'\n")
-            f.write("# description: 'SPAdes local assembly of construct-hitting reads'\n")
+    if site_rows:
+        site_mqc = mqc_dir / "insert_assembly_mqc.tsv"
+        with open(site_mqc, "w") as f:
+            f.write("# id: 'insert_assembly'\n")
+            f.write("# section_name: 'Insert Assembly'\n")
+            f.write("# description: 'Targeted insert assembly — site detection and filtering'\n")
             f.write("# plot_type: 'table'\n")
             f.write("# pconfig:\n")
-            f.write("#   id: 'assembly_stats_table'\n")
-            headers = list(asm_rows[0].keys())
+            f.write("#   id: 'insert_assembly_table'\n")
+            headers = list(site_rows[0].keys())
             f.write("\t".join(headers) + "\n")
-            for row in asm_rows:
-                f.write("\t".join(str(row[h]) for h in headers) + "\n")
-
-    # ---- Junction detection summary ----
-    junc_rows = []
-    for sample in samples:
-        junc_file = outdir / sample / "s06_junction" / "junctions.tsv"
-        if not junc_file.exists():
-            continue
-        with open(junc_file) as f:
-            reader = csv.DictReader(f, delimiter="\t")
-            juncs = list(reader)
-
-        n_junctions = len(juncs)
-        if n_junctions == 0:
-            junc_rows.append({
-                "Sample": sample,
-                "Junctions": 0,
-                "Best junction": "-",
-                "MAPQ": "-",
-                "Confidence": "-",
-            })
-        else:
-            # Pick highest-MAPQ junction
-            best = max(juncs, key=lambda j: int(j.get("host_mapq", 0)))
-            junc_rows.append({
-                "Sample": sample,
-                "Junctions": n_junctions,
-                "Best junction": f"{best['host_chr']}:{best['junction_pos_host']}",
-                "MAPQ": best.get("host_mapq", "?"),
-                "Confidence": best.get("confidence", "?"),
-            })
-
-    if junc_rows:
-        junc_mqc = mqc_dir / "junction_summary_mqc.tsv"
-        with open(junc_mqc, "w") as f:
-            f.write("# id: 'junction_summary'\n")
-            f.write("# section_name: 'Junction Detection'\n")
-            f.write("# description: 'Chimeric contig analysis — transgene insertion sites'\n")
-            f.write("# plot_type: 'table'\n")
-            f.write("# pconfig:\n")
-            f.write("#   id: 'junction_summary_table'\n")
-            headers = list(junc_rows[0].keys())
-            f.write("\t".join(headers) + "\n")
-            for row in junc_rows:
+            for row in site_rows:
                 f.write("\t".join(str(row[h]) for h in headers) + "\n")
 
     # ---- CRISPR editing summary ----
     edit_rows = []
     for sample in samples:
-        edit_file = outdir / sample / "s08_indel" / "editing_sites.tsv"
+        edit_file = outdir / sample / "s06_indel" / "editing_sites.tsv"
         if not edit_file.exists():
             continue
         with open(edit_file) as f:
@@ -158,7 +119,7 @@ def generate_custom_data(outdir: Path, samples: list[str]) -> Path:
     # ---- Copy number summary ----
     cn_rows = []
     for sample in samples:
-        cn_file = outdir / sample / "s10_copynumber" / "copynumber.tsv"
+        cn_file = outdir / sample / "s07_copynumber" / "copynumber.tsv"
         if not cn_file.exists():
             continue
         with open(cn_file) as f:
@@ -190,7 +151,7 @@ def generate_custom_data(outdir: Path, samples: list[str]) -> Path:
     # ---- Variant effects summary ----
     eff_rows = []
     for sample in samples:
-        eff_file = outdir / sample / "s08_indel" / "editing_effects.tsv"
+        eff_file = outdir / sample / "s06_indel" / "editing_effects.tsv"
         if not eff_file.exists():
             continue
         with open(eff_file) as f:

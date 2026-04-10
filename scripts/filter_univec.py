@@ -5,10 +5,19 @@ Reads NCBI UniVec (gnl|uv|ACCESSION|description format), removes sequences
 whose headers match adapter/primer/linker keywords, and writes a filtered
 FASTA with 'univec|' prefix on each sequence name.
 
+Two modes:
+  --mode all      Keep all vectors (remove adapters/primers/linkers only)
+  --mode plant    Keep only plant expression/binary vectors (for GMO detection)
+
 Usage:
     python scripts/filter_univec.py \
         --input db/UniVec.fa \
         --output db/univec_vectors.fa
+
+    python scripts/filter_univec.py \
+        --input db/UniVec.fa \
+        --output db/univec_plant_vectors.fa \
+        --mode plant
 """
 from __future__ import annotations
 
@@ -34,6 +43,30 @@ REMOVE_KEYWORDS = [
 
 # Compiled pattern (case-insensitive)
 _REMOVE_RE = re.compile("|".join(REMOVE_KEYWORDS), re.IGNORECASE)
+
+# Plant expression/binary vector keywords (KEEP in plant mode)
+PLANT_KEYWORDS = [
+    r"\bbinary\b",
+    r"\bpCAMBIA\b",
+    r"\bpPZP\d",
+    r"\bpGreen\b",
+    r"\bpSoup\b",
+    r"\bpBI\d",
+    r"\bpBIN\d",
+    r"\bBin\s*19\b",
+    r"\bplant\s+transform",
+    r"\bT-DNA\b",
+    r"\bGUS\s+gene\s+fusion\b",
+    r"\bpART\b",
+    r"\bpORE\b",
+    r"\bpMDC\b",
+    r"\bpEarley\b",
+    r"\bpGWB\b",
+    r"\bpCLEAN\b",
+    r"\bpMAA\b",
+]
+
+_PLANT_RE = re.compile("|".join(PLANT_KEYWORDS), re.IGNORECASE)
 
 
 def parse_fasta(path: Path) -> list[tuple[str, str]]:
@@ -61,6 +94,8 @@ def main() -> None:
         description="Filter UniVec to vectors only (remove adapters/primers/linkers)")
     parser.add_argument("--input", required=True, help="Input UniVec FASTA")
     parser.add_argument("--output", required=True, help="Output filtered FASTA")
+    parser.add_argument("--mode", choices=["all", "plant"], default="all",
+                        help="'all': keep all vectors; 'plant': keep only plant binary/expression vectors")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -74,12 +109,20 @@ def main() -> None:
     removed_categories: dict[str, int] = {}
 
     for header, seq in records:
+        # Step 1: always remove adapters/primers/linkers
         match = _REMOVE_RE.search(header)
         if match:
             keyword = match.group(0).lower()
             removed_categories[keyword] = removed_categories.get(keyword, 0) + 1
-        else:
-            kept.append((header, seq))
+            continue
+
+        # Step 2: in plant mode, only keep plant binary/expression vectors
+        if args.mode == "plant":
+            if not _PLANT_RE.search(header):
+                removed_categories["non-plant-vector"] = removed_categories.get("non-plant-vector", 0) + 1
+                continue
+
+        kept.append((header, seq))
 
     removed = total - len(kept)
 
@@ -93,6 +136,7 @@ def main() -> None:
             for i in range(0, len(seq), 70):
                 fh.write(seq[i:i + 70] + "\n")
 
+    print(f"Mode:    {args.mode}", file=sys.stderr)
     print(f"Kept:    {len(kept)}", file=sys.stderr)
     print(f"Removed: {removed}", file=sys.stderr)
     print(f"Categories removed:", file=sys.stderr)

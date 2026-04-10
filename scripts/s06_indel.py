@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step 8: CRISPR editing site detection via indel calling.
+"""Step 6: CRISPR editing site detection via indel calling.
 
 Two modes of operation:
 
@@ -17,17 +17,17 @@ For non-CRISPR samples (standard T-DNA), this step is skipped.
 
 Usage:
   # With gRNA (recommended)
-  python s08_indel_detection.py \
-    --treatment-bam results/{sample}/s07_host_map/{sample}_host.bam \
-    --wt-bam results/WT/s07_host_map/WT_host.bam \
+  python s06_indel.py \
+    --treatment-bam results/{sample}/s04_host_map/{sample}_host.bam \
+    --wt-bam results/WT/s04_host_map/WT_host.bam \
     --host-ref db/host.fa \
     --grna ATCGATCGATCGATCGATCG,GCTAGCTAGCTAGCTAGCTA \
     --outdir results --sample-name {sample}
 
   # Without gRNA (de novo)
-  python s08_indel_detection.py \
-    --treatment-bam results/{sample}/s07_host_map/{sample}_host.bam \
-    --wt-bam results/WT/s07_host_map/WT_host.bam \
+  python s06_indel.py \
+    --treatment-bam results/{sample}/s04_host_map/{sample}_host.bam \
+    --wt-bam results/WT/s04_host_map/WT_host.bam \
     --host-ref db/host.fa --genome-wide \
     --outdir results --sample-name {sample}
 """
@@ -41,7 +41,7 @@ from pathlib import Path
 
 
 def log(msg: str) -> None:
-    print(f"[s08_indel] {msg}", file=sys.stderr, flush=True)
+    print(f"[s06_indel] {msg}", file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +533,7 @@ def parse_grna_input(grna_arg: str) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Step 8: CRISPR editing site detection",
+        description="Step 6: CRISPR editing site detection",
     )
     parser.add_argument("--treatment-bam", required=True, type=Path)
     parser.add_argument("--wt-bam", required=True, type=Path)
@@ -562,7 +562,7 @@ def main() -> None:
             log(f"ERROR: {label} not found: {path}")
             sys.exit(1)
 
-    step_dir = args.outdir / args.sample_name / "s08_indel"
+    step_dir = args.outdir / args.sample_name / "s06_indel"
     step_dir.mkdir(parents=True, exist_ok=True)
 
     # -----------------------------------------------------------------------

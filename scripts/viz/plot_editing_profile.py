@@ -14,13 +14,13 @@ Panels (top to bottom):
 
 Usage:
   python plot_editing_profile.py \
-    --treatment-bam results/{sample}/s07_host_map/{sample}_host.bam \
-    --wt-bam results/WT/s07_host_map/WT_host.bam \
+    --treatment-bam results/{sample}/s04_host_map/{sample}_host.bam \
+    --wt-bam results/WT/s04_host_map/WT_host.bam \
     --host-ref db/host.fa \
-    --grna-targets results/{sample}/s08_indel/grna_targets.tsv \
-    --editing-sites results/{sample}/s08_indel/editing_sites.tsv \
+    --grna-targets results/{sample}/s06_indel/grna_targets.tsv \
+    --editing-sites results/{sample}/s06_indel/editing_sites.tsv \
     --sample-name {sample} \
-    --outdir results/{sample}/s08_indel
+    --outdir results/{sample}/s06_indel
 """
 
 import argparse
@@ -510,7 +510,7 @@ def main() -> None:
                         help="Window size around cut site (default: 30bp)")
     args = parser.parse_args()
 
-    outdir = args.outdir / args.sample_name / "s08_indel"
+    outdir = args.outdir / args.sample_name / "s06_indel"
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Load gRNA targets (on-target sites only)
