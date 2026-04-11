@@ -91,12 +91,16 @@ CONSTRUCT_FLANK_SLOP = 500      # bp slop when checking site overlap
 CHIMERIC_MIN_PIDENT = 98.0      # strict identity for chimeric detection
 CHIMERIC_MIN_OFFTARGET_BP = 150 # min bp on off-target chromosome to count
 
-# Filter D: Alternative-locus mapping — assembled insert maps as single
-# alignment to a different host locus, indicating host genomic DNA
-# mis-assembled via construct-element homology.
-ALTLOCUS_MIN_COVERAGE = 0.70   # min fraction of insert covered by primary alignment
-ALTLOCUS_MIN_MAPQ = 20         # min mapping quality
-ALTLOCUS_SLOP = 10_000         # bp: within this distance = same locus (don't flag)
+# Filter D: Construct-host coverage — if the assembled insert is fully
+# explained by construct + host sequences (high combined coverage) AND the
+# construct portion is large (≥30%), the insert is host genomic DNA with
+# construct-element homology, not a real T-DNA insertion.
+# Real T-DNA inserts have low construct coverage (~10%) because only border
+# regions match; FPs have high construct coverage (~50%) because the insert
+# IS the construct fragment.
+CONSTRUCT_HOST_MIN_COMBINED = 0.85  # min combined coverage (construct + host)
+CONSTRUCT_MIN_FRACTION = 0.25       # min construct coverage to suspect FP
+CONSTRUCT_HOST_MIN_PIDENT = 80.0    # identity threshold for construct BLAST
 
 
 def log(msg: str) -> None:
@@ -2920,54 +2924,69 @@ def _check_chimeric_assembly(
     return is_chimeric, off_target
 
 
-def _check_alternative_locus(
+def _check_construct_host_coverage(
     insert_fasta: Path,
-    host_ref: Path,
-    site_chr: str,
-    site_pos: int,
+    element_db: Path,
+    host_fraction: float,
+    host_bp: int,
+    insert_len: int,
+    n_count: int,
     workdir: Path,
     threads: int = 4,
-) -> tuple[bool, str, int, float, int]:
-    """Check if insert maps as single alignment to an alternative host locus.
+) -> tuple[bool, float, float, float]:
+    """Check if insert is fully explained by construct + host coverage.
 
-    Returns (is_alt_locus, alt_chr, alt_pos, coverage, mapq).
-    If the primary minimap2 alignment covers >=70% of the insert and maps
-    to a different locus than the insertion site, the insert is likely
-    host genomic DNA mis-assembled via construct-element homology.
+    Real T-DNA inserts have low construct coverage (~10%, only border regions).
+    False positives from construct-element homology have high construct
+    coverage (~50%, the insert IS the construct fragment).
+
+    Returns (is_fp, construct_frac, host_frac, combined_frac).
     """
+    eff_len = insert_len - n_count
+    if eff_len <= 0:
+        return False, 0.0, 0.0, 0.0
+
+    # BLAST insert vs construct/element_db
+    blast_out = workdir / f"_{insert_fasta.stem}_vs_construct.tsv"
     result = subprocess.run(
-        ["minimap2", "-c", "--secondary=no", "-t", str(threads),
-         str(host_ref), str(insert_fasta)],
+        ["blastn", "-task", "megablast",
+         "-query", str(insert_fasta), "-subject", str(element_db),
+         "-outfmt", "6 qstart qend pident",
+         "-evalue", "1e-5"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return False, "", 0, 0.0, 0
+    if result.returncode != 0:
+        return False, 0.0, 0.0, 0.0
 
-    # Parse PAF — use first primary alignment
+    # Merge overlapping intervals at >= threshold identity
+    intervals: list[tuple[int, int]] = []
     for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
         cols = line.split("\t")
-        if len(cols) < 12:
-            continue
-        qlen = int(cols[1])
-        qstart = int(cols[2])
-        qend = int(cols[3])
-        t_chr = cols[5]
-        t_start = int(cols[7])
-        mapq = int(cols[11])
+        qs, qe, pid = int(cols[0]), int(cols[1]), float(cols[2])
+        if pid >= CONSTRUCT_HOST_MIN_PIDENT:
+            intervals.append((min(qs, qe), max(qs, qe)))
 
-        if qlen == 0:
-            continue
-        coverage = (qend - qstart) / qlen
-        if coverage < ALTLOCUS_MIN_COVERAGE or mapq < ALTLOCUS_MIN_MAPQ:
-            continue
+    if not intervals:
+        return False, 0.0, host_fraction, host_fraction
 
-        # Check if this is a different locus from the insertion site
-        same_locus = (t_chr == site_chr
-                      and abs(t_start - site_pos) < ALTLOCUS_SLOP)
-        if not same_locus:
-            return True, t_chr, t_start, coverage, mapq
+    intervals.sort()
+    merged: list[tuple[int, int]] = []
+    for s, e in intervals:
+        if merged and s <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
 
-    return False, "", 0, 0.0, 0
+    construct_bp = sum(e - s + 1 for s, e in merged)
+    construct_frac = construct_bp / eff_len
+    combined_frac = min(1.0, (construct_bp + host_bp) / eff_len)
+
+    is_fp = (construct_frac >= CONSTRUCT_MIN_FRACTION
+             and combined_frac >= CONSTRUCT_HOST_MIN_COMBINED)
+
+    return is_fp, construct_frac, host_fraction, combined_frac
 
 
 def _blast_insert_vs_host(
@@ -3064,6 +3083,7 @@ def generate_report(
     output_dir: Path,
     host_endogenous_ids: set[str] | None = None,
     host_ref: Path | None = None,
+    element_db: Path | None = None,
     threads: int = 4,
     construct_flanking: list[tuple[str, int, int]] | None = None,
 ) -> tuple[Path, str]:
@@ -3163,9 +3183,9 @@ def generate_report(
     # Filter C: Multi-locus chimeric assembly
     is_chimeric = False
     off_target_chrs: list[tuple[str, int]] = []
-    # Filter D: Alternative host locus
-    alt_locus_hit = False
-    alt_locus_info = ""
+    # Filter D: Construct-host coverage
+    construct_frac = 0.0
+    combined_frac = 0.0
 
     if verdict == "CANDIDATE" and host_ref is not None:
         # Filter A: host-fraction with non-host gap check
@@ -3208,20 +3228,20 @@ def generate_report(
                 f"{len(off_target_chrs)} off-target chromosomes ({off_str})"
             )
 
-    if verdict == "CANDIDATE" and host_ref is not None:
-        # Filter D: insert maps as single alignment to alternative host locus
-        alt_locus_hit, alt_chr, alt_pos, alt_cov, alt_mapq = \
-            _check_alternative_locus(
-                insert_fasta, host_ref, site.host_chr, site.pos_5p,
+    if verdict == "CANDIDATE" and host_ref is not None and element_db is not None:
+        # Filter D: construct + host coverage fully explains insert
+        is_construct_fp, construct_frac, _, combined_frac = \
+            _check_construct_host_coverage(
+                insert_fasta, element_db,
+                host_fraction, host_bp, insert_len, n_count,
                 output_dir, threads=threads,
             )
-        if alt_locus_hit:
-            alt_locus_info = f"{alt_chr}:{alt_pos:,}"
+        if is_construct_fp:
             verdict = "FALSE_POSITIVE"
             verdict_reason = (
-                f"assembled insert maps to alternative host locus "
-                f"{alt_locus_info} "
-                f"(coverage={alt_cov:.0%}, MAPQ={alt_mapq})"
+                f"insert fully explained by construct ({construct_frac:.0%}) "
+                f"+ host ({host_fraction:.0%}) = {combined_frac:.0%} combined "
+                f"coverage — host genomic DNA with construct-element homology"
             )
 
     # Build linear map with orientation arrows
@@ -3338,9 +3358,9 @@ def generate_report(
             off_str = ", ".join(f"{c}:{bp}bp" for c, bp in off_target_chrs)
             tag = " → chimeric" if is_chimeric else ""
             fh.write(f"Off-target chromosomes in assembly: {off_str}{tag}\n")
-        if alt_locus_info:
-            fh.write(f"Alternative host locus: insert maps to "
-                     f"{alt_locus_info}\n")
+        if construct_frac > 0:
+            fh.write(f"Construct coverage: {construct_frac:.1%}, "
+                     f"combined (construct+host): {combined_frac:.1%}\n")
 
     log(f"  Report written: {report_path} [{verdict}]")
     return report_path, verdict
@@ -3587,6 +3607,7 @@ def main() -> None:
                         step_dir,
                         host_endogenous_ids=host_endo_ids,
                         host_ref=host_ref,
+                        element_db=element_db,
                         threads=args.threads,
                         construct_flanking=construct_flanking,
                     )
