@@ -102,6 +102,12 @@ CONSTRUCT_HOST_MIN_COMBINED = 0.85  # min combined coverage (construct + host)
 CONSTRUCT_MIN_FRACTION = 0.25       # min construct coverage to suspect FP
 CONSTRUCT_HOST_MIN_PIDENT = 80.0    # identity threshold for construct BLAST
 
+# UNKNOWN → FALSE_POSITIVE auto-reclassification: if insert has no element
+# annotations but is mostly host DNA with negligible construct match,
+# it is host genomic DNA, not a real transgene insertion.
+UNKNOWN_HOST_MIN_FRACTION = 0.85   # min host fraction to classify as host-only
+UNKNOWN_MAX_CONSTRUCT_FRAC = 0.05  # max construct fraction for host-only
+
 
 def log(msg: str) -> None:
     print(f"[{STEP}] {msg}", file=sys.stderr, flush=True)
@@ -3242,6 +3248,31 @@ def generate_report(
                 f"insert fully explained by construct ({construct_frac:.0%}) "
                 f"+ host ({host_fraction:.0%}) = {combined_frac:.0%} combined "
                 f"coverage — host genomic DNA with construct-element homology"
+            )
+
+    # ---- UNKNOWN reclassification: host-only insert ----
+    # If no element annotations but insert is mostly host DNA with
+    # negligible construct match, reclassify as FALSE_POSITIVE.
+    if verdict == "UNKNOWN" and host_ref is not None:
+        log(f"  UNKNOWN reclassification: BLASTing {insert_fasta.name} vs host")
+        host_fraction, host_bp, _, largest_gap = _blast_insert_vs_host(
+            insert_fasta, host_ref, output_dir, threads=threads,
+        )
+        construct_frac_unk = 0.0
+        if element_db is not None:
+            _, construct_frac_unk, _, _ = _check_construct_host_coverage(
+                insert_fasta, element_db,
+                host_fraction, host_bp, insert_len, n_count,
+                output_dir, threads=threads,
+            )
+        if (host_fraction >= UNKNOWN_HOST_MIN_FRACTION
+                and construct_frac_unk <= UNKNOWN_MAX_CONSTRUCT_FRAC):
+            verdict = "FALSE_POSITIVE"
+            construct_frac = construct_frac_unk
+            verdict_reason = (
+                f"no element annotations; insert is {host_fraction:.0%} host "
+                f"genome ({host_bp:,}bp) with {construct_frac_unk:.0%} construct "
+                f"— host genomic DNA"
             )
 
     # Build linear map with orientation arrows
