@@ -988,7 +988,14 @@ def classify_site_tiers(
         hit_5p = hits.get(key_5p, {})
         hit_3p = hits.get(key_3p, {})
 
-        is_positive = bool(hit_5p) or bool(hit_3p)
+        # Require at least one element_db hit (not univec-only).
+        # UniVec-only matches at this step are typically short (20-31bp)
+        # alignments that match native plant DNA by chance. Real T-DNA
+        # insertions always have at least one characteristic element
+        # (promoter, selection marker, terminator) matching element_db.
+        has_element_hit = (hit_5p.get("source") == "element_db") or \
+                           (hit_3p.get("source") == "element_db")
+        is_positive = has_element_hit
 
         tr = TierResult(
             site_id=site.site_id,
