@@ -364,7 +364,8 @@ def find_softclip_junctions(
     element_db: Path | None,
     workdir: Path,
     min_clip: int = 20,
-    cluster_window: int = 50,
+    cluster_window: int = 300,
+    min_mapq: int = 20,
 ) -> list[InsertionSite]:
     """Scan host BAM for insertion sites using bidirectional soft-clip analysis.
 
@@ -372,6 +373,11 @@ def find_softclip_junctions(
     1. Bidirectional soft-clips at the same genomic position
     2. The two clip sequences are DIFFERENT (insert, not SV)
     3. Neither clip maps to host genome (foreign sequence)
+
+    cluster_window=300 accommodates typical T-DNA-associated host deletions
+    (10bp to several hundred bp). min_mapq=20 excludes multi-mapping reads
+    that produce repetitive-region false positives (e.g., short match bracketed
+    by long soft-clips mapped to multiple loci at MAPQ=0).
     """
     workdir.mkdir(parents=True, exist_ok=True)
     log("Phase 1: Scanning host BAM for soft-clip junctions...")
@@ -383,9 +389,13 @@ def find_softclip_junctions(
     bam = pysam.AlignmentFile(str(host_bam), "rb")
     n_right = 0
     n_left = 0
+    n_lowmapq = 0
 
     for read in bam.fetch():
         if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            continue
+        if read.mapping_quality < min_mapq:
+            n_lowmapq += 1
             continue
         cigar = read.cigartuples
         if cigar is None:
@@ -413,7 +423,8 @@ def find_softclip_junctions(
             n_left += 1
 
     bam.close()
-    log(f"  Collected {n_right:,} right-clips, {n_left:,} left-clips")
+    log(f"  Collected {n_right:,} right-clips, {n_left:,} left-clips "
+        f"(MAPQ>={min_mapq}; skipped {n_lowmapq:,} low-MAPQ reads)")
 
     # Step 2: Cluster by position (min_depth=3 to filter noise)
     MIN_CLUSTER_DEPTH = 3
@@ -3460,6 +3471,14 @@ def main() -> None:
                         help="Flank size for candidate read extraction (bp)")
     parser.add_argument("--min-clip", type=int, default=20,
                         help="Minimum soft-clip length for junction detection")
+    parser.add_argument("--cluster-window", type=int, default=300,
+                        help="Window (bp) for clustering soft-clips and pairing "
+                             "bidirectional junctions. Larger values catch T-DNA "
+                             "insertions that cause host deletions (default: 300)")
+    parser.add_argument("--min-mapq", type=int, default=20,
+                        help="Minimum MAPQ for reads used in soft-clip junction "
+                             "detection. Excludes multi-mapping reads in repetitive "
+                             "regions (default: 20)")
     parser.add_argument("--junction-window", type=int, default=20,
                         help="Window (bp) around junction for allele phasing "
                              "(reads within this distance classified as junction-proximal)")
@@ -3487,6 +3506,8 @@ def main() -> None:
     sites = find_softclip_junctions(
         host_bam, host_ref, element_db, step_dir,
         min_clip=args.min_clip,
+        cluster_window=args.cluster_window,
+        min_mapq=args.min_mapq,
     )
 
     # Fallback to step 6 junctions if no sites found
