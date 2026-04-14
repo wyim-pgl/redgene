@@ -10,11 +10,10 @@ Input:  s03 R1/R2 FASTQ.GZ (construct-hitting reads + their mates)
 Output: results/<sample>/s04b_construct_asm/contigs.fasta
         results/<sample>/s04b_construct_asm/spades_stderr.log
 
-Note on SPAdes failures: when SPAdes exits non-zero (e.g. too few reads for
-coverage), this wrapper logs the warning, writes an empty contigs.fasta, and
-returns exit code 0. Downstream steps must handle an empty (zero-contig) file
-gracefully. Only genuine infrastructure failures (e.g. spades.py not found)
-are propagated as non-zero exit codes.
+Returns exit code 0 in all paths: empty input, SPAdes success (contigs
+copied), SPAdes failure on small input (empty contigs.fasta written).
+This means downstream steps can always find `contigs.fasta` at the
+expected path, even if assembly was infeasible.
 """
 from __future__ import annotations
 
@@ -27,12 +26,15 @@ from pathlib import Path
 
 
 def _is_empty_fastq(path: Path) -> bool:
-    """Empty-gzip or zero-read FASTQ detection."""
+    """Empty-gzip or zero-read FASTQ detection. Missing/unreadable = empty."""
     try:
         with gzip.open(path, "rt") as fh:
             return fh.read(1) == ""
     except OSError:
-        return path.stat().st_size == 0
+        try:
+            return path.stat().st_size == 0
+        except OSError:
+            return True  # missing or permission-denied → treat as empty
 
 
 def run(args: argparse.Namespace) -> int:
@@ -66,6 +68,7 @@ def run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         contigs.write_text("")
+        shutil.rmtree(spades_out, ignore_errors=True)
         return 0
 
     spades_contigs = spades_out / "contigs.fasta"
