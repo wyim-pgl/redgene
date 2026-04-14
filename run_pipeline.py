@@ -4,11 +4,13 @@
 Runs the pipeline steps sequentially for each sample defined in config.yaml.
 Each step invokes the corresponding script in scripts/ via subprocess.
 
-Pipeline (7 steps):
+Pipeline (7 steps + optional step 4b):
   1. QC + trim (fastp)
   2. Map reads to construct + UniVec (bwa mem)
   3. Extract construct-hitting reads + mates
   4. Map all reads to host genome (bwa mem)  [bottleneck: 5-7h]
+  4b. De novo assemble construct-hitting reads (s03 output) with SPAdes,
+      producing a per-sample FASTA passed to step 5 via --extra-element-db.
   5. Targeted insert assembly + FP filtering  [CORE STEP]
   6. CRISPR indel detection (optional, needs WT control)
   7. Copy number estimation
@@ -213,9 +215,9 @@ def build_step_cmd(
     elif step == "4b":
         # De novo assemble construct-hitting reads (from s03) to build a
         # per-sample construct reference that step 5 can pass as
-        # --extra-element-db. SPAdes memory is set to ~4 GB per thread with
-        # a floor of 8 GB (matches the project convention of 4 GB/thread
-        # and the SLURM 64 GB total for 16 threads).
+        # --extra-element-db. SPAdes gets ~2 GB/thread (half the SLURM
+        # allocation of 4 GB/thread), leaving the rest as headroom for
+        # SPAdes' graph-building memory overhead.
         memory_gb = max(8, threads * 4 // 2)
         return [sys.executable, script,
                 "--r1", str(s03 / f"{sname}_construct_R1.fq.gz"),
@@ -335,7 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python run_pipeline.py                          # all samples, steps 1-5\n"
+            "  python run_pipeline.py                          # all samples, steps 1-5 (includes 4b)\n"
             "  python run_pipeline.py --sample rice_G281       # one sample\n"
             "  python run_pipeline.py --steps 1-5,7            # core + copy number\n"
             "  python run_pipeline.py --steps 5                # re-run insert assembly\n"
@@ -352,7 +354,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--steps", type=str, default="1-5",
-        help="Steps to run, e.g. '1-5', '1-7', '5' (default: 1-5)",
+        help=(
+            "Steps to run (1, 2, 3, 4, 4b, 5, 6, 7). "
+            "Ranges expand across step 4b, so '1-5' includes 4b "
+            "(de novo construct assembly). (default: 1-5)"
+        ),
     )
     parser.add_argument(
         "--threads", type=int, default=None,
