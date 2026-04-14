@@ -6,21 +6,23 @@ cd "$(dirname "$0")"
 
 MANIFEST=common_payload_manifest.tsv
 OUT=common_payload.fa
-TMP=$(mktemp -d)
 
-: > "$OUT"
+TMPOUT=$(mktemp)
+trap 'rm -f "$TMPOUT"' EXIT
+
 while IFS=$'\t' read -r acc purpose notes; do
     [[ "$acc" == "accession" ]] && continue
     [[ -z "$acc" ]] && continue
-    # Derive a stable sequence name: purpose|accession
     header="${purpose}|${acc}"
     echo "Fetching $acc ($purpose)..." >&2
     efetch -db nuccore -id "$acc" -format fasta \
         | awk -v h=">${header}" 'NR==1{print h; next}{print}' \
-        >> "$OUT"
-    sleep 0.4  # be nice to NCBI
+        >> "$TMPOUT"
+    sleep 0.4
 done < "$MANIFEST"
 
-echo >&2
+# Only publish on success. If efetch failed anywhere above, set -e aborted
+# the script and this line never runs, leaving the prior $OUT intact.
+mv "$TMPOUT" "$OUT"
+
 echo "Wrote $OUT with $(grep -c '^>' "$OUT") sequences"
-rm -rf "$TMP"
