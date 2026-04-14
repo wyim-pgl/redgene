@@ -42,3 +42,6 @@ slurm_*.err
 # OS
 .DS_Store
 Thumbs.db
+
+# Worktrees
+.worktrees/
