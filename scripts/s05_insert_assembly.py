@@ -347,8 +347,8 @@ def _batch_check_element_hits(
     if extra_db is not None and extra_db.exists() and extra_db.stat().st_size > 0:
         dbs.append(extra_db)
 
-    for db in dbs:
-        blast_out = workdir / f"_clip_blast_{db.stem}.tsv"
+    for i, db in enumerate(dbs):
+        blast_out = workdir / f"_clip_blast_{i}_{db.stem}.tsv"
         subprocess.run(
             ["blastn", "-query", str(query_fa), "-subject", str(db),
              "-outfmt", "6 qseqid sseqid pident length",

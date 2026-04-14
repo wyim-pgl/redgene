@@ -32,3 +32,15 @@ def test_batch_check_element_hits_reads_extra_db(tmp_path):
     assert "clip_q1" in hits, f"no hits found: {hits}"
     hit_str = " ".join(hits["clip_q1"])
     assert "bar" in hit_str, f"expected 'bar' in hits, got: {hit_str}"
+
+
+def test_batch_check_element_hits_without_extra_db_ignores_extra_seq(tmp_path):
+    """When extra_db is None, a query matching only the (would-be) extra seq
+    must NOT produce hits. Guards against accidental extra-DB consultation."""
+    primary = tmp_path / "primary.fa"
+    primary.write_text(">elem_A\nACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTAC\n")
+    only_extra_seq = "TTAAGGCCTTAAGGCCTTAAGGCCTTAAGGCCTTAAGGCCTTAAGGCCTT"  # 50bp, distinct from primary
+
+    seqs = {"clip_only_extra": only_extra_seq}
+    hits = s05._batch_check_element_hits(seqs, primary, tmp_path, extra_db=None)
+    assert "clip_only_extra" not in hits or hits["clip_only_extra"] == []
