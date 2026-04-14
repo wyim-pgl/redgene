@@ -22,5 +22,5 @@ while IFS=$'\t' read -r acc purpose notes; do
 done < "$MANIFEST"
 
 echo >&2
-echo "Wrote $OUT with $(grep -c '^>' "$OUT") sequences" >&2
+echo "Wrote $OUT with $(grep -c '^>' "$OUT") sequences"
 rm -rf "$TMP"
