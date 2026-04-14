@@ -4,6 +4,10 @@
 pipeline:
   threads: 8
   memory_gb: 32
+  # Always-on supplementary FASTA of common transgene payload genes
+  # (bar, nptII, hpt, gusA, gfp, ...). Passed to step 5 as a second
+  # element DB alongside the per-sample construct reference.
+  common_payload_db: element_db/common_payload.fa
   # Use SLURM job submission (false = run locally)
   use_slurm: false
   slurm:

@@ -324,14 +324,15 @@ def _batch_check_element_hits(
     seqs: dict[str, str],
     element_db: Path,
     workdir: Path,
-    extra_db: Path | None = None,
+    extra_dbs: list[Path] | None = None,
 ) -> dict[str, list[str]]:
     """Batch check which sequences hit element DB(s) using blastn.
 
-    When extra_db is provided (e.g., per-sample SPAdes contigs from s04b),
-    each query is BLASTed against both DBs and hits are merged. This lets
-    sample-specific transgene payloads contribute to element annotation
-    without rebuilding the shared DB.
+    When ``extra_dbs`` is provided (e.g., the always-on ``common_payload.fa``
+    and/or per-sample SPAdes contigs from s04b), each query is BLASTed
+    against every DB in turn and hits are merged. This lets shared
+    transgene payloads and sample-specific assemblies contribute to
+    element annotation without rebuilding the shared DB.
     """
     if not seqs:
         return {}
@@ -344,8 +345,9 @@ def _batch_check_element_hits(
 
     hits: dict[str, list[str]] = defaultdict(list)
     dbs = [element_db]
-    if extra_db is not None and extra_db.exists() and extra_db.stat().st_size > 0:
-        dbs.append(extra_db)
+    for edb in (extra_dbs or []):
+        if edb is not None and edb.exists() and edb.stat().st_size > 0:
+            dbs.append(edb)
 
     for i, db in enumerate(dbs):
         blast_out = workdir / f"_clip_blast_{i}_{db.stem}.tsv"
@@ -375,7 +377,7 @@ def find_softclip_junctions(
     workdir: Path,
     min_clip: int = 20,
     cluster_window: int = 50,
-    extra_db: Path | None = None,
+    extra_dbs: list[Path] | None = None,
 ) -> list[InsertionSite]:
     """Scan host BAM for insertion sites using bidirectional soft-clip analysis.
 
@@ -634,7 +636,7 @@ def find_softclip_junctions(
 
     if element_db and element_check_seqs:
         all_element_hits = _batch_check_element_hits(
-            element_check_seqs, element_db, workdir, extra_db=extra_db)
+            element_check_seqs, element_db, workdir, extra_dbs=extra_dbs)
 
         for site in validated_sites:
             hits_5p = all_element_hits.get(f"{site.site_id}_5p", [])
@@ -821,7 +823,7 @@ def classify_site_tiers(
     threads: int = 4,
     min_identity: float = 80.0,
     min_aln_len: int = 20,
-    extra_transgene_db: Path | None = None,
+    extra_transgene_dbs: list[Path] | None = None,
 ) -> tuple[list[InsertionSite], list[InsertionSite], list[TierResult], set[str]]:
     """Classify sites by transgene-positive identification.
 
@@ -928,18 +930,22 @@ def classify_site_tiers(
     log(f"  {len(hits)} clips hit transgene_db (identity>={min_identity}%, "
         f"aln>={min_aln_len}bp)")
 
-    # Step 3b: Optional BLAST against per-sample extra transgene DB
-    # (e.g., SPAdes contigs from s04b). Merged into `hits` so assembled
-    # sample-specific payloads contribute to transgene-positive classification.
-    if (extra_transgene_db is not None
-            and extra_transgene_db.exists()
-            and extra_transgene_db.stat().st_size > 0):
-        extra_blast_out = tier_dir / "transgene_blast_extra.tsv"
+    # Step 3b: Optional BLAST against extra transgene DBs. These include
+    # the always-on shared payload DB (common_payload.fa) and per-sample
+    # SPAdes contigs from s04b. Merged into `hits` so both shared and
+    # sample-specific transgene references contribute to transgene-positive
+    # classification.
+    extra_dbs_list = [
+        edb for edb in (extra_transgene_dbs or [])
+        if edb is not None and edb.exists() and edb.stat().st_size > 0
+    ]
+    for i, edb in enumerate(extra_dbs_list):
+        extra_blast_out = tier_dir / f"transgene_blast_extra_{i}_{edb.stem}.tsv"
         log(f"  BLASTing clips against extra transgene DB "
-            f"({extra_transgene_db.name}, blastn-short)...")
+            f"({edb.name}, blastn-short)...")
         result_extra = subprocess.run(
             ["blastn", "-task", "blastn-short",
-             "-query", str(clip_fa), "-subject", str(extra_transgene_db),
+             "-query", str(clip_fa), "-subject", str(edb),
              "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
              "-evalue", "1e-5", "-max_target_seqs", "3",
              "-out", str(extra_blast_out)],
@@ -970,8 +976,8 @@ def classify_site_tiers(
                             "source": "element_db",
                         }
                         n_extra += 1
-        log(f"  Extra transgene DB contributed/updated {n_extra} clip hits "
-            f"(total now {len(hits)})")
+        log(f"  Extra transgene DB {edb.name} contributed/updated "
+            f"{n_extra} clip hits (total now {len(hits)})")
 
     # Step 3.5: Per-clip host verification
     # Some divergent host elements (e.g., I-actin rice intron) escape DB-level
@@ -3520,6 +3526,9 @@ def main() -> None:
     parser.add_argument("--extra-element-db", type=Path, default=None,
                         help="Optional second FASTA for element annotation "
                              "(e.g., per-sample SPAdes construct contigs).")
+    parser.add_argument("--common-payload-db", type=Path, default=None,
+                        help="Always-on supplementary FASTA of common transgene "
+                             "payload genes (bar, nptII, hpt, gusA, gfp, ...).")
     parser.add_argument("--junction-window", type=int, default=20,
                         help="Window (bp) around junction for allele phasing "
                              "(reads within this distance classified as junction-proximal)")
@@ -3538,11 +3547,18 @@ def main() -> None:
     host_ref = Path(args.host_ref)
     element_db = Path(args.element_db)
     extra_db = args.extra_element_db
+    common_payload_db = args.common_payload_db
+
+    # Order: common_payload (shared) first, then per-sample extra.
+    # A None entry is dropped naturally.
+    extra_dbs = [p for p in [common_payload_db, extra_db] if p is not None]
 
     log(f"=== Step 5: Targeted Insert Assembly for {args.sample_name} ===")
     log(f"  Host BAM: {host_bam}")
     log(f"  Host ref: {host_ref}")
     log(f"  Element DB: {element_db}")
+    if common_payload_db is not None:
+        log(f"  Common payload DB: {common_payload_db}")
     if extra_db is not None:
         log(f"  Extra element DB: {extra_db}")
 
@@ -3550,7 +3566,7 @@ def main() -> None:
     sites = find_softclip_junctions(
         host_bam, host_ref, element_db, step_dir,
         min_clip=args.min_clip,
-        extra_db=extra_db,
+        extra_dbs=extra_dbs,
     )
 
     # Fallback to step 6 junctions if no sites found
@@ -3581,7 +3597,7 @@ def main() -> None:
     assembly_sites, skip_sites, tier_results, host_endo_ids = classify_site_tiers(
         sites, element_db, host_ref, step_dir,
         threads=args.threads,
-        extra_transgene_db=extra_db,
+        extra_transgene_dbs=extra_dbs,
     )
     write_tier_classification(
         tier_results, step_dir / "site_tier_classification.tsv",

@@ -162,6 +162,7 @@ def build_step_cmd(
     threads: int,
     base_dir: Path,
     no_remote_blast: bool = False,
+    cfg: dict[str, Any] | None = None,
 ) -> list[str]:
     """Build the command-line arguments for a specific step."""
     script = str(base_dir / STEP_SCRIPTS[step])
@@ -251,6 +252,15 @@ def build_step_cmd(
         extra_db = s04b / "contigs.fasta"
         if extra_db.exists() and extra_db.stat().st_size > 0:
             cmd.extend(["--extra-element-db", str(extra_db)])
+        # Always-on shared payload DB (common_payload.fa), applied to every
+        # sample. Path comes from cfg.pipeline.common_payload_db, defaulting
+        # to element_db/common_payload.fa relative to the repo root.
+        cpd_rel = (cfg or {}).get("pipeline", {}).get(
+            "common_payload_db", "element_db/common_payload.fa"
+        )
+        cpd_path = base_dir / cpd_rel if not Path(cpd_rel).is_absolute() else Path(cpd_rel)
+        if cpd_path.exists() and cpd_path.stat().st_size > 0:
+            cmd.extend(["--common-payload-db", str(cpd_path)])
         return cmd
     elif step == "6":
         # Step 6 needs a WT BAM for comparison
@@ -301,6 +311,7 @@ def run_step(
     base_dir: Path,
     dry_run: bool,
     no_remote_blast: bool = False,
+    cfg: dict[str, Any] | None = None,
 ) -> None:
     """Execute a single pipeline step for one sample."""
     script = base_dir / STEP_SCRIPTS[step]
@@ -310,7 +321,7 @@ def run_step(
         sys.exit(f"ERROR: Script not found: {script}")
 
     cmd = build_step_cmd(step, sample_key, sample_cfg, outdir, threads, base_dir,
-                         no_remote_blast=no_remote_blast)
+                         no_remote_blast=no_remote_blast, cfg=cfg)
 
     log.info("Step %s: %s  [%s]", step, label, sample_key)
     if dry_run:
@@ -437,6 +448,7 @@ def main() -> None:
                 base_dir=base_dir,
                 dry_run=args.dry_run,
                 no_remote_blast=args.no_remote_blast,
+                cfg=cfg,
             )
 
         log.info("=== Sample %s: all steps completed ===\n", sample_key)
