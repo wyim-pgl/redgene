@@ -11,6 +11,15 @@ db/
 element_db/*.fa
 element_db/*.fa.*
 !element_db/gm_new_elements.fa
+!element_db/common_payload.fa
+!element_db/common_payload.fa.ndb
+!element_db/common_payload.fa.nhr
+!element_db/common_payload.fa.nin
+!element_db/common_payload.fa.njs
+!element_db/common_payload.fa.not
+!element_db/common_payload.fa.nsq
+!element_db/common_payload.fa.ntf
+!element_db/common_payload.fa.nto
 results/
 *.bam
 *.bam.bai
