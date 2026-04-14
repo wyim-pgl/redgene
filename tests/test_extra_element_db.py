@@ -58,8 +58,9 @@ def test_batch_check_element_hits_consults_multiple_dbs(tmp_path):
     sample_specific.write_text(">node_1\n" + SAMPLE_SEQ + "\n")
 
     seqs = {
-        "hit_common":  COMMON_SEQ,
-        "hit_sample":  SAMPLE_SEQ,
+        "hit_common":     COMMON_SEQ,
+        "hit_sample":     SAMPLE_SEQ,
+        "unrelated_clip": UNRELATED,
     }
     hits = s05._batch_check_element_hits(
         seqs, primary, tmp_path,
@@ -71,3 +72,6 @@ def test_batch_check_element_hits_consults_multiple_dbs(tmp_path):
     assert "hit_sample" in hits, f"sample-specific hit missing: {hits}"
     assert any("node_1" in h for h in hits["hit_sample"]), \
         f"expected 'node_1' in sample hits, got: {hits['hit_sample']}"
+    # Negative: unrelated clip matches none of the three DBs
+    assert "unrelated_clip" not in hits or hits["unrelated_clip"] == [], \
+        f"unrelated_clip should not hit any DB, got: {hits.get('unrelated_clip')}"
