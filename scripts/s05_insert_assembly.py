@@ -320,13 +320,18 @@ def _batch_check_maps_to_host(seqs: dict[str, str], host_ref: Path, workdir: Pat
     return maps_to_host
 
 
-def _batch_check_element_hits(seqs: dict[str, str], element_db: Path,
-                              workdir: Path) -> dict[str, list[str]]:
-    """Batch check which sequences hit the element database using one blastn call.
+def _batch_check_element_hits(
+    seqs: dict[str, str],
+    element_db: Path,
+    workdir: Path,
+    extra_db: Path | None = None,
+) -> dict[str, list[str]]:
+    """Batch check which sequences hit element DB(s) using blastn.
 
-    Args:
-        seqs: dict of {name: sequence} to check
-        Returns: dict of {name: [hit_elements]}
+    When extra_db is provided (e.g., per-sample SPAdes contigs from s04b),
+    each query is BLASTed against both DBs and hits are merged. This lets
+    sample-specific transgene payloads contribute to element annotation
+    without rebuilding the shared DB.
     """
     if not seqs:
         return {}
@@ -337,23 +342,28 @@ def _batch_check_element_hits(seqs: dict[str, str], element_db: Path,
             if len(seq) >= 20:
                 fh.write(f">{name}\n{seq}\n")
 
-    blast_out = workdir / "_clip_blast_batch.tsv"
-    subprocess.run(
-        ["blastn", "-query", str(query_fa), "-subject", str(element_db),
-         "-outfmt", "6 qseqid sseqid pident length",
-         "-evalue", "1e-3", "-max_target_seqs", "5",
-         "-out", str(blast_out)],
-        stderr=subprocess.DEVNULL,
-    )
-
     hits: dict[str, list[str]] = defaultdict(list)
-    if blast_out.exists():
-        with open(blast_out) as fh:
-            for line in fh:
-                cols = line.strip().split("\t")
-                if len(cols) >= 4 and int(cols[3]) >= 20:
-                    hits[cols[0]].append(cols[1])
-        blast_out.unlink(missing_ok=True)
+    dbs = [element_db]
+    if extra_db is not None and extra_db.exists() and extra_db.stat().st_size > 0:
+        dbs.append(extra_db)
+
+    for db in dbs:
+        blast_out = workdir / f"_clip_blast_{db.stem}.tsv"
+        subprocess.run(
+            ["blastn", "-query", str(query_fa), "-subject", str(db),
+             "-outfmt", "6 qseqid sseqid pident length",
+             "-evalue", "1e-3", "-max_target_seqs", "5",
+             "-out", str(blast_out)],
+            stderr=subprocess.DEVNULL,
+        )
+        if blast_out.exists():
+            with open(blast_out) as fh:
+                for line in fh:
+                    cols = line.strip().split("\t")
+                    if len(cols) >= 4 and int(cols[3]) >= 20:
+                        hits[cols[0]].append(cols[1])
+            blast_out.unlink(missing_ok=True)
+
     query_fa.unlink(missing_ok=True)
     return dict(hits)
 
@@ -365,6 +375,7 @@ def find_softclip_junctions(
     workdir: Path,
     min_clip: int = 20,
     cluster_window: int = 50,
+    extra_db: Path | None = None,
 ) -> list[InsertionSite]:
     """Scan host BAM for insertion sites using bidirectional soft-clip analysis.
 
@@ -623,7 +634,7 @@ def find_softclip_junctions(
 
     if element_db and element_check_seqs:
         all_element_hits = _batch_check_element_hits(
-            element_check_seqs, element_db, workdir)
+            element_check_seqs, element_db, workdir, extra_db=extra_db)
 
         for site in validated_sites:
             hits_5p = all_element_hits.get(f"{site.site_id}_5p", [])
@@ -810,6 +821,7 @@ def classify_site_tiers(
     threads: int = 4,
     min_identity: float = 80.0,
     min_aln_len: int = 20,
+    extra_transgene_db: Path | None = None,
 ) -> tuple[list[InsertionSite], list[InsertionSite], list[TierResult], set[str]]:
     """Classify sites by transgene-positive identification.
 
@@ -915,6 +927,51 @@ def classify_site_tiers(
 
     log(f"  {len(hits)} clips hit transgene_db (identity>={min_identity}%, "
         f"aln>={min_aln_len}bp)")
+
+    # Step 3b: Optional BLAST against per-sample extra transgene DB
+    # (e.g., SPAdes contigs from s04b). Merged into `hits` so assembled
+    # sample-specific payloads contribute to transgene-positive classification.
+    if (extra_transgene_db is not None
+            and extra_transgene_db.exists()
+            and extra_transgene_db.stat().st_size > 0):
+        extra_blast_out = tier_dir / "transgene_blast_extra.tsv"
+        log(f"  BLASTing clips against extra transgene DB "
+            f"({extra_transgene_db.name}, blastn-short)...")
+        result_extra = subprocess.run(
+            ["blastn", "-task", "blastn-short",
+             "-query", str(clip_fa), "-subject", str(extra_transgene_db),
+             "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
+             "-evalue", "1e-5", "-max_target_seqs", "3",
+             "-out", str(extra_blast_out)],
+            stderr=subprocess.DEVNULL,
+        )
+        if result_extra.returncode != 0:
+            log(f"  WARNING: extra transgene BLAST failed "
+                f"(rc={result_extra.returncode})")
+        n_extra = 0
+        if extra_blast_out.exists():
+            with open(extra_blast_out) as fh:
+                for line in fh:
+                    cols = line.strip().split("\t")
+                    if len(cols) < 6:
+                        continue
+                    qname = cols[0]
+                    pident = float(cols[2])
+                    aln_len = int(cols[3])
+                    bitscore = float(cols[5])
+                    if pident < min_identity or aln_len < min_aln_len:
+                        continue
+                    if qname not in hits or bitscore > hits[qname]["bitscore"]:
+                        hits[qname] = {
+                            "element": cols[1],
+                            "identity": pident,
+                            "aln_length": aln_len,
+                            "bitscore": bitscore,
+                            "source": "element_db",
+                        }
+                        n_extra += 1
+        log(f"  Extra transgene DB contributed/updated {n_extra} clip hits "
+            f"(total now {len(hits)})")
 
     # Step 3.5: Per-clip host verification
     # Some divergent host elements (e.g., I-actin rice intron) escape DB-level
@@ -3460,6 +3517,9 @@ def main() -> None:
                         help="Flank size for candidate read extraction (bp)")
     parser.add_argument("--min-clip", type=int, default=20,
                         help="Minimum soft-clip length for junction detection")
+    parser.add_argument("--extra-element-db", type=Path, default=None,
+                        help="Optional second FASTA for element annotation "
+                             "(e.g., per-sample SPAdes construct contigs).")
     parser.add_argument("--junction-window", type=int, default=20,
                         help="Window (bp) around junction for allele phasing "
                              "(reads within this distance classified as junction-proximal)")
@@ -3477,16 +3537,20 @@ def main() -> None:
     host_bam = Path(args.host_bam)
     host_ref = Path(args.host_ref)
     element_db = Path(args.element_db)
+    extra_db = args.extra_element_db
 
     log(f"=== Step 5: Targeted Insert Assembly for {args.sample_name} ===")
     log(f"  Host BAM: {host_bam}")
     log(f"  Host ref: {host_ref}")
     log(f"  Element DB: {element_db}")
+    if extra_db is not None:
+        log(f"  Extra element DB: {extra_db}")
 
     # ---- Phase 1: Soft-clip junction detection ----
     sites = find_softclip_junctions(
         host_bam, host_ref, element_db, step_dir,
         min_clip=args.min_clip,
+        extra_db=extra_db,
     )
 
     # Fallback to step 6 junctions if no sites found
@@ -3517,6 +3581,7 @@ def main() -> None:
     assembly_sites, skip_sites, tier_results, host_endo_ids = classify_site_tiers(
         sites, element_db, host_ref, step_dir,
         threads=args.threads,
+        extra_transgene_db=extra_db,
     )
     write_tier_classification(
         tier_results, step_dir / "site_tier_classification.tsv",
