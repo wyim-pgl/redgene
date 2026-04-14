@@ -295,7 +295,7 @@ def _parse_pileup_indels(
                 continue
             seen[key] = True
 
-            size = len(indel_seq)
+            size = len(indel_seq_upper)
 
             # Determine zygosity from allele frequency
             if freq >= 0.85:
