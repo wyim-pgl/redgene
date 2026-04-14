@@ -1,0 +1,12 @@
+accession	purpose	notes
+X17220.1	bar	phosphinothricin acetyltransferase, Streptomyces hygroscopicus
+V00618.1	nptII	neomycin phosphotransferase II, Tn5 transposon
+M55269.1	hpt	hygromycin phosphotransferase, Escherichia coli
+X06788.1	gusA	beta-glucuronidase reporter, E. coli (uidA)
+U55762.1	gfp	green fluorescent protein, jellyfish
+L29345.1	egfp	enhanced GFP variant
+V00141.1	P-CaMV35S	Cauliflower mosaic virus 35S promoter (full length)
+V00087.1	P-nos	Agrobacterium tumefaciens nopaline synthase promoter
+V00087.1	T-nos	nopaline synthase terminator (same accession, different coords)
+X04879.1	T-ocs	octopine synthase terminator
+NM_122942.3	AtYUCCA6	Arabidopsis thaliana YUCCA6 (flavin monooxygenase AT5G25620)
