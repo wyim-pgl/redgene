@@ -3308,24 +3308,6 @@ def generate_report(
         with open(border_tsv) as fh:
             n_borders = sum(1 for line in fh if line.strip())
 
-    # ---- UNKNOWN → CANDIDATE_LOW_CONF (border + foreign gap heuristic) ----
-    # Sample-specific transgenes (e.g., AtYUCCA6 gene, bar marker) may not hit
-    # element_db, but strong T-DNA structural signals — multiple border motifs
-    # in the assembled insert plus a large non-host segment — still point to a
-    # genuine insertion. Surface these as low-confidence candidates so they
-    # aren't silently discarded.
-    UNKNOWN_MIN_BORDERS = 4
-    UNKNOWN_MIN_FOREIGN_GAP = 1000
-    if (verdict == "UNKNOWN"
-            and n_borders >= UNKNOWN_MIN_BORDERS
-            and largest_gap >= UNKNOWN_MIN_FOREIGN_GAP):
-        verdict = "CANDIDATE_LOW_CONF"
-        verdict_reason = (
-            f"no element annotations but {n_borders} T-DNA border motifs + "
-            f"{largest_gap:,}bp non-host gap — likely sample-specific transgene "
-            f"not in element_db"
-        )
-
     # Determine deletion size
     deletion_size = abs(site.pos_3p - site.pos_5p) if site.pos_3p > 0 else 0
 
