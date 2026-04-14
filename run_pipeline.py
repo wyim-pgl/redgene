@@ -34,6 +34,7 @@ STEP_SCRIPTS: dict[str, str] = {
     "2": "scripts/s02_construct_map.py",
     "3": "scripts/s03_extract_reads.py",
     "4": "scripts/s04_host_map.py",
+    "4b": "scripts/s04b_construct_assembly.py",
     "5": "scripts/s05_insert_assembly.py",
     "6": "scripts/s06_indel.py",
     "7": "scripts/s07_copynumber.py",
@@ -44,10 +45,16 @@ STEP_NAMES: dict[str, str] = {
     "2": "Map reads to construct + UniVec (bwa mem)",
     "3": "Extract construct-hitting reads + mates",
     "4": "Map all reads to host (bwa mem)",
+    "4b": "De novo construct assembly (SPAdes, per-sample DB)",
     "5": "Targeted insert assembly + FP filtering",
     "6": "CRISPR indel detection (treatment vs WT)",
     "7": "Copy number estimation",
 }
+
+# Canonical execution order for steps. Used to expand ranges and to sort
+# parsed steps. `4b` slots between `4` and `5` so `--steps 1-5` includes it.
+STEP_ORDER: list[str] = ["1", "2", "3", "4", "4b", "5", "6", "7"]
+STEP_INDEX: dict[str, int] = {s: i for i, s in enumerate(STEP_ORDER)}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,27 +70,43 @@ log = logging.getLogger("pipeline")
 
 
 def parse_steps(step_spec: str) -> list[str]:
-    """Parse a step specification like '1-5', '1,2,5', '1-5,7' into a sorted
-    list of step keys.  Only steps present in STEP_SCRIPTS are accepted."""
+    """Parse a step specification like '1-5', '1,2,5', '1-5,7', '4b' into a
+    list of step keys in canonical execution order.
+
+    Ranges are interpreted against STEP_ORDER, so '1-5' expands to
+    ['1', '2', '3', '4', '4b', '5']. Only steps present in STEP_SCRIPTS are
+    accepted. Individual tokens may be '4b' (or any other non-numeric step
+    key) as well as plain integers.
+    """
     steps: set[str] = set()
     for part in step_spec.split(","):
         part = part.strip()
+        if not part:
+            continue
         if "-" in part:
             lo, hi = part.split("-", 1)
-            lo_int, hi_int = int(lo), int(hi)
-            for i in range(lo_int, hi_int + 1):
-                steps.add(str(i))
+            lo = lo.strip()
+            hi = hi.strip()
+            if lo not in STEP_INDEX:
+                sys.exit(f"ERROR: Unknown range start '{lo}' in --steps")
+            if hi not in STEP_INDEX:
+                sys.exit(f"ERROR: Unknown range end '{hi}' in --steps")
+            lo_idx, hi_idx = STEP_INDEX[lo], STEP_INDEX[hi]
+            if lo_idx > hi_idx:
+                sys.exit(f"ERROR: Invalid range '{part}' (start > end)")
+            for i in range(lo_idx, hi_idx + 1):
+                steps.add(STEP_ORDER[i])
         else:
             steps.add(part)
 
     # Validate
     unknown = steps - set(STEP_SCRIPTS)
     if unknown:
-        sys.exit(f"ERROR: Unknown step(s): {', '.join(sorted(unknown, key=int))}. "
-                 f"Available: {', '.join(sorted(STEP_SCRIPTS, key=int))}")
+        sys.exit(f"ERROR: Unknown step(s): {', '.join(sorted(unknown))}. "
+                 f"Available: {', '.join(STEP_ORDER)}")
 
-    # Return in execution order
-    return sorted(steps, key=int)
+    # Return in canonical execution order
+    return sorted(steps, key=lambda s: STEP_INDEX[s])
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
@@ -151,6 +174,7 @@ def build_step_cmd(
     s02 = outdir / sname / "s02_construct_map"
     s03 = outdir / sname / "s03_extract"
     s04 = outdir / sname / "s04_host_map"
+    s04b = outdir / sname / "s04b_construct_asm"
     s05 = outdir / sname / "s05_insert_assembly"
 
     reads = sample_cfg.get("reads", {})
@@ -186,6 +210,20 @@ def build_step_cmd(
                 "--outdir", str(outdir),
                 "--threads", str(threads),
                 "--sample-name", sname]
+    elif step == "4b":
+        # De novo assemble construct-hitting reads (from s03) to build a
+        # per-sample construct reference that step 5 can pass as
+        # --extra-element-db. SPAdes memory is set to ~4 GB per thread with
+        # a floor of 8 GB (matches the project convention of 4 GB/thread
+        # and the SLURM 64 GB total for 16 threads).
+        memory_gb = max(8, threads * 4 // 2)
+        return [sys.executable, script,
+                "--r1", str(s03 / f"{sname}_construct_R1.fq.gz"),
+                "--r2", str(s03 / f"{sname}_construct_R2.fq.gz"),
+                "--outdir", str(outdir),
+                "--sample-name", sname,
+                "--threads", str(threads),
+                "--memory-gb", str(memory_gb)]
     elif step == "5":
         # Check for WT-filtered reads (s03b output), fall back to s03
         s03_r1 = s03 / f"{sname}_filtered_R1.fq.gz"
@@ -205,6 +243,12 @@ def build_step_cmd(
                "--threads", str(threads)]
         if no_remote_blast:
             cmd.append("--no-remote-blast")
+        # If s04b produced a non-empty per-sample construct assembly, pass
+        # it through as an extra element DB. Optional: samples that never
+        # ran 4b simply skip this flag and run exactly as before.
+        extra_db = s04b / "contigs.fasta"
+        if extra_db.exists() and extra_db.stat().st_size > 0:
+            cmd.extend(["--extra-element-db", str(extra_db)])
         return cmd
     elif step == "6":
         # Step 6 needs a WT BAM for comparison
