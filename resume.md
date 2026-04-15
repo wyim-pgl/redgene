@@ -1,111 +1,138 @@
 # Resume — RedGene Pipeline
 
 **Date:** 2026-04-15
-**Branch:** `feature/sample-construct-db` (HEAD `10e3b9b`), 20 commits ahead of main
-**Working dir:** `/data/gpfs/assoc/pgl/develop/redgene/.worktrees/sample-construct-db` (isolated worktree; `db/`, `test_data/`, `data/`, `results/` symlink back to the main path)
+**Branch:** `main` @ `8bb8b0a` — `feature/sample-construct-db` merged (fast-forward)
+**Working dir:** `/data/gpfs/assoc/pgl/develop/redgene`
+**Worktree:** removed after merge (was at `.worktrees/sample-construct-db`)
 
 ---
 
-## Feature summary
+## Session outcome — what changed on `main`
 
-Extends the pipeline so that **sample-specific transgene payloads (AtYUCCA6 gene, bar marker, etc.) that aren't in the shared `element_db/gmo_combined_db.fa` can still be annotated**. Two mechanisms:
+### New pipeline step `4b`
+- `scripts/s04b_construct_assembly.py` — de novo SPAdes assembly of the construct-hitting reads produced by s03. Emits `results/<sample>/s04b_construct_asm/contigs.fasta` (filtered by marker-DB hits) + `contigs_all.fasta` (unfiltered debug copy).
+- Registered in `run_pipeline.py`: `--steps 1-5` now expands to `1,2,3,4,4b,5`. Step 5 auto-appends `--extra-element-db <contigs.fasta>` when it exists and is non-empty.
 
-1. **`element_db/common_payload.fa`** — curated FASTA of 9 bacterial/viral-origin transgene markers (bar, nptII, hpt, gusA, gfp, egfp, P-CaMV35S, P-nos, T-ocs), fetched from NCBI via `element_db/build_common_payload.sh`. Wired as an always-on `--common-payload-db` flag on s05.
-2. **New step 4b** (`scripts/s04b_construct_assembly.py`) — de novo SPAdes assembly of construct-hitting reads from s03. The resulting contigs are passed to s05 via `--extra-element-db`, giving s05 a per-sample reference it can BLAST against. After Task 11 the wrapper also **filters the contigs** by marker-DB hits (≥90% / ≥200 bp) so only payload-bearing contigs are forwarded — prevents 25× positive-site inflation seen on raw contigs.
+### Shared `element_db/common_payload.fa`
+- 9 canonical bacterial/viral transgene markers: `bar`, `nptII`, `hpt`, `gusA`, `gfp`, `egfp`, `P-CaMV35S`, `P-nos`, `T-ocs`.
+- Fetched from NCBI by `element_db/build_common_payload.sh` (manifest in `common_payload_manifest.tsv`).
+- Wired as the always-on `--common-payload-db` flag on s05 via `pipeline.common_payload_db` in `config.yaml`.
 
-`run_pipeline.py` now registers step 4b between 4 and 5; `--steps 1-5` expands to `1,2,3,4,4b,5`. `pipeline.common_payload_db` in `config.yaml` names the always-on DB. All three extras are threaded through `_batch_check_element_hits` (Phase 1.5) and `annotate_insert` (Phase 3) via `extra_dbs: list[Path] | None`.
+### s05 extended to consult multiple element DBs
+- `_batch_check_element_hits` (Phase 1.5 positive classification) and `annotate_insert` (Phase 3 element annotation) now both take `extra_dbs: list[Path] | None`.
+- `classify_site_tiers` merge rule uses a new `_should_replace` helper: **element_db hit beats univec regardless of bitscore**; same-source ties keep the incumbent. This restores sites whose clips match vector backbone at the same identity as a sample-specific contig (rice Chr3:16,439,674 was the motivating case).
+
+### Pre-filter for s04b contigs
+- Raw s04b contigs can cross-react with generic host features (AtYUCCA6 spike test: 1,345 contigs inflated Phase 1.5 positives from 45 → 1,116). The wrapper now keeps only contigs with at least one `blastn` hit ≥90 % / ≥200 bp against `common_payload.fa` + `gmo_combined_db.fa`. AtYUCCA6 spot-check: 1,345 → 6 contigs (99.6 % reduction).
+- Escape hatch: `--no-filter` preserves legacy raw contigs.
+
+### Tests
+`tests/test_extra_element_db.py` + `tests/test_s04b_construct_assembly.py` — **10/10 passing** (pytest 9.0.3 in `redgene` micromamba env).
+
+### Bug + regression log
+- `bug.md` — 17 bugs + 5 open issues + session observations (committed `8bb8b0a`).
+- `docs/superpowers/runs/2026-04-14-regression.tsv` — rice / A2_3 / AtYUCCA6 verdict deltas and diagnostic notes.
 
 ---
 
-## Commits on the branch (oldest → newest)
+## Branch/commit map
+
+`main` now contains everything from the former `feature/sample-construct-db` branch. Highlights (newest → oldest):
 
 ```
-a152d7f  gitignore: add .worktrees/
-0c90fe6  Add common transgene payload accession manifest
-76c15ee  Add common_payload.fa with bar/nptII/hpt/gusA/gfp/AtYUCCA6
-b61b7f1  common_payload: drop duplicate T-nos, route summary to stdout
-b02be31  common_payload: atomic publish + trap cleanup
-c8d9ec4  Add s04b step: de novo SPAdes assembly of construct reads
-34fe8e7  s04b: robustify empty detection + scratch cleanup + test name
-ec7cf10  s05: accept --extra-element-db for per-sample construct DB
-8fc9057  s05: disambiguate per-DB blast output file to prevent stem collision
-6de9f75  run_pipeline: register s04b and forward contigs into s05
-5ca9e44  run_pipeline: document step 4b and correct memory comment
-c3c96b0  Wire common_payload DB into s05 as always-on supplementary
-ae62ea2  test(s05): exercise unrelated-clip negative case in multi-DB test
-0c5a9c1  common_payload: drop AtYUCCA6 (host-origin plant gene)
-66fb4e1  Record rice_G281 + A2_3 regression deltas after extra-DB plumbing
-0e3cbc0  regression: diagnose rice Chr3:16,439,674 bitscore-tie exclusion
-3998bdf  Document step 4b and common_payload DB
-d56b18f  s05: extend annotate_insert (Phase 3) with extra_dbs list
+8bb8b0a  bug: log 17 bugs + 5 open issues from sample-construct-db cycle
+de83e60  resume: capture sample-construct-db branch state for finish
+10e3b9b  s04b: filter contigs by marker-DB hits to curb extra_db inflation          (Task 11)
+4d3f2bb  s05: element_db beats univec regardless of bitscore in classify_site_tiers (Task 10)
 01f4654  regression: document AtYUCCA6 25x transgene-positive inflation
-4d3f2bb  s05: element_db beats univec regardless of bitscore in classify_site_tiers
-10e3b9b  s04b: filter contigs by marker-DB hits to curb extra_db inflation
+d56b18f  s05: extend annotate_insert (Phase 3) with extra_dbs list                  (bug-4 fix)
+3998bdf  Document step 4b and common_payload DB
+0e3cbc0  regression: diagnose rice Chr3:16,439,674 bitscore-tie exclusion
+66fb4e1  Record rice_G281 + A2_3 regression deltas after extra-DB plumbing
+0c5a9c1  common_payload: drop AtYUCCA6 (host-origin plant gene)
+ae62ea2  test(s05): exercise unrelated-clip negative case in multi-DB test
+c3c96b0  Wire common_payload DB into s05 as always-on supplementary                 (Task 6)
+5ca9e44  run_pipeline: document step 4b and correct memory comment
+6de9f75  run_pipeline: register s04b and forward contigs into s05                   (Task 5)
+8fc9057  s05: disambiguate per-DB blast output file to prevent stem collision
+ec7cf10  s05: accept --extra-element-db for per-sample construct DB                 (Task 4)
+34fe8e7  s04b: robustify empty detection + scratch cleanup + test name
+c8d9ec4  Add s04b step: de novo SPAdes assembly of construct reads                  (Task 3)
+b02be31  common_payload: atomic publish + trap cleanup
+b61b7f1  common_payload: drop duplicate T-nos, route summary to stdout
+76c15ee  Add common_payload.fa with bar/nptII/hpt/gusA/gfp/AtYUCCA6                 (Task 2)
+0c90fe6  Add common transgene payload accession manifest                            (Task 1)
+a152d7f  gitignore: add .worktrees/
+1fe8bfe  Re-apply s06 indel_seq NameError fix after f78912b revert
+02e1579  Revert "Reclassify UNKNOWN inserts as CANDIDATE_LOW_CONF ..."
 ```
 
-20 commits. Two reverts already landed upstream (`4cec387` site-discovery fix → reverted in `68d0e52`; `f78912b` borders-heuristic reclass → reverted in `02e1579`) before this feature branch forked.
+Two in-session reverts (`68d0e52`, `02e1579`) kept two flawed heuristics out of `main`.
 
 ---
 
-## Tests
+## End-to-end validation status
 
-`tests/test_extra_element_db.py` + `tests/test_s04b_construct_assembly.py` — **10 passing**:
+Unit tests all pass. Full-pipeline reruns to confirm the two late fixes are **not yet done** and are the first things to do next session.
 
-- `_batch_check_element_hits` with single extra DB, multiple extra DBs, and no extras
-- `annotate_insert` with extra_dbs
-- `_should_replace` priority (element_db > univec regardless of bitscore; same-source bitscore-best with incumbent ties)
-- s04b SPAdes-failure-on-tiny-input, empty-input short-circuit
-- `_filter_contigs_by_markers` keeps marker-positive, drops random, handles missing marker DB, `--no-filter` keeps raw
+| Sample | Expected outcome | Status |
+|--------|-----------------|--------|
+| rice_G281 | Chr3:16,439,674 restored as CANDIDATE after Task 10 (`_should_replace`) | ⏳ rerun needed |
+| tomato_Cas9_A2_3 | ch01:91,002,744 remains CANDIDATE; s04b rescue already validated via partial run | ⏳ full rerun needed |
+| soybean_AtYUCCA6 | Positive-site count drops from 1,116 → ~baseline-scale after Task 11 filter; UNKNOWN sites with real T-DNA promoted to CANDIDATE via `annotate_insert` extra_dbs | ⏳ rerun needed |
 
-Run: `cd <worktree> && eval "$(micromamba shell hook --shell bash)" && micromamba activate redgene && pytest tests/ -v`.
-
----
-
-## End-to-end verification status
-
-| Sample | Result |
-|--------|--------|
-| rice_G281 (pre-Task 10) | Regression: Chr3:16,439,674 lost — both clips univec-only at equal bitscore, s04b contig covered the region but tied. **Task 10 (commit `4d3f2bb`) fixes the tie-break; needs rerun to confirm.** |
-| tomato_Cas9_A2_3 | Positive signal from partial run: Phase 1 VALIDATED `SLM_r2.0ch01:91,002,744` with 3p=NODE_1 from s04b contigs at 100%/124bp (strictly longer than univec 76bp, so the existing strict `>` merge already worked here). Full rerun still pending. |
-| soybean_AtYUCCA6 | Phase 1.5 inflated to 1,116 positive sites (25× baseline 45) on raw s04b contigs; run killed. **Task 11 (commit `10e3b9b`) filters contigs 1,345 → 6 (99.6% reduction); needs rerun to confirm final verdict distribution.** |
-| cucumber_line212/224/225 | Pre-existing OOM at 32GB — separate issue, not touched by this branch. |
-| soybean_UGT72E3 | Pre-existing 24h timeout on 64GB — separate issue, not touched. |
-
-Regression snapshots are in `docs/superpowers/runs/2026-04-14-regression.tsv`.
-
----
-
-## Deferred work (not blockers for finishing)
-
-- Rerun s05 on rice_G281, tomato_Cas9_A2_3, soybean_AtYUCCA6 end-to-end with the current HEAD to confirm the two fixes land as expected. Each takes 30 min–several hours on SLURM.
-- Cucumber + UGT72E3 reruns at 64GB (pre-existing issues, tracked in the main worktree's task list).
-- No PR yet — awaiting `finishing-a-development-branch` decision (merge / push / keep / discard).
-
----
-
-## Reference — how to test this branch quickly
+Suggested rerun command (each sample as a separate SLURM job):
 
 ```bash
-cd /data/gpfs/assoc/pgl/develop/redgene/.worktrees/sample-construct-db
-eval "$(micromamba shell hook --shell bash)"
-micromamba activate redgene
+cd /data/gpfs/assoc/pgl/develop/redgene
+eval "$(micromamba shell hook --shell bash)" && micromamba activate redgene
 
-# Unit tests (under 10s)
-pytest tests/ -v
-
-# End-to-end on a known sample (requires SLURM or long local run)
 sbatch --partition=cpu-s2-core-0 --account=cpu-s2-pgl-0 --time=24:00:00 \
-    --mem=64G --cpus-per-task=8 --chdir="$PWD" \
-    --wrap="eval \"\$(micromamba shell hook --shell bash)\" && micromamba activate redgene \
-            && python run_pipeline.py --sample soybean_AtYUCCA6 --steps 4b,5 --threads 8 --no-remote-blast"
-
-# Inspect verdicts after completion
-grep -h "^Verdict:" results/soybean_AtYUCCA6/s05_insert_assembly/insertion_*_report.txt \
-    | awk -F' —' '{print $1}' | sort | uniq -c
+  --mem=64G --cpus-per-task=8 --chdir="$PWD" \
+  --wrap="eval \"\$(micromamba shell hook --shell bash)\" && micromamba activate redgene \
+          && python run_pipeline.py --sample <sample> --steps 4b,5 --threads 8 --no-remote-blast"
 ```
 
 ---
 
-## Plan document
+## Open items carried over
 
-`docs/superpowers/plans/2026-04-14-sample-construct-assembly-and-payload-db.md` — full 9-task plan + accepted deviations. Tasks 10 and 11 were added mid-flight as follow-ups after Task 7 and Task 8 surfaced two design gaps; both are now committed on this branch.
+Pre-existing issues outside this feature's scope, still pending:
+
+- **cucumber_line212 / 224 / 225**: s05 OOM at 32 GB. Needs 64 GB rerun (job 5626608 was submitted earlier in session; final state not re-verified).
+- **soybean_UGT72E3**: s05 TIMEOUT at 64 GB / 24 h (job 5626560). Task 11 contig filter may help reduce assembly queue.
+- **CRISPR indel validation** for A2_1/A2_2/A2_3 already confirmed earlier in the broader session (SlPHD_MS1 9 bp del in A2_2 matches Seol et al. 2025 ground truth).
+- **Step 7 copy number** done for all four tomato samples.
+- **Visualization scripts** (`plot_editing_profile.py`, `plot_editing_effects.py`, `plot_sample_summary.py`) and coverage sensitivity batch still untouched.
+
+---
+
+## Reference — how to pick up from here
+
+```bash
+cd /data/gpfs/assoc/pgl/develop/redgene
+eval "$(micromamba shell hook --shell bash)" && micromamba activate redgene
+
+git log --oneline -10                   # confirm state
+pytest tests/ -v                        # 10 tests, <10 s
+cat bug.md                              # open items + deferred fixes
+cat docs/superpowers/runs/2026-04-14-regression.tsv   # verdict deltas
+
+# Submit a validation run (rice first — smallest genome, fastest round-trip)
+sbatch --partition=cpu-s2-core-0 --account=cpu-s2-pgl-0 --time=6:00:00 \
+  --mem=32G --cpus-per-task=8 --chdir="$PWD" \
+  --wrap="eval \"\$(micromamba shell hook --shell bash)\" && micromamba activate redgene \
+          && python run_pipeline.py --sample rice_G281 --steps 4b,5 --threads 8 --no-remote-blast"
+
+# Inspect verdicts after completion
+grep -h "^Verdict:" results/rice_G281/s05_insert_assembly/insertion_*_report.txt \
+    | awk -F' —' '{print $1}' | sort | uniq -c
+grep "^Verdict:" results/rice_G281/s05_insert_assembly/insertion_Chr3_16439674_report.txt
+```
+
+Plan document and in-progress notes:
+
+- `docs/superpowers/plans/2026-04-14-sample-construct-assembly-and-payload-db.md`
+- `docs/superpowers/runs/2026-04-14-regression.tsv`
+
+Stash left from the merge (main's pre-session edits to `README.md`, `resume.md`, `run_batch_other.sh`, `run_batch_tomato.sh`) is still on `stash@{0}` as `main-local-session-edits-pre-merge`. `git stash show` to inspect; `git stash drop` to discard if unneeded.
