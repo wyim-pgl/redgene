@@ -107,3 +107,31 @@ def test_annotate_insert_uses_extra_dbs(tmp_path):
     ann = (out_dir / "element_annotation.tsv").read_text()
     assert "elem_A" in ann, f"primary-DB hit missing from annotation: {ann}"
     assert "bar" in ann, f"extra-DB hit missing from annotation: {ann}"
+
+
+def test_element_db_hit_wins_over_univec_at_tied_bitscore(tmp_path):
+    """When a clip matches univec and an extra element_db contig at ~equal
+    bitscore, the merged hit source must be element_db so downstream
+    is_positive passes. This guards the priority rule against a future
+    regression where strict '>' comparisons creep back in.
+
+    Task 7 context: rice_G281's real T-DNA at Chr3:16,439,674 was being
+    excluded because both 5'/3' clips tied at 100% on AF234315.1 (the
+    univec backbone) and on the s04b-assembled element_db contig; the
+    old `>` merge kept whichever entry was iterated first (univec), and
+    the element_db-required policy then filtered the site out.
+    """
+    # Same bitscore, element_db candidate vs univec incumbent -> replace
+    incumbent = {"source": "univec", "bitscore": 100.0}
+    assert s05._should_replace(incumbent, "element_db", 100.0) is True
+
+    # Strictly higher bitscore, univec candidate vs element_db incumbent
+    # -> element_db still wins (do NOT replace)
+    incumbent = {"source": "element_db", "bitscore": 100.0}
+    assert s05._should_replace(incumbent, "univec", 200.0) is False
+
+    # Same source, strictly higher bitscore -> replace
+    assert s05._should_replace(incumbent, "element_db", 150.0) is True
+
+    # Same source, equal bitscore -> incumbent wins (no replace)
+    assert s05._should_replace(incumbent, "element_db", 100.0) is False

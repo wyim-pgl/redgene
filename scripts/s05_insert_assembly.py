@@ -815,6 +815,28 @@ def _filter_host_endogenous(
     return blast_db, exclude_ids
 
 
+def _should_replace(existing: dict | None, new_src: str, new_bit: float) -> bool:
+    """Two-tier merge priority for classify_site_tiers `hits` map.
+
+    (a) An element_db hit always beats a univec hit, regardless of bitscore
+        -- Task 7 diagnosed rice_G281's real T-DNA being excluded because both
+        clips tied at 100% on AF234315.1 (univec) and on the s04b element_db
+        contig, and iteration order kept the univec entry; the
+        element_db-required positive policy then dropped the site.
+    (b) Within the same source, a strictly higher bitscore wins (ties go to
+        the incumbent, matching the prior `bitscore > hits[qname]["bitscore"]`
+        semantics).
+    """
+    if existing is None:
+        return True
+    old_src = existing.get("source", "")
+    if new_src == "element_db" and old_src == "univec":
+        return True
+    if new_src == "univec" and old_src == "element_db":
+        return False
+    return new_bit > existing.get("bitscore", 0.0)
+
+
 def classify_site_tiers(
     sites: list[InsertionSite],
     element_db: Path,
@@ -916,9 +938,9 @@ def classify_site_tiers(
                 if pident < min_identity or aln_len < min_aln_len:
                     continue
 
-                if qname not in hits or bitscore > hits[qname]["bitscore"]:
-                    sseqid = cols[1]
-                    source = "univec" if sseqid.startswith("univec|") else "element_db"
+                sseqid = cols[1]
+                source = "univec" if sseqid.startswith("univec|") else "element_db"
+                if _should_replace(hits.get(qname), source, bitscore):
                     hits[qname] = {
                         "element": sseqid,
                         "identity": pident,
@@ -967,7 +989,7 @@ def classify_site_tiers(
                     bitscore = float(cols[5])
                     if pident < min_identity or aln_len < min_aln_len:
                         continue
-                    if qname not in hits or bitscore > hits[qname]["bitscore"]:
+                    if _should_replace(hits.get(qname), "element_db", bitscore):
                         hits[qname] = {
                             "element": cols[1],
                             "identity": pident,
