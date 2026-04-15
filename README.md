@@ -42,7 +42,10 @@ specific vector sequences.
                            |
               [Step 4] SPAdes local assembly → contigs
                            |
+     [Step 4b] SPAdes → sample-specific construct contigs  ★ NEW
+                           |
       [Step 5] minimap2 contigs → host & construct PAF
+              (uses 4b contigs + common_payload)
                            |
       [Step 6] Chimeric contig detection → junction coordinates
            |                              |
@@ -55,6 +58,12 @@ specific vector sequences.
         detection (vs WT)          (depth ratio)
 ```
 
+**Step 4b — sample-specific construct assembly**: Many transgenic samples carry payload sequences (e.g., AtYUCCA6, bar marker, custom RNAi hairpins) that are not present in the shared `element_db/gmo_combined_db.fa`. Without step 4b, s05 annotates those payload-containing inserts as UNKNOWN even when they carry genuine T-DNA. Step 4b runs SPAdes on the construct-hitting reads from s03 to build a per-sample FASTA, which s05 then loads via `--extra-element-db` so the payload sequences are identified and annotated correctly.
+
+When to skip: if the sample's construct is fully characterized and already covered by the shared element DB (e.g., rice_G281 with its dedicated `G281_construct.fa`), step 4b adds runtime without changing the verdict. The range parser includes 4b by default; use `--steps 1-4,5` to bypass it.
+
+Known limitation: when s04b contigs cover the same region as a UniVec sequence at equal or better bitscore, `classify_site_tiers`' strict bitscore-best merge retains the UniVec hit by iteration order. The element_db-required transgene-positive policy then excludes the site. Rice G281's Chr3:16,439,674 insertion surfaces this pattern. A follow-up will add an explicit priority policy (any element_db hit beats UniVec regardless of bitscore).
+
 ### Step Details
 
 | Step | Script | Input | Output | Description |
@@ -64,6 +73,7 @@ specific vector sequences.
 | 3 | `s03_extract_reads.py` | Construct BAM | FASTQ pairs | Extract construct-hitting reads + mates |
 | 3b | `s03b_homology_filter.py` | Extracted FASTQ | Filtered FASTQ | Remove reads from homologous regions |
 | 4 | `s04_assembly.py` | Extracted FASTQ | Contigs FASTA | Local assembly with SPAdes |
+| 4b | `s04b_construct_assembly.py` | Extracted FASTQ (from s03) | Per-sample construct FASTA | De novo SPAdes assembly of construct-hitting reads for per-sample element DB |
 | 5 | `s05_contig_map.py` | Contigs | PAF files | Map contigs to host + construct (minimap2) |
 | 6 | `s06_junction.py` | PAF files | junctions.tsv | Detect chimeric contigs, extract junction coords |
 | 6b | `s06b_junction_verify.py` | junctions.tsv + host BAM | Verified junctions | Multi-evidence scoring |
@@ -136,6 +146,10 @@ from the EUginius database (https://euginius.eu/), including:
 - **Full-length sequences**: Reference constructs from NCBI
 
 To rebuild the database: `python element_db/gmo_db.py`
+
+### Common payload DB
+
+`element_db/common_payload.fa` provides 9 canonical bacterial/viral transgene markers (bar, nptII, hpt, gusA, gfp, egfp, P-CaMV35S, P-nos, T-ocs) that are wired as an always-on `--common-payload-db` argument in s05. This ensures the most frequently used selection and reporter genes are always annotated even when the per-sample or event-specific construct DB does not list them. Built by `element_db/build_common_payload.sh` via NCBI efetch.
 
 ## False Positive Filtering
 

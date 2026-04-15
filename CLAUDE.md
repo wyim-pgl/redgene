@@ -57,25 +57,27 @@ python scripts/viz/plot_editing_effects.py \
 
 ## Architecture
 
-`run_pipeline.py` orchestrates 7 analysis steps by calling standalone scripts in `scripts/` via subprocess. Config is loaded from `config.yaml` (YAML with per-sample settings). Each step script accepts `--outdir`, `--sample-name`, and step-specific arguments. Inter-step dependencies are wired in `build_step_cmd()` in run_pipeline.py.
+`run_pipeline.py` orchestrates 7 core + 1 optional (4b) analysis steps by calling standalone scripts in `scripts/` via subprocess. Config is loaded from `config.yaml` (YAML with per-sample settings). Each step script accepts `--outdir`, `--sample-name`, and step-specific arguments. Inter-step dependencies are wired in `build_step_cmd()` in run_pipeline.py.
 
 ### Pipeline flow and step dependencies
 ```
 [1] fastp QC → [2] bwa → construct+UniVec BAM → [3] extract reads + mates
   → [3b] WT homology filter (optional)
   → [4] bwa → host BAM (bottleneck: ~5-7h)
-  → [5] Targeted insert assembly + FP filtering  ★ CORE STEP
+  → [4b] SPAdes → sample-specific construct contigs  ★ NEW
+  → [5] Targeted insert assembly + FP filtering (uses 4b contigs + common_payload)
   → [6] CRISPR indel detection (optional, needs WT)
   → [7] copy number (depth ratio)
 ```
 
-Steps 1-3 are fast (<30 min each). Step 4 is the bottleneck (~5-7h per sample). Step 5 is the core: finds insertion sites from host BAM soft-clips, assembles inserts, annotates elements, and applies 4 post-assembly false positive filters (host-fraction, construct-flanking, chimeric, alternative-locus). Steps 6 and 7 are optional downstream analyses.
+Steps 1-3 are fast (<30 min each). Step 4 is the bottleneck (~5-7h per sample). Step 4b is optional but recommended: it de novo assembles the construct-hitting reads from s03 with SPAdes to produce a per-sample FASTA that s05 consumes via `--extra-element-db`, ensuring sample-specific payload sequences (e.g., AtYUCCA6, bar marker) get annotated rather than reported as UNKNOWN. Step 5 is the core: finds insertion sites from host BAM soft-clips, assembles inserts, annotates elements, and applies 4 post-assembly false positive filters (host-fraction, construct-flanking, chimeric, alternative-locus). Steps 6 and 7 are optional downstream analyses.
 
 ### Key scripts
 | Script | Purpose |
 |--------|---------|
 | `scripts/s03_extract_reads.py` | Extracts construct-hitting reads + mates |
 | `scripts/s03b_homology_filter.py` | WT-based filtering of host-derived false positives |
+| `scripts/s04b_construct_assembly.py` | De novo SPAdes assembly of construct-hitting reads for per-sample element DB |
 | `scripts/s05_insert_assembly.py` | **CORE** — targeted assembly + 4 FP filters (host-fraction, construct-flanking, chimeric, alt-locus) |
 | `scripts/s06_indel.py` | CRISPR editing detection (pileup-based, NOT bcftools) |
 | `scripts/s07_copynumber.py` | Depth-ratio copy number estimation |
@@ -109,6 +111,7 @@ Steps 1-3 are fast (<30 min each). Step 4 is the bottleneck (~5-7h per sample). 
 | `Gmax_v4.0.fa` | Soybean Wm82.a4.v1 (GCF_000004515.6, 1.1 Gbp) |
 | `element_db/gmo_combined_db.fa` | 131 GMO elements from EUginius (incl. thaumatin II) |
 | `gmo_corn_combined_db.fa` | 192 seqs: 130 EUginius + 62 corn LB/RB borders (Sci Rep 2025) |
+| `element_db/common_payload.fa` | 9 canonical bacterial/viral transgene markers (bar, nptII, hpt, gusA, gfp, egfp, P-CaMV35S, P-nos, T-ocs). Built by `element_db/build_common_payload.sh` via NCBI efetch. Wired as always-on `--common-payload-db` for s05. |
 
 ## Coding Conventions
 
