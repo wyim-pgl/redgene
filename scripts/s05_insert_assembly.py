@@ -2654,15 +2654,23 @@ def _parse_blast6(path: Path, min_len: int = 30) -> list[dict]:
 
 def _run_local_blast(
     insert_fasta: Path, element_db: Path, output_dir: Path,
+    tag: str | None = None,
 ) -> list[dict]:
-    """Local BLAST vs element_db. Fast, covers known GMO elements."""
-    db_prefix = output_dir / "_element_blastdb"
+    """Local BLAST vs element_db. Fast, covers known GMO elements.
+
+    ``tag`` disambiguates intermediate filenames when the function is
+    called multiple times in the same ``output_dir`` (e.g. once for the
+    primary element_db and again for each extra DB). Defaults to the
+    stem of ``element_db`` so callers can omit it.
+    """
+    suffix = tag if tag is not None else element_db.stem
+    db_prefix = output_dir / f"_element_blastdb_{suffix}"
     subprocess.run(
         ["makeblastdb", "-in", str(element_db), "-dbtype", "nucl",
          "-out", str(db_prefix)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
     )
-    blast_out = output_dir / "_local_blast.tsv"
+    blast_out = output_dir / f"_local_blast_{suffix}.tsv"
     subprocess.run(
         ["blastn", "-query", str(insert_fasta), "-db", str(db_prefix),
          "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send evalue bitscore",
@@ -2675,7 +2683,7 @@ def _run_local_blast(
     blast_out.unlink(missing_ok=True)
     for ext in [".nhr", ".nin", ".nsq", ".ndb", ".not", ".ntf", ".nto", ".njs"]:
         Path(f"{db_prefix}{ext}").unlink(missing_ok=True)
-    log(f"  Local BLAST: {len(hits)} hits from element_db")
+    log(f"  Local BLAST ({suffix}): {len(hits)} hits")
     return hits
 
 
@@ -2797,18 +2805,35 @@ def annotate_insert(
     output_dir: Path,
     sample_name: str,
     no_remote_blast: bool = False,
+    extra_dbs: list[Path] | None = None,
 ) -> tuple[Path, Path]:
     """Annotate insert with local element_db BLAST + remote NCBI nt BLAST.
 
     Runs both in sequence (local is fast, remote may take 1-5 min),
     then merges by best bitscore per region. Output format is unchanged
     for downstream report generation.
+
+    ``extra_dbs`` mirrors the Phase 1.5 plumbing (common_payload.fa and/or
+    per-sample s04b SPAdes contigs): each extra DB is BLASTed separately
+    and its hits are concatenated into the local-hit stream before the
+    best-bitscore merge, so sample-specific payloads (e.g. bar, AtYUCCA6,
+    full T-DNA backbone contigs) surface in ``element_annotation.tsv``
+    alongside the shared EUginius catalogue.
     """
     annotation_tsv = output_dir / "element_annotation.tsv"
     border_tsv = output_dir / "border_hits.tsv"
 
-    # ---- Local BLAST (element_db) ----
-    local_hits = _run_local_blast(insert_fasta, element_db, output_dir)
+    # ---- Local BLAST (element_db + any extra DBs) ----
+    local_hits = _run_local_blast(
+        insert_fasta, element_db, output_dir, tag="primary",
+    )
+    for i, edb in enumerate(extra_dbs or []):
+        if edb is None or not edb.exists() or edb.stat().st_size == 0:
+            continue
+        extra_hits = _run_local_blast(
+            insert_fasta, edb, output_dir, tag=f"extra{i}_{edb.stem}",
+        )
+        local_hits.extend(extra_hits)
 
     # ---- Remote BLAST (NCBI nt) ----
     if no_remote_blast:
@@ -3695,6 +3720,7 @@ def main() -> None:
         ann_tsv, border_tsv = annotate_insert(
             combined_insert, element_db, step_dir, args.sample_name,
             no_remote_blast=args.no_remote_blast,
+            extra_dbs=extra_dbs,
         )
 
         # host_endo_ids returned directly from classify_site_tiers (no file I/O)

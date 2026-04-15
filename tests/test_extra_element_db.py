@@ -75,3 +75,35 @@ def test_batch_check_element_hits_consults_multiple_dbs(tmp_path):
     # Negative: unrelated clip matches none of the three DBs
     assert "unrelated_clip" not in hits or hits["unrelated_clip"] == [], \
         f"unrelated_clip should not hit any DB, got: {hits.get('unrelated_clip')}"
+
+
+def test_annotate_insert_uses_extra_dbs(tmp_path):
+    """Phase 3 annotate_insert must consult extra_dbs too, else s04b
+    contigs / common_payload payloads (bar, AtYUCCA6, etc.) silently
+    drop out of element_annotation.tsv and every site lands on the
+    'no element annotations' UNKNOWN branch."""
+    # Minimal insert containing two distinct 50bp subsequences, chosen
+    # to survive BLAST's default dust filter.
+    insert_fa = tmp_path / "insert.fasta"
+    primary_seq = "ATCGATCGATCGAAGCTTGGATCCAAGCTAGCTAGCTAGAACCGGTTAACC"
+    extra_seq   = "TGCAAGTTCGATCGTACGTAGCTAGCATCGATCGTTAAGGCCTAGCTTGCA"
+    insert_fa.write_text(">insert1\n" + primary_seq + extra_seq + "\n")
+
+    primary_db = tmp_path / "primary.fa"
+    primary_db.write_text(">elem_A\n" + primary_seq + "\n")
+
+    extra_db = tmp_path / "extra.fa"
+    extra_db.write_text(">bar|X17220.1\n" + extra_seq + "\n")
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    s05.annotate_insert(
+        insert_fa, primary_db, out_dir,
+        sample_name="t",
+        no_remote_blast=True,
+        extra_dbs=[extra_db],
+    )
+    ann = (out_dir / "element_annotation.tsv").read_text()
+    assert "elem_A" in ann, f"primary-DB hit missing from annotation: {ann}"
+    assert "bar" in ann, f"extra-DB hit missing from annotation: {ann}"
