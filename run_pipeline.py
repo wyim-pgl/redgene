@@ -27,6 +27,8 @@ from typing import Any
 
 import yaml
 
+from scripts._write_audit_header import write_audit_header
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -438,6 +440,30 @@ def main() -> None:
             (outdir / sample_key).mkdir(parents=True, exist_ok=True)
 
         sample_cfg = cfg["samples"][sample_key]
+
+        # AC-6 regulatory audit header (R-1..R-4): input SHA-256,
+        # pipeline git commit + dirty flag, element-DB manifest, and
+        # software version manifest. Written once per sample run.
+        if not args.dry_run:
+            try:
+                reads_cfg = sample_cfg.get("reads", {})
+                r1_path = Path(reads_cfg["r1"])
+                r2_path = Path(reads_cfg["r2"])
+                if not r1_path.is_absolute():
+                    r1_path = base_dir / r1_path
+                if not r2_path.is_absolute():
+                    r2_path = base_dir / r2_path
+                write_audit_header(
+                    sample=sample_key,
+                    reads_r1=r1_path,
+                    reads_r2=r2_path,
+                    db_manifest=base_dir / "element_db" / "gmo_combined_db_manifest.tsv",
+                    out_path=outdir / sample_key / "audit_header.json",
+                )
+            except Exception as exc:  # pragma: no cover - best-effort audit
+                log.warning("audit_header write failed for %s: %s",
+                            sample_key, exc)
+
         for step in steps:
             run_step(
                 step=step,
