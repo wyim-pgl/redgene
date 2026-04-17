@@ -727,26 +727,69 @@ def find_softclip_junctions(
 # T10: Pre-mask BED intersect (host-endogenous ortholog regions)
 # ---------------------------------------------------------------------------
 
-def _apply_mask_bed(sites: list, bed_path: Path) -> list:
-    """Tag sites whose (chr, pos) falls inside a BED mask region.
+#: Tier value written onto sites that intersect a T9 host-endogenous mask
+#: region.  Centralised here so downstream consumers (generate_report audit
+#: appender, tests, future modules) can import the tag instead of duplicating
+#: the string literal.  Changing this constant is a wire-format break — update
+#: the audit TSVs and regression fixtures in lock-step.
+MASKED_SOURCE_TAG = "FALSE_NEGATIVE_MASKED"
 
-    Sites are NOT dropped — their ``tier`` is changed to ``FALSE_NEGATIVE_MASKED``
-    and ``mask_element`` holds the element_name of the overlapping BED region.
-    This preserves the audit trail for regulatory review while preventing
-    CANDIDATE promotion on host-endogenous ortholog regions (T9 E-01/E-02).
+
+def _apply_mask_bed(sites: list, bed_path: Path) -> list:
+    """Tag sites whose ``(chr, pos)`` falls inside a BED mask region.
+
+    Sites are NOT dropped — their ``tier`` is changed to
+    :data:`MASKED_SOURCE_TAG` (``FALSE_NEGATIVE_MASKED``) and ``mask_element``
+    holds the element_name of the overlapping BED region.  This preserves the
+    audit trail for regulatory review while preventing CANDIDATE promotion on
+    host-endogenous ortholog regions (T9 E-01/E-02).
+
+    Interval semantics
+    ------------------
+    Regions are treated as **half-open** ``[start, end)`` — i.e. ``start`` is
+    inclusive and ``end`` is exclusive.  This matches BED convention and the
+    ``start <= pos < end`` check below; a site at ``pos == end`` is NOT
+    considered masked.
 
     BED format (from ``scripts/build_element_mask_bed.sh``):
-    ``chr<TAB>start<TAB>end<TAB>name[<TAB>score]``. Empty or missing BED is
-    a no-op. Accepts heterogeneous site records:
-      * ``dict`` with ``chr``/``pos`` keys (test + pipeline JSON form) —
-        fields are mutated in place.
-      * Any object with ``host_chr`` + ``pos_5p`` attributes (e.g., the
-        ``InsertionSite`` dataclass) — ``tier`` and ``mask_element``
-        attributes are set via ``setattr``.
+    ``chr<TAB>start<TAB>end<TAB>name[<TAB>score]``.  An empty or missing BED
+    file (including a BED with zero parseable regions) is a no-op.
+
+    Parameters
+    ----------
+    sites
+        A list of site records.  The list itself is returned (not copied); the
+        records inside are mutated in place — see *Mutation contract* below.
+    bed_path
+        Path to the pre-computed mask BED.
+
+    Mutation contract
+    -----------------
+    Accepts heterogeneous site records and mutates the *original* objects:
+
+    * ``dict`` with ``chr``/``pos`` keys (test + pipeline JSON form) — sets
+      ``s["tier"]`` and ``s["mask_element"]``.
+    * Any object with ``host_chr`` + ``pos_5p`` attributes (e.g. the
+      ``InsertionSite`` dataclass) — sets ``tier`` and ``mask_element`` via
+      ``setattr``.  When ``pos_5p`` is falsy the helper falls back to
+      ``pos_3p``.
+
+    Callers that need the prior value should snapshot it before invoking this
+    function; the helper does not save or restore previous ``tier`` values.
+
+    Complexity
+    ----------
+    Regions are grouped by chromosome into a list sorted by ``start`` plus a
+    parallel ``start`` array; per-site lookup uses :func:`bisect.bisect_right`
+    and scans only intervals whose ``start <= pos``.  Runtime is therefore
+    ``O(R log R + S log R)`` for ``R`` regions and ``S`` sites, instead of the
+    ``O(S * R)`` worst case of a linear scan.
     """
+    import bisect
+
     if not bed_path.exists() or bed_path.stat().st_size == 0:
         return sites
-    regions: dict[str, list[tuple[int, int, str]]] = {}
+    raw_regions: dict[str, list[tuple[int, int, str]]] = {}
     for raw in bed_path.read_text().splitlines():
         if not raw.strip() or raw.startswith("#"):
             continue
@@ -760,9 +803,16 @@ def _apply_mask_bed(sites: list, bed_path: Path) -> list:
             continue
         chrom = cols[0]
         name = cols[3] if len(cols) > 3 else "masked"
-        regions.setdefault(chrom, []).append((start, end, name))
-    if not regions:
+        raw_regions.setdefault(chrom, []).append((start, end, name))
+    if not raw_regions:
         return sites
+    # Sort regions by start and stash a parallel starts array for bisect.
+    # NOTE: the intervals may still overlap each other; bisect narrows the
+    # scan to candidates with start <= pos, then we check end > pos.
+    index: dict[str, tuple[list[int], list[tuple[int, int, str]]]] = {}
+    for chrom, ivs in raw_regions.items():
+        ivs.sort(key=lambda t: t[0])
+        index[chrom] = ([iv[0] for iv in ivs], ivs)
     for s in sites:
         if isinstance(s, dict):
             chrom = s.get("chr")
@@ -774,15 +824,28 @@ def _apply_mask_bed(sites: list, bed_path: Path) -> list:
                 pos = getattr(s, "pos_3p", None)
         if chrom is None or pos is None:
             continue
-        for start, end, name in regions.get(chrom, []):
-            if start <= pos < end:
-                if isinstance(s, dict):
-                    s["tier"] = "FALSE_NEGATIVE_MASKED"
-                    s["mask_element"] = name
-                else:
-                    setattr(s, "tier", "FALSE_NEGATIVE_MASKED")
-                    setattr(s, "mask_element", name)
-                break
+        entry = index.get(chrom)
+        if entry is None:
+            continue
+        starts, ivs = entry
+        hi = bisect.bisect_right(starts, pos)
+        # Walk backwards through candidates whose start <= pos; because the
+        # regions in the mask BED are short (<= a few kb) and only a handful
+        # overlap any given pos, this inner loop is effectively O(1).
+        for idx in range(hi - 1, -1, -1):
+            start, end, name = ivs[idx]
+            if end <= pos:
+                # Half-open: pos >= end means outside; keep scanning earlier
+                # intervals because an earlier start may still extend past pos.
+                continue
+            # start <= pos < end -> match.
+            if isinstance(s, dict):
+                s["tier"] = MASKED_SOURCE_TAG
+                s["mask_element"] = name
+            else:
+                setattr(s, "tier", MASKED_SOURCE_TAG)
+                setattr(s, "mask_element", name)
+            break
     return sites
 
 
@@ -3896,16 +3959,16 @@ def main() -> None:
             _apply_mask_bed(sites, bed_path)
             masked_sites = [
                 s for s in sites
-                if getattr(s, "tier", None) == "FALSE_NEGATIVE_MASKED"
+                if getattr(s, "tier", None) == MASKED_SOURCE_TAG
             ]
             sites = [
                 s for s in sites
-                if getattr(s, "tier", None) != "FALSE_NEGATIVE_MASKED"
+                if getattr(s, "tier", None) != MASKED_SOURCE_TAG
             ]
             print(
                 f"[Phase 1] mask-bed {bed_path.name}: "
                 f"{len(masked_sites)}/{len(masked_sites) + len(sites)} "
-                f"sites tagged FALSE_NEGATIVE_MASKED",
+                f"sites tagged {MASKED_SOURCE_TAG}",
                 file=sys.stderr,
             )
             for s in masked_sites:
@@ -3929,9 +3992,9 @@ def main() -> None:
                 clip_5p_len=len(s.seed_5p) if s.seed_5p else 0,
                 clip_3p_len=len(s.seed_3p) if s.seed_3p else 0,
                 hit_5p=getattr(s, "mask_element", ""),
-                hit_5p_source="FALSE_NEGATIVE_MASKED",
+                hit_5p_source=MASKED_SOURCE_TAG,
                 hit_3p=getattr(s, "mask_element", ""),
-                hit_3p_source="FALSE_NEGATIVE_MASKED",
+                hit_3p_source=MASKED_SOURCE_TAG,
             ))
         write_tier_classification(
             tier_results, step_dir / "site_tier_classification.tsv",

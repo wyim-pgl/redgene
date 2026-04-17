@@ -9,4 +9,5 @@ from scripts.s05_insert_assembly import (  # noqa: F401
     _build_consensus,
     _batch_check_maps_to_host,
     _apply_mask_bed,    # T10
+    MASKED_SOURCE_TAG,  # Issue #13
 )
