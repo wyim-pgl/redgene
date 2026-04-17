@@ -20,6 +20,9 @@ element_db/*.fa.*
 !element_db/common_payload.fa.nsq
 !element_db/common_payload.fa.ntf
 !element_db/common_payload.fa.nto
+!element_db/cas9_sgrna.fa
+!element_db/euginius_missing.fa
+!element_db/payload_cds.fa
 results/
 *.bam
 *.bam.bai
