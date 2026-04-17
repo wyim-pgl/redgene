@@ -115,7 +115,8 @@ def test_m3_every_header_has_src_tag():
 @pytest.mark.skipif(not DB_V2.exists(), reason="gmo_combined_db_v2.fa not built")
 def test_m3_src_tag_values_are_from_whitelist():
     """src values must be a subset of the documented tag vocabulary."""
-    allowed = {"payload", "element_db", "plant_endogenous", "corn_border"}
+    # Issue #5 added `crl` as the 5th tag (not wired into v1.0 DB yet).
+    allowed = {"payload", "element_db", "plant_endogenous", "corn_border", "crl"}
     headers = _headers(DB_V2)
     seen = set()
     for h in headers:

@@ -21,6 +21,10 @@ SRCMAP = {
     "gmo_combined_db.fa":  "element_db",
     "cas9_sgrna.fa":       "element_db",
     "euginius_missing.fa": "element_db",
+    # Issue #5: 5th source tag — EU CRL GMOMETHODS amplicons (82 seqs
+    # after hand-curation; v1.1 rebuild will pull all ~85 raw rows and
+    # let cd-hit-est handle the 3 duplicates the legacy FASTA dropped).
+    "crl_amplicons.fa":    "crl",
 }
 
 
