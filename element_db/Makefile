@@ -1,12 +1,27 @@
 # element_db/Makefile
 # Builds gmo_combined_db_v2.fa (4-way src tag + cd-hit-est dedup @ 95% identity)
 # and gmo_combined_db_manifest.tsv (T1 audit-header consumer).
+#
+# cd-hit-est parameter rationale (Issue #10 M-6)
+# ----------------------------------------------
+#   -c 0.95   Cluster sequences with >=95% identity.  Chosen because 90% is
+#             too permissive (merges distinct payload variants such as
+#             nptII vs hpt fragments that share the Tn5 transposon backbone)
+#             while 99% is too strict (keeps trivially different CDS copies
+#             that collapse later at BLAST time anyway).  95% is the
+#             accepted community default for GMO element curation.
+#   -n 10     Word size matched to -c.  cd-hit-est requires -n 10 when
+#             -c is in [0.95, 1.0]; any lower -n triggers a runtime error.
+#             Source: cd-hit-est user guide §2.1.2.
+#   -M 8000   8 GB RAM cap — comfortably above our ~300MB working-set but
+#             stays safe on the Pronghorn login nodes used for ad-hoc builds.
+#   -T 4      4 threads — build is I/O bound past this point.
 .PHONY: all clean
 
 DB      := gmo_combined_db_v2.fa
 RAW     := _raw_combined.fa
 MANI    := gmo_combined_db_manifest.tsv
-CDH_C   := 0.95
+CDH_C   := 0.95    # see header comment for rationale (Issue #10 M-6)
 
 SRCS := common_payload.fa gmo_combined_db.fa cas9_sgrna.fa euginius_missing.fa payload_cds.fa
 

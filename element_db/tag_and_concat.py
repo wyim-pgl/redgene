@@ -8,8 +8,13 @@ hits can be tiered by source (Task T5).
 import sys
 from pathlib import Path
 
-# filename -> source tag. Keep in sync with scripts/s05_insert_assembly.py
-# _SRC_TIER keys.
+# Filename -> source tag.  Keep in sync with scripts/s05_insert_assembly.py
+# `_SRC_TIER` keys (Issue #10 M-1).  The path sync points are:
+#   * element_db/Makefile            — SRCS list is the input side
+#   * this SRCMAP                    — filename -> tag mapping
+#   * scripts/s05_insert_assembly.py — `_SRC_TIER` consumer + priority
+#   * scripts/build_element_mask_bed.sh — reads the final DB via `$DB`
+# Changing any of these requires updating the others.
 SRCMAP = {
     "common_payload.fa":   "payload",
     "payload_cds.fa":      "payload",
