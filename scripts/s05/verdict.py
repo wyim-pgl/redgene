@@ -43,7 +43,11 @@ class FilterEvidence:
     construct_frac: float = 0.0
     # host_fraction + construct_frac (non-overlapping merge).
     combined_frac: float = 0.0
-    # True when the chimera check (Filter C) flagged the assembly.
+    # DEPRECATED (Issue #11 M-3): `is_chimeric` is informational only; the
+    # chimeric filter (rule 3 in compute_verdict) is driven entirely by
+    # len(off_target_chrs) >= rules.fp_off_target_chrs_min. Kept on the
+    # dataclass for backward-compatible dict-expansion in existing tests;
+    # slated for removal in v1.1 once callers migrate off the kwarg.
     is_chimeric: bool = False
     # Insertion-site coordinates, used to evaluate flanking overlap messages.
     site_chr: str = ""
@@ -123,13 +127,17 @@ def compute_verdict(
     (lines 3197-3514). Rule priority (first match wins):
 
       1. canonical-triplet match + host_fraction < cand_host_fraction_max
-         -> CANDIDATE
+         -> CANDIDATE.  A triplet matches when every element in the
+         configured triplet (e.g. ``{bar, P-CaMV35S, T-ocs}``) is present
+         in ``ev.matched_canonical``; see ``_find_matching_triplet``.
       1.5. all annotated elements are host-endogenous (Phase 4 host filter)
          -> FALSE_POSITIVE (host-endogenous)
       2. site overlaps a construct-flanking region
          -> FALSE_POSITIVE (flanking)
       3. off_target_chrs >= fp_off_target_chrs_min
-         -> FALSE_POSITIVE (chimeric)
+         -> FALSE_POSITIVE (chimeric).  The boolean ``ev.is_chimeric`` is
+         informational only; this rule is driven entirely by the
+         ``off_target_chrs`` count (Issue #11 M-3).
       4. construct_frac >= fp_construct_frac_min AND combined_frac >= fp_combined_frac_min
          -> FALSE_POSITIVE (construct+host)
       5. host_fraction >= fp_host_fraction_min AND largest_gap < fp_largest_gap_max
@@ -140,6 +148,10 @@ def compute_verdict(
          AND construct_frac <= unknown_to_fp_construct_frac_max
          -> FALSE_POSITIVE (host-only)
       8. else -> UNKNOWN
+
+    Reason strings are currently English-only. v1.1 will route them through
+    a ``REASON_KEYS`` lookup (see Issue #11 M-5) so KO translations can be
+    swapped in without touching rule logic.
     """
     # Rule 1: canonical triplet promotion (runs first so CRISPR/marker-positive
     # assemblies with some host contamination still get flagged CANDIDATE).
