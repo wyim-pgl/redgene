@@ -123,17 +123,31 @@ Only bugs that actually affected runs or reviews are listed — cosmetic / nitpi
 - **Symptom:** fresh `redgene` env didn't have `pytest`; tests were failing to import `pysam` because of a wrong env activation, masking the real issue.
 - **Workaround:** `micromamba install -n redgene -c conda-forge pytest`. Should be added to the environment manifest for future creates.
 
+### BUG-18 — cucumber line212/224 s05 OOM regression at 64 GB
+- **Severity:** medium (two W1 revalidation samples killed at 18 min during T11 batch)
+- **Symptom:** `run_rerun_w1_batch.sh` (T11 team-lead standardized submission) defaulted to `--mem=64G`. `cucumber_line212` hit MaxRSS 67.1 G and `cucumber_line224` hit 65.7 G, both OOM-killed (JOBID 5629371_3 and 5629371_4) ~18 min into s05.
+- **Root cause:** regression introduced during T11 standardization. Earlier successful batch 5628138 ran the same samples at 96 G and completed. T11 lowered the default to 64 G without a cucumber-specific override; cucumber s05 peak-RSS sits just above 64 G for line212/224.
+- **Fix direction:** raise `run_rerun_w1_batch.sh` default `--mem` to 96 G, or add a per-sample cucumber override. 96 G resubmission is in progress (separate agent).
+- **How found:** T11 W1 revalidation batch (2026-04-16).
+
+---
+
+## Resolved after session (MVP close-out 2026-04-16/17)
+
+### CLOSED-1 — `soybean_UGT72E3` s05 TIMEOUT at 64 GB / 24 h  *(was OPEN-1)*
+- **Past:** 48h+ SLURM TIMEOUT blocked AC-4; Phase 1.5 over-selection of transgene-positive sites drove site-count explosion.
+- **Fix:** T8 `--fanout` per-site SLURM array (commit `a5ee725`) parallelises Phase 2 assembly across array tasks.
+- **Result:** 48h+ → **1h37m** (−96 %) on JOBID 5629371_7 (T11 W1 batch). MaxRSS 3.1 G (well under the 64 G cap).
+- **Status:** CLOSED 2026-04-17.
+
 ---
 
 ## Known pre-existing issues (not from this session, still open)
 
-### OPEN-1 — `soybean_UGT72E3` s05 TIMEOUT at 64 GB / 24 h
-- Job 5626100 hit 12 h limit, resubmitted as 5626560 at 64 G/24 h — still running at session end.
-- Root cause probably same as AtYUCCA6: Phase 1.5 over-selects transgene-positive sites. Task 11 filter should help once applied.
-
 ### OPEN-2 — cucumber line212/224/225 s05 OOM at 32 GB
 - Batch job 5626023 lost three samples to exit-code-9 kills.
 - Resubmitted at 64 G (5626608) earlier in session; status unverified.
+- **Update 2026-04-16:** line212/224 now regressed under T11 64 G default — see BUG-18. 96 G resubmission in flight.
 
 ### OPEN-3 — rice_G281 end-to-end rerun with Task 10 + 11 fixes
 - Chr3:16,439,674 should now survive Phase 1.5 after `4d3f2bb`. Not yet verified by a full rerun on the merged `main`.
@@ -141,8 +155,14 @@ Only bugs that actually affected runs or reviews are listed — cosmetic / nitpi
 ### OPEN-4 — tomato_Cas9_A2_3 end-to-end rerun
 - Partial run confirmed the s04b rescue mechanism works (NODE_1 at 100%/124 bp). Full rerun to Phase 4 verdict still pending.
 
-### OPEN-5 — soybean_AtYUCCA6 end-to-end rerun with Task 11 filter
+### OPEN-5 — soybean_AtYUCCA6 end-to-end rerun with Task 11 filter  *(PARTIALLY CLOSED / v1.1-DEFERRED)*
 - Spot-check showed contigs 1,345 → 6. Full s05 rerun should now finish in time and give a real verdict distribution.
+- **Update 2026-04-17:** end-to-end run completed in **1h16m** (JOBID 5629371_6), yielding 0 CAND / 15 FP / 30 UNK. Pipeline no longer hangs (primary blocker resolved).
+- **Remaining:** 0 CANDIDATE is expected — T6 only extracted the canonical-triplet rule as a pure function (`compute_verdict`). Wire-in into `generate_report` is deferred to v1.1; once wired, the 30 UNK should re-classify automatically.
+- **Status:** v1.1-DEFERRED (execution unblocked; verdict assignment pending wire-in).
+
+### OPEN-6 — pre-merge stash `main-local-session-edits-pre-merge` 처리 결과
+- 2026-04-15: dropped. README(`3998bdf`)가 이미 step 4b 문서화를 포함해 stash보다 완성도 높음; resume(`729835d`)는 2026-04-15 기준으로 stash(2026-04-14)보다 최신; `run_batch_{other,tomato}.sh` 편집은 64G→32G / 16→8 threads 축소로 OOM(BUG-5) 회귀 위험이 있어 반영하지 않음.
 
 ---
 
