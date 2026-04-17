@@ -822,6 +822,35 @@ _SRC_TIER = {
     "univec":        1,
 }
 
+# Tier-2 sources collectively count as "element hits" for transgene_positive
+# classification. Derived from _SRC_TIER so adding a new tier-2 source (e.g.,
+# future 'crispr_ref') stays in sync automatically. Required because cd-hit
+# -c 0.95 clustering of gmo_combined_db_v2.fa absorbed multiple element_db
+# amplicons into payload-tagged representatives (cluster 0 P-CaMV35S, 35
+# nptII, 54 hpt, 71 T-ocs, 77 P-nos in element_db/gmo_combined_db_v2.fa.clstr);
+# a literal 'element_db' equality check at classify_site_tiers would drop
+# rice_G281 Chr3:16,439,674 (CaMV35S-containing) -> AC-1 regression.
+_TIER2_SRCS = frozenset(k for k, v in _SRC_TIER.items() if v >= 2)
+
+# Module-level cache so we only warn once per unknown tag per run.
+_UNKNOWN_SRC_WARNED: set[str] = set()
+
+
+def _parse_src_tag(sseqid: str, default: str) -> tuple[str, str]:
+    """Split a BLAST sseqid of the form 'accession|src=tag' into (accession, tag).
+
+    v2 DB headers carry a '|src=<tag>' suffix to encode one of the 4-way source
+    tags (element_db / payload / sample_contig / univec). Legacy headers lack
+    the suffix - in that case the caller-supplied `default` is used.
+
+    Returns (accession, src_tag). If no '|src=' separator is present,
+    (sseqid, default) is returned unchanged.
+    """
+    accession, sep, src_tag = sseqid.partition("|src=")
+    if not sep:
+        return sseqid, default
+    return accession, src_tag
+
 
 def _should_replace(existing: dict | None, new_src: str, new_bit: float) -> bool:
     """Tag-tiered merge priority for classify_site_tiers `hits` map (Task T5).
@@ -835,6 +864,12 @@ def _should_replace(existing: dict | None, new_src: str, new_bit: float) -> bool
     legacy `source`/`bitscore` schema - both are supported so the historic
     callers in classify_site_tiers keep working while migration proceeds.
     """
+    # I-1: warn once per run when an unknown tag shows up. Treated as tier 0
+    # so it will never beat a known tag, which is the safe default.
+    if new_src and new_src not in _SRC_TIER and new_src not in _UNKNOWN_SRC_WARNED:
+        _UNKNOWN_SRC_WARNED.add(new_src)
+        print(f"[s05] warn: unknown src tag {new_src!r}, treating as tier 0",
+              file=sys.stderr)
     if existing is None:
         return True
     old_src = existing.get("src", existing.get("source", ""))
@@ -953,14 +988,12 @@ def classify_site_tiers(
                 sseqid = cols[1]
                 # T5: 4-way source tag. v2 DB headers carry a |src=<tag>
                 # suffix (payload / element_db / sample_contig); legacy
-                # univec|... headers get mapped to 'univec'.
-                element_id, _, src_tag = sseqid.partition("|src=")
-                if not src_tag:
-                    src_tag = (
-                        "univec" if sseqid.startswith("univec|")
-                        else "element_db"
-                    )
-                    element_id = sseqid
+                # univec|... headers get mapped to 'univec', everything
+                # else to 'element_db'.
+                default_main = (
+                    "univec" if sseqid.startswith("univec|") else "element_db"
+                )
+                element_id, src_tag = _parse_src_tag(sseqid, default_main)
                 if _should_replace(hits.get(qname), src_tag, bitscore):
                     hits[qname] = {
                         "element": element_id,
@@ -1016,10 +1049,7 @@ def classify_site_tiers(
                     if pident < min_identity or aln_len < min_aln_len:
                         continue
                     sseqid = cols[1]
-                    element_id, _, src_tag = sseqid.partition("|src=")
-                    if not src_tag:
-                        src_tag = default_tag
-                        element_id = sseqid
+                    element_id, src_tag = _parse_src_tag(sseqid, default_tag)
                     if _should_replace(hits.get(qname), src_tag, bitscore):
                         hits[qname] = {
                             "element": element_id,
@@ -1104,13 +1134,21 @@ def classify_site_tiers(
         hit_5p = hits.get(key_5p, {})
         hit_3p = hits.get(key_3p, {})
 
-        # Require at least one element_db hit (not univec-only).
+        # Require at least one tier-2 element hit (not univec-only).
         # UniVec-only matches at this step are typically short (20-31bp)
         # alignments that match native plant DNA by chance. Real T-DNA
         # insertions always have at least one characteristic element
-        # (promoter, selection marker, terminator) matching element_db.
-        has_element_hit = (hit_5p.get("source") == "element_db") or \
-                           (hit_3p.get("source") == "element_db")
+        # (promoter, selection marker, terminator) matching a tier-2 source.
+        #
+        # C-1 fix: tier-2 sources (element_db / payload / sample_contig) all
+        # count. After cd-hit -c 0.95 clustering, former element_db amplicons
+        # may be absorbed into payload-tagged representatives (e.g., CaMV35S
+        # cluster 0 in gmo_combined_db_v2.fa.clstr). A literal "element_db"
+        # check would miss rice_G281 Chr3:16,439,674 CaMV35S hits -> AC-1
+        # regression. Use the _TIER2_SRCS module constant derived from
+        # _SRC_TIER for a single source of truth.
+        has_element_hit = (hit_5p.get("source") in _TIER2_SRCS) or \
+                           (hit_3p.get("source") in _TIER2_SRCS)
         is_positive = has_element_hit
 
         tr = TierResult(
@@ -2702,10 +2740,7 @@ def _parse_blast6(path: Path, min_len: int = 30) -> list[dict]:
             if aln_len < min_len:
                 continue
             subject = cols[1]
-            subject_clean, _, src_tag = subject.partition("|src=")
-            if not src_tag:
-                src_tag = ""
-                subject_clean = subject
+            subject_clean, src_tag = _parse_src_tag(subject, default="")
             hits.append({
                 "query": cols[0], "subject": subject_clean,
                 "identity": float(cols[2]), "length": aln_len,

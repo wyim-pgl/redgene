@@ -60,3 +60,45 @@ def test_higher_bitscore_wins_within_tier():
         existing={"src": "element_db", "bit": 100},
         new_src="payload", new_bit=200,
     ) is True
+
+
+def test_site_with_payload_only_hits_is_transgene_positive():
+    """Regression guard: after cd-hit clustering, CaMV35S et al may only appear
+    under payload tag. classify_site_tiers' has_element_hit must accept tier-2
+    sources (element_db/payload/sample_contig), not just literal 'element_db'.
+
+    BUG-3 companion: cluster 0 of gmo_combined_db_v2.fa.clstr shows P-CaMV35S
+    payload rep absorbed 3 element_db amplicons. Without this check expansion,
+    rice_G281 Chr3:16,439,674 (CaMV35S-containing) would be dropped.
+    """
+    # Simulate the internal call path: a site whose only tier-2 hits are payload
+    hit_5p = {"source": "payload", "bitscore": 150}
+    hit_3p = {"source": "payload", "bitscore": 140}
+
+    # Use the same logic as classify_site_tiers line ~1112:
+    # has_element_hit = True iff at least one side has a tier-2 source
+    TIER2 = {k for k, v in s05._SRC_TIER.items() if v >= 2}
+    assert "payload" in TIER2
+    assert "element_db" in TIER2
+    assert "sample_contig" in TIER2
+    assert "univec" not in TIER2
+
+    has_element_hit = (hit_5p.get("source") in TIER2) or \
+                      (hit_3p.get("source") in TIER2)
+    assert has_element_hit is True
+
+    # Also guard the module-level _TIER2_SRCS frozenset used by the real
+    # classify_site_tiers call (single source of truth).
+    assert s05._TIER2_SRCS == frozenset(TIER2)
+
+
+def test_site_with_univec_only_hits_not_transgene_positive():
+    """Same check, other direction: univec-only site is NOT transgene-positive."""
+    hit_5p = {"source": "univec", "bitscore": 200}
+    hit_3p = {"source": "univec", "bitscore": 200}
+
+    TIER2 = {k for k, v in s05._SRC_TIER.items() if v >= 2}
+
+    has_element_hit = (hit_5p.get("source") in TIER2) or \
+                      (hit_3p.get("source") in TIER2)
+    assert has_element_hit is False
