@@ -23,6 +23,20 @@ element_db/*.fa.*
 !element_db/cas9_sgrna.fa
 !element_db/euginius_missing.fa
 !element_db/payload_cds.fa
+# T5: cd-hit-est dedup + 4-way source-tagged DB
+!element_db/gmo_combined_db_v2.fa
+!element_db/gmo_combined_db_v2.fa.clstr
+!element_db/gmo_combined_db_v2.fa.ndb
+!element_db/gmo_combined_db_v2.fa.nhr
+!element_db/gmo_combined_db_v2.fa.nin
+!element_db/gmo_combined_db_v2.fa.njs
+!element_db/gmo_combined_db_v2.fa.not
+!element_db/gmo_combined_db_v2.fa.nsq
+!element_db/gmo_combined_db_v2.fa.ntf
+!element_db/gmo_combined_db_v2.fa.nto
+!element_db/gmo_combined_db_manifest.tsv
+!element_db/Makefile
+!element_db/tag_and_concat.py
 results/
 *.bam
 *.bam.bai

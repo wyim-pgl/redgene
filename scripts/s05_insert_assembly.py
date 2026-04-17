@@ -815,26 +815,38 @@ def _filter_host_endogenous(
     return blast_db, exclude_ids
 
 
-def _should_replace(existing: dict | None, new_src: str, new_bit: float) -> bool:
-    """Two-tier merge priority for classify_site_tiers `hits` map.
+_SRC_TIER = {
+    "element_db":    2,
+    "payload":       2,
+    "sample_contig": 2,
+    "univec":        1,
+}
 
-    (a) An element_db hit always beats a univec hit, regardless of bitscore
-        -- Task 7 diagnosed rice_G281's real T-DNA being excluded because both
-        clips tied at 100% on AF234315.1 (univec) and on the s04b element_db
-        contig, and iteration order kept the univec entry; the
-        element_db-required positive policy then dropped the site.
-    (b) Within the same source, a strictly higher bitscore wins (ties go to
-        the incumbent, matching the prior `bitscore > hits[qname]["bitscore"]`
-        semantics).
+
+def _should_replace(existing: dict | None, new_src: str, new_bit: float) -> bool:
+    """Tag-tiered merge priority for classify_site_tiers `hits` map (Task T5).
+
+    Tier-2 sources (element_db / payload / sample_contig) collectively beat
+    tier-1 (univec). Within a tier, a strictly greater bitscore wins;
+    ties go to the incumbent (matches the original `>` semantics and the
+    BUG-3 regression guard in test_extra_element_db).
+
+    The `existing` dict may use either the new `src`/`bit` schema or the
+    legacy `source`/`bitscore` schema - both are supported so the historic
+    callers in classify_site_tiers keep working while migration proceeds.
     """
     if existing is None:
         return True
-    old_src = existing.get("source", "")
-    if new_src == "element_db" and old_src == "univec":
+    old_src = existing.get("src", existing.get("source", ""))
+    old_bit = existing.get("bit", existing.get("bitscore", 0.0))
+    new_tier = _SRC_TIER.get(new_src, 0)
+    old_tier = _SRC_TIER.get(old_src, 0)
+    if new_tier > old_tier:
         return True
-    if new_src == "univec" and old_src == "element_db":
+    if new_tier < old_tier:
         return False
-    return new_bit > existing.get("bitscore", 0.0)
+    # same tier -> strict '>' bitscore
+    return new_bit > old_bit
 
 
 def classify_site_tiers(
@@ -939,14 +951,23 @@ def classify_site_tiers(
                     continue
 
                 sseqid = cols[1]
-                source = "univec" if sseqid.startswith("univec|") else "element_db"
-                if _should_replace(hits.get(qname), source, bitscore):
+                # T5: 4-way source tag. v2 DB headers carry a |src=<tag>
+                # suffix (payload / element_db / sample_contig); legacy
+                # univec|... headers get mapped to 'univec'.
+                element_id, _, src_tag = sseqid.partition("|src=")
+                if not src_tag:
+                    src_tag = (
+                        "univec" if sseqid.startswith("univec|")
+                        else "element_db"
+                    )
+                    element_id = sseqid
+                if _should_replace(hits.get(qname), src_tag, bitscore):
                     hits[qname] = {
-                        "element": sseqid,
+                        "element": element_id,
                         "identity": pident,
                         "aln_length": aln_len,
                         "bitscore": bitscore,
-                        "source": source,
+                        "source": src_tag,
                     }
 
     log(f"  {len(hits)} clips hit transgene_db (identity>={min_identity}%, "
@@ -963,8 +984,13 @@ def classify_site_tiers(
     ]
     for i, edb in enumerate(extra_dbs_list):
         extra_blast_out = tier_dir / f"transgene_blast_extra_{i}_{edb.stem}.tsv"
+        # T5 fallback tag when a header lacks |src=<tag>: per-sample SPAdes
+        # contig FASTAs from s04b are labelled 'sample_contig'; everything
+        # else (legacy common_payload, ad-hoc FASTAs) defaults to
+        # 'element_db' so tier-2 priority still holds.
+        default_tag = "sample_contig" if "contigs" in edb.name else "element_db"
         log(f"  BLASTing clips against extra transgene DB "
-            f"({edb.name}, blastn-short)...")
+            f"({edb.name}, default_src={default_tag}, blastn-short)...")
         result_extra = subprocess.run(
             ["blastn", "-task", "blastn-short",
              "-query", str(clip_fa), "-subject", str(edb),
@@ -989,13 +1015,18 @@ def classify_site_tiers(
                     bitscore = float(cols[5])
                     if pident < min_identity or aln_len < min_aln_len:
                         continue
-                    if _should_replace(hits.get(qname), "element_db", bitscore):
+                    sseqid = cols[1]
+                    element_id, _, src_tag = sseqid.partition("|src=")
+                    if not src_tag:
+                        src_tag = default_tag
+                        element_id = sseqid
+                    if _should_replace(hits.get(qname), src_tag, bitscore):
                         hits[qname] = {
-                            "element": cols[1],
+                            "element": element_id,
                             "identity": pident,
                             "aln_length": aln_len,
                             "bitscore": bitscore,
-                            "source": "element_db",
+                            "source": src_tag,
                         }
                         n_extra += 1
         log(f"  Extra transgene DB {edb.name} contributed/updated "
@@ -2652,7 +2683,13 @@ def assemble_insert(
 # ---------------------------------------------------------------------------
 
 def _parse_blast6(path: Path, min_len: int = 30) -> list[dict]:
-    """Parse BLAST outfmt-6 with 10+ columns into list of dicts."""
+    """Parse BLAST outfmt-6 with 10+ columns into list of dicts.
+
+    T5: also strip the |src=<tag> suffix that the v2 DB bakes into every
+    header so the ``subject`` field stays clean for element_annotation.tsv.
+    The extracted tag is carried in the ``src_tag`` key for downstream
+    consumers; callers that don't need it just ignore it.
+    """
     hits: list[dict] = []
     if not path.exists():
         return hits
@@ -2664,12 +2701,18 @@ def _parse_blast6(path: Path, min_len: int = 30) -> list[dict]:
             aln_len = int(cols[3])
             if aln_len < min_len:
                 continue
+            subject = cols[1]
+            subject_clean, _, src_tag = subject.partition("|src=")
+            if not src_tag:
+                src_tag = ""
+                subject_clean = subject
             hits.append({
-                "query": cols[0], "subject": cols[1],
+                "query": cols[0], "subject": subject_clean,
                 "identity": float(cols[2]), "length": aln_len,
                 "q_start": int(cols[4]), "q_end": int(cols[5]),
                 "s_start": int(cols[6]), "s_end": int(cols[7]),
                 "evalue": float(cols[8]), "bitscore": float(cols[9]),
+                "src_tag": src_tag,
             })
     return hits
 

@@ -254,11 +254,13 @@ def build_step_cmd(
         extra_db = s04b / "contigs.fasta"
         if extra_db.exists() and extra_db.stat().st_size > 0:
             cmd.extend(["--extra-element-db", str(extra_db)])
-        # Always-on shared payload DB (common_payload.fa), applied to every
-        # sample. Path comes from cfg.pipeline.common_payload_db, defaulting
-        # to element_db/common_payload.fa relative to the repo root.
+        # Always-on shared transgene reference DB (T5: gmo_combined_db_v2.fa -
+        # cd-hit-est @ 0.95 dedup of common_payload + element_db + cas9_sgrna +
+        # euginius_missing + payload_cds, with 4-way |src= tags for tier-based
+        # merge in s05 classify_site_tiers). Path comes from
+        # cfg.pipeline.common_payload_db, defaulting to the v2 tagged DB.
         cpd_rel = (cfg or {}).get("pipeline", {}).get(
-            "common_payload_db", "element_db/common_payload.fa"
+            "common_payload_db", "element_db/gmo_combined_db_v2.fa"
         )
         cpd_path = base_dir / cpd_rel if not Path(cpd_rel).is_absolute() else Path(cpd_rel)
         if cpd_path.exists() and cpd_path.stat().st_size > 0:
