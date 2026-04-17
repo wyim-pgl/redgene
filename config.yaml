@@ -20,6 +20,31 @@ references:
   # Element database for construct identification
   element_db: element_db/gmo_combined_db.fa
 
+# T6 (v1.0 MVP): thresholds consumed by scripts/s05/verdict.compute_verdict
+# via scripts/s05/config_loader.load_verdict_rules. Keys mirror the compiled
+# defaults in s05_insert_assembly.py; omitting the section keeps legacy
+# behaviour unchanged.
+verdict_rules:
+  cand_host_fraction_max: 0.80
+  cand_largest_gap_min: 500
+  fp_host_fraction_min: 0.80
+  fp_largest_gap_max: 500
+  fp_off_target_chrs_min: 2
+  fp_combined_frac_min: 0.85
+  fp_construct_frac_min: 0.25
+  unknown_to_fp_host_fraction_min: 0.85
+  unknown_to_fp_construct_frac_max: 0.05
+  canonical_triplet_min_identity: 0.90
+
+# Per-sample canonical element triplets for the CANDIDATE promotion rule.
+# `default` applies when the sample has no dedicated entry.
+canonical_triplets:
+  default: [bar, P-CaMV35S, T-ocs]
+  rice_G281: [hLF1, P-Gt1, T-nos]
+  soybean_AtYUCCA6: [bar, P-CaMV35S, T-ocs]
+  soybean_UGT72E3: [bar, P-CaMV35S, T-nos]
+  tomato_Cas9_A2_3: [bar, SpCas9, sgRNA_scaffold_generic]
+
 # Samples to process
 samples:
   rice_G281:
