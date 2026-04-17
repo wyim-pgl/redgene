@@ -34,8 +34,15 @@ echo ""
 echo "=== Criterion 2: Phase 1 transgene-positive site count (+/-20%) ==="
 MM2_TSV=results/rice_G281_mm2_poc/rice_G281/s05_insert_assembly/site_tier_classification.tsv
 BWA_TSV=results/rice_G281/s05_insert_assembly/site_tier_classification.tsv
-MM2_N=$(grep -c "^transgene-positive" "$MM2_TSV" 2>/dev/null || echo 0)
-BWA_N=$(grep -c "^transgene-positive" "$BWA_TSV" 2>/dev/null || echo 0)
+# Issue #14 fix: 4th column `transgene_positive` is True/False, not a line prefix.
+# Original grep -c "^transgene-positive" always returned 0.
+_count_positive() {
+    local tsv="$1"
+    [ -f "$tsv" ] || { echo 0; return; }
+    awk -F'\t' 'NR>1 && $4 == "True" {n++} END {print n+0}' "$tsv"
+}
+MM2_N=$(_count_positive "$MM2_TSV")
+BWA_N=$(_count_positive "$BWA_TSV")
 echo "minimap2 transgene-positive: $MM2_N"
 echo "BWA      transgene-positive: $BWA_N"
 python3 - <<PY
