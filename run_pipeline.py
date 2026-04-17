@@ -266,6 +266,21 @@ def build_step_cmd(
         cpd_path = base_dir / cpd_rel if not Path(cpd_rel).is_absolute() else Path(cpd_rel)
         if cpd_path.exists() and cpd_path.stat().st_size > 0:
             cmd.extend(["--common-payload-db", str(cpd_path)])
+        # T10: auto-inject --mask-bed (host-endogenous ortholog regions from T9)
+        # matched by host_reference filename stem. Missing BED → no-op.
+        host_key = Path(host_ref).stem.lower()
+        bed_map = {
+            "osativa_323_v7.0": "rice_osativa_v7.bed",
+            "slm_r2.0.pmol": "tomato_slm_r2.bed",
+            "cucsat_b10v3": "cucumber_b10v3.bed",
+            "zm_b73_v5": "corn_zm_b73_v5.bed",
+            "gmax_v4.0": "soybean_gmax_v4.bed",
+        }
+        bed_name = next((v for k, v in bed_map.items() if k in host_key), None)
+        if bed_name:
+            bed_path = base_dir / "docs" / "host_masks" / bed_name
+            if bed_path.exists():
+                cmd.extend(["--mask-bed", str(bed_path)])
         return cmd
     elif step == "6":
         # Step 6 needs a WT BAM for comparison

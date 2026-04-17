@@ -8,4 +8,5 @@ from scripts.s05_insert_assembly import (  # noqa: F401
     find_softclip_junctions,
     _build_consensus,
     _batch_check_maps_to_host,
+    _apply_mask_bed,    # T10
 )

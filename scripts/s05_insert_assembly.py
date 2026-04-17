@@ -684,6 +684,69 @@ def find_softclip_junctions(
 
 
 # ---------------------------------------------------------------------------
+# T10: Pre-mask BED intersect (host-endogenous ortholog regions)
+# ---------------------------------------------------------------------------
+
+def _apply_mask_bed(sites: list, bed_path: Path) -> list:
+    """Tag sites whose (chr, pos) falls inside a BED mask region.
+
+    Sites are NOT dropped — their ``tier`` is changed to ``FALSE_NEGATIVE_MASKED``
+    and ``mask_element`` holds the element_name of the overlapping BED region.
+    This preserves the audit trail for regulatory review while preventing
+    CANDIDATE promotion on host-endogenous ortholog regions (T9 E-01/E-02).
+
+    BED format (from ``scripts/build_element_mask_bed.sh``):
+    ``chr<TAB>start<TAB>end<TAB>name[<TAB>score]``. Empty or missing BED is
+    a no-op. Accepts heterogeneous site records:
+      * ``dict`` with ``chr``/``pos`` keys (test + pipeline JSON form) —
+        fields are mutated in place.
+      * Any object with ``host_chr`` + ``pos_5p`` attributes (e.g., the
+        ``InsertionSite`` dataclass) — ``tier`` and ``mask_element``
+        attributes are set via ``setattr``.
+    """
+    if not bed_path.exists() or bed_path.stat().st_size == 0:
+        return sites
+    regions: dict[str, list[tuple[int, int, str]]] = {}
+    for raw in bed_path.read_text().splitlines():
+        if not raw.strip() or raw.startswith("#"):
+            continue
+        cols = raw.split("\t")
+        if len(cols) < 3:
+            continue
+        try:
+            start = int(cols[1])
+            end = int(cols[2])
+        except ValueError:
+            continue
+        chrom = cols[0]
+        name = cols[3] if len(cols) > 3 else "masked"
+        regions.setdefault(chrom, []).append((start, end, name))
+    if not regions:
+        return sites
+    for s in sites:
+        if isinstance(s, dict):
+            chrom = s.get("chr")
+            pos = s.get("pos")
+        else:
+            chrom = getattr(s, "host_chr", None)
+            pos = getattr(s, "pos_5p", None)
+            if not pos:
+                pos = getattr(s, "pos_3p", None)
+        if chrom is None or pos is None:
+            continue
+        for start, end, name in regions.get(chrom, []):
+            if start <= pos < end:
+                if isinstance(s, dict):
+                    s["tier"] = "FALSE_NEGATIVE_MASKED"
+                    s["mask_element"] = name
+                else:
+                    setattr(s, "tier", "FALSE_NEGATIVE_MASKED")
+                    setattr(s, "mask_element", name)
+                break
+    return sites
+
+
+# ---------------------------------------------------------------------------
 # Transgene-positive identification
 # ---------------------------------------------------------------------------
 # Strategy: Instead of asking "is this clip in the host?" (fails with wrong
@@ -3663,6 +3726,14 @@ def main() -> None:
                         help="Construct reference FASTA (for flanking detection)")
     parser.add_argument("--no-remote-blast", action="store_true",
                         help="Skip remote NCBI nt BLAST (use local element_db only)")
+    parser.add_argument(
+        "--mask-bed",
+        default=None,
+        help="BED file of host-endogenous ortholog regions (T9/T10). "
+             "Sites overlapping a region are tagged FALSE_NEGATIVE_MASKED "
+             "(not dropped) after Phase 1 discovery, preventing CANDIDATE "
+             "promotion while preserving the audit trail.",
+    )
     parser.add_argument("--s03-r1", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--s03-r2", default=None, help=argparse.SUPPRESS)
     # --- T8: per-site SLURM array fan-out (v1.0 임시안) -----------------------
@@ -3760,6 +3831,32 @@ def main() -> None:
                 f"({site.confidence}, 5p={len(site.seed_5p)}bp, "
                 f"3p={len(site.seed_3p)}bp)")
 
+        # ---- T10: pre-mask BED intersect (host-endogenous ortholog regions) ----
+        # Sites inside a T9 mask region are tagged FALSE_NEGATIVE_MASKED and
+        # excluded from Phase 1.5 CANDIDATE classification. They still appear
+        # in site_tier_classification.tsv for regulatory audit trail.
+        masked_sites: list[InsertionSite] = []
+        if args.mask_bed:
+            bed_path = Path(args.mask_bed)
+            _apply_mask_bed(sites, bed_path)
+            masked_sites = [
+                s for s in sites
+                if getattr(s, "tier", None) == "FALSE_NEGATIVE_MASKED"
+            ]
+            sites = [
+                s for s in sites
+                if getattr(s, "tier", None) != "FALSE_NEGATIVE_MASKED"
+            ]
+            print(
+                f"[Phase 1] mask-bed {bed_path.name}: "
+                f"{len(masked_sites)}/{len(masked_sites) + len(sites)} "
+                f"sites tagged FALSE_NEGATIVE_MASKED",
+                file=sys.stderr,
+            )
+            for s in masked_sites:
+                log(f"  MASKED: {s.site_id} {s.host_chr}:{s.pos_5p} "
+                    f"→ {getattr(s, 'mask_element', 'masked')}")
+
         # ---- Phase 1.5: Transgene-positive identification ----
         log("\n--- Phase 1.5: Transgene-positive identification ---")
         assembly_sites, skip_sites, tier_results, host_endo_ids = classify_site_tiers(
@@ -3767,6 +3864,20 @@ def main() -> None:
             threads=args.threads,
             extra_transgene_dbs=extra_dbs,
         )
+        # T10: append FALSE_NEGATIVE_MASKED entries to tier_results for audit
+        for s in masked_sites:
+            tier_results.append(TierResult(
+                site_id=s.site_id,
+                chrom=s.host_chr,
+                pos=s.pos_5p or s.pos_3p or 0,
+                transgene_positive=False,
+                clip_5p_len=len(s.seed_5p) if s.seed_5p else 0,
+                clip_3p_len=len(s.seed_3p) if s.seed_3p else 0,
+                hit_5p=getattr(s, "mask_element", ""),
+                hit_5p_source="FALSE_NEGATIVE_MASKED",
+                hit_3p=getattr(s, "mask_element", ""),
+                hit_3p_source="FALSE_NEGATIVE_MASKED",
+            ))
         write_tier_classification(
             tier_results, step_dir / "site_tier_classification.tsv",
         )
