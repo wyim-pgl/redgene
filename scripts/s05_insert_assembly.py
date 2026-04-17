@@ -2369,7 +2369,7 @@ def assemble_insert(
     element_db: Path,
     workdir: Path,
     threads: int = 4,
-    max_rounds: int = 8,
+    max_rounds: int = 5,  # T3: reduced from 8 per T2 measurement (docs/measurements/max_rounds_study.md)
     ext_k: int = 15,
     recruit_k: int = 25,
     gap_size: int = 1000,
@@ -3558,8 +3558,8 @@ def main() -> None:
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--sample-name", required=True)
     parser.add_argument("--threads", type=int, default=8)
-    parser.add_argument("--max-rounds", type=int, default=8,
-                        help="Max alternating extension+Pilon rounds")
+    parser.add_argument("--max-rounds", type=int, default=5,
+                        help="Max alternating extension+Pilon rounds (T3: reduced from 8 per max_rounds_study.md)")
     parser.add_argument("--seed-k", type=int, default=15,
                         help="k-mer size for seed extension")
     parser.add_argument("--recruit-k", type=int, default=25,
