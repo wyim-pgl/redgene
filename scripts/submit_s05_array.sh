@@ -51,9 +51,26 @@ fi
 : "${S05_HOST_BAM:?S05_HOST_BAM must be set (exported by run_pipeline.py --fanout)}"
 : "${S05_HOST_REF:?S05_HOST_REF must be set}"
 : "${S05_ELEMENT_DB:?S05_ELEMENT_DB must be set}"
+
+# M-1: per-site SLURM knobs are tunable via env vars so clusters with tighter
+# queue limits can re-use the script without forking it.
+#   S05_ARRAY_THROTTLE  max concurrent array tasks (default 25)
+#   S05_ARRAY_MEM       per-task --mem (default 32G; bump for cucumber-like
+#                        hosts that OOM under 32G — see BUG-18)
+#   S05_ARRAY_TIME      per-task --time (default 2:00:00)
+S05_ARRAY_THROTTLE="${S05_ARRAY_THROTTLE:-25}"
+S05_ARRAY_MEM="${S05_ARRAY_MEM:-32G}"
+S05_ARRAY_TIME="${S05_ARRAY_TIME:-2:00:00}"
+
 # Optional args — collect into a string passed through to the array tasks.
 # Values are single-quoted so paths with whitespace/special chars survive
 # the `sbatch --wrap="..."` heredoc intact (M-7, same fix-class as I-2).
+#
+# M-4: CLI parser coupling warning — every new `--foo '...'` line below must
+# have a matching argparse entry in scripts/s05_insert_assembly.py (search
+# for `argparse.ArgumentParser` inside main()).  The fan-out wrapper simply
+# forwards args; it does NOT re-declare them, so a missing parser entry will
+# blow up at runtime inside the array task, not here.
 EXTRA_ARGS=""
 [ -n "${S05_CONSTRUCT_REF:-}" ] && EXTRA_ARGS+=" --construct-ref '${S05_CONSTRUCT_REF}'"
 [ -n "${S05_EXTRA_ELEMENT_DB:-}" ] && EXTRA_ARGS+=" --extra-element-db '${S05_EXTRA_ELEMENT_DB}'"
@@ -99,6 +116,11 @@ fi
 
 # Build the SITES array — one site_id per line via mapfile so whitespace
 # or special chars in a site_id can't break bash word-splitting (I-3).
+#
+# M-6 mapfile idiom: `mapfile -t SITES < <(...)` reads process-substitution
+# stdout one line per array element, stripping the trailing newline (`-t`).
+# The python one-liner emits exactly one site_id per line, so SITES ends up
+# indexable as ${SITES[0]}, ${SITES[1]}, ... matching $SLURM_ARRAY_TASK_ID.
 mapfile -t SITES < <(python -c "
 import json, sys
 with open(sys.argv[1]) as f:
@@ -119,10 +141,10 @@ cat > "$ARRAY_SCRIPT" <<EOF
 #SBATCH --job-name=s05_${SAMPLE}
 #SBATCH --partition=${SLURM_PARTITION}
 #SBATCH --account=${SLURM_ACCOUNT}
-#SBATCH --time=2:00:00
-#SBATCH --mem=32G
+#SBATCH --time=${S05_ARRAY_TIME}
+#SBATCH --mem=${S05_ARRAY_MEM}
 #SBATCH --cpus-per-task=${THREADS}
-#SBATCH --array=0-$((N-1))%25
+#SBATCH --array=0-$((N-1))%${S05_ARRAY_THROTTLE}
 #SBATCH --output=${OUTDIR}/slurm_logs/s05_array_${SAMPLE}_%A_%a.out
 #SBATCH --error=${OUTDIR}/slurm_logs/s05_array_${SAMPLE}_%A_%a.err
 set -euo pipefail
@@ -144,6 +166,9 @@ ARRAY_JOBID=$(sbatch --parsable "$ARRAY_SCRIPT")
 echo "[T8] Array job: $ARRAY_JOBID  (0-$((N-1)), ${SITES_STR})"
 
 # Phase 4 as afterok dependency on the whole array.
+# M-3: emit a per-task sacct summary (wall time / MaxRSS / ExitCode) before
+# kicking off Phase 4 so the slurm log captures the array's resource profile
+# for post-hoc triage (OOM detection, timing regressions).
 PHASE4_JOBID=$(sbatch --parsable \
     --partition="$SLURM_PARTITION" --account="$SLURM_ACCOUNT" \
     --time=1:00:00 --mem=16G --cpus-per-task=4 \
@@ -151,6 +176,8 @@ PHASE4_JOBID=$(sbatch --parsable \
     --job-name="s05_${SAMPLE}_phase4" \
     --output="${OUTDIR}/slurm_logs/s05_phase4_${SAMPLE}_%j.out" \
     --wrap="set -euo pipefail; \
+echo '=== [T8] Phase 2+3 per-site summary (sacct) ==='; \
+sacct -j ${ARRAY_JOBID} --format=JobID,JobName%30,Elapsed,MaxRSS,State,ExitCode --parsable2 || true; \
 eval \"\$(micromamba shell hook --shell bash)\"; \
 micromamba activate redgene; \
 python scripts/s05_insert_assembly.py --phase 4 --threads 4 $COMMON_ARGS")
