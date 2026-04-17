@@ -171,6 +171,38 @@ def test_run_coverage_sensitivity_has_slurm_headers():
         )
 
 
+def test_run_coverage_sensitivity_samples_match_config():
+    """SAMPLES table must carry config.yaml keys (not stale aliases)."""
+    script = REPO_ROOT / "run_coverage_sensitivity.sh"
+    text = script.read_text()
+    # Config.yaml uses tomato_Cas9_A2_3, not tomato_A2_3 - regression guard.
+    assert "tomato_Cas9_A2_3" in text, (
+        "run_coverage_sensitivity.sh must reference tomato_Cas9_A2_3 "
+        "(matches config.yaml sample key)"
+    )
+    assert "tomato_A2_3)" not in text, (
+        "stale alias tomato_A2_3 found - rename to tomato_Cas9_A2_3"
+    )
+    for sample in ("rice_G281", "tomato_Cas9_A2_3", "cucumber_line225"):
+        assert sample in text, f"SAMPLES missing {sample}"
+
+
+def test_run_coverage_sensitivity_invokes_run_pipeline():
+    """Runner must actually call run_pipeline.py (not a scaffold echo)."""
+    script = REPO_ROOT / "run_coverage_sensitivity.sh"
+    text = script.read_text()
+    # Must have an actual invocation of run_pipeline.py with expected flags
+    assert "python run_pipeline.py" in text or "run_pipeline.py" in text, (
+        "runner must call run_pipeline.py"
+    )
+    assert "--steps 1-5" in text, "runner must request steps 1-5"
+    assert "--no-remote-blast" in text, "runner must use --no-remote-blast"
+    # And no leftover "would now run" placeholder
+    assert "would now run" not in text, (
+        "stale scaffold echo 'would now run' still present"
+    )
+
+
 def test_analyze_coverage_sensitivity_script_exists():
     script = REPO_ROOT / "scripts" / "util" / "analyze_coverage_sensitivity.py"
     assert script.exists(), script

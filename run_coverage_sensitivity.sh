@@ -1,7 +1,7 @@
 #!/bin/bash
-# Issue #2 [AC-7] — coverage sensitivity sweep (3 hosts x 4 coverage = 12 tasks).
+# Issue #2 [AC-7] - coverage sensitivity sweep (3 hosts x 4 coverage = 12 tasks).
 #
-# TEMPLATE ONLY — do NOT auto-submit. Operator must invoke `sbatch` manually:
+# Operator submits manually (no auto-submit):
 #
 #     sbatch run_coverage_sensitivity.sh
 #
@@ -10,6 +10,7 @@
 #   1. subsamples the master FASTQ pair with scripts/util/subsample_reads.py
 #   2. lays out results/<sample>_cov<tag>/ with symlinks
 #   3. runs the core pipeline (steps 1-5) via run_pipeline.py
+#      (needs config.yaml entry <sample>_cov<tag> - added in sibling commit)
 #
 #SBATCH --job-name=rg_cov_sensitivity
 #SBATCH --output=results/rg_cov_%A_%a.out
@@ -27,8 +28,8 @@ set -euo pipefail
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate redgene
 
-# 3 hosts x 4 coverage = 12 tasks. Edit these tables to change the grid.
-SAMPLES=(rice_G281 tomato_A2_3 cucumber_line225)
+# 3 hosts x 4 coverage = 12 tasks. Keys MUST match config.yaml samples.
+SAMPLES=(rice_G281 tomato_Cas9_A2_3 cucumber_line225)
 COVS=(5x 10x 15x 20x)
 FRACTIONS=(0.25 0.50 0.75 1.00)   # approx 5/10/15/20x for a ~20x master set
 
@@ -44,22 +45,56 @@ FRAC=${FRACTIONS[$COV_IDX]}
 
 echo "[cov-sensitivity] task=$IDX sample=$SAMPLE cov=$COV fraction=$FRAC"
 
-# --- Step 1: subsample master FASTQ ---------------------------------------
-MASTER_R1="input/${SAMPLE}_R1.fq.gz"
-MASTER_R2="input/${SAMPLE}_R2.fq.gz"
-OUT_PREFIX="results/${SAMPLE}_cov${COV}/${SAMPLE}_cov${COV}"
+# --- Step 1: map master FASTQ pair per sample (from config.yaml) ----------
+# Case-based mapping avoids a yq dependency. Keep in sync with config.yaml.
+case "$SAMPLE" in
+    rice_G281)
+        MASTER_R1="test_data/rice_G281_R1.fastq.gz"
+        MASTER_R2="test_data/rice_G281_R2.fastq.gz"
+        ;;
+    tomato_Cas9_A2_3)
+        MASTER_R1="test_data/tomato/SRR13450616_1.fastq.gz"
+        MASTER_R2="test_data/tomato/SRR13450616_2.fastq.gz"
+        ;;
+    cucumber_line225)
+        MASTER_R1="data/cucumber/SRR12082195_1.fastq.gz"
+        MASTER_R2="data/cucumber/SRR12082195_2.fastq.gz"
+        ;;
+    *)
+        echo "[cov-sensitivity] ERROR: unknown sample $SAMPLE" >&2
+        exit 2
+        ;;
+esac
 
-mkdir -p "results/${SAMPLE}_cov${COV}"
+if [[ ! -f "$MASTER_R1" || ! -f "$MASTER_R2" ]]; then
+    echo "[cov-sensitivity] ERROR: master FASTQ not found for $SAMPLE:" >&2
+    echo "  R1=$MASTER_R1" >&2
+    echo "  R2=$MASTER_R2" >&2
+    exit 3
+fi
 
+COV_SAMPLE="${SAMPLE}_cov${COV}"
+OUT_DIR="results/${COV_SAMPLE}"
+OUT_PREFIX="${OUT_DIR}/${COV_SAMPLE}"
+
+mkdir -p "$OUT_DIR"
+
+# --- Step 2: subsample master FASTQ ---------------------------------------
 python scripts/util/subsample_reads.py \
     --r1 "$MASTER_R1" --r2 "$MASTER_R2" \
     --fraction "$FRAC" --seed 42 \
     --output-prefix "$OUT_PREFIX"
 
-# --- Step 2: run the pipeline (steps 1-5) ---------------------------------
-# Note: this requires config.yaml to contain a <SAMPLE>_cov<COV> entry that
-# points at the subsampled paths above. Scaffold only — config wiring is
-# an explicit follow-up task (see docs/measurements/coverage_sensitivity.md).
-echo "[cov-sensitivity] (scaffold) would now run: python run_pipeline.py --sample ${SAMPLE}_cov${COV} --steps 1-5 --threads 16"
+echo "[cov-sensitivity] subsample done -> ${OUT_PREFIX}_R[12].fq.gz"
 
-echo "[cov-sensitivity] task=$IDX done"
+# --- Step 3: run the core pipeline (steps 1-5) ----------------------------
+# run_pipeline.py uses the default config.yaml and resolves the sample key
+# <SAMPLE>_cov<COV> which must already exist in config.yaml (see commit
+# "Issue #2 [AC-7] add 12 coverage-sensitivity sample entries to config.yaml").
+python run_pipeline.py \
+    --sample "$COV_SAMPLE" \
+    --steps 1-5 \
+    --threads 16 \
+    --no-remote-blast
+
+echo "[cov-sensitivity] task=$IDX done (sample=$COV_SAMPLE)"
