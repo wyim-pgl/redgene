@@ -3,6 +3,16 @@
 #SBATCH --output=results/rg_w1_%A_%a.out
 #SBATCH --error=results/rg_w1_%A_%a.err
 #SBATCH --array=0-7
+#SBATCH --partition=cpu-s1-pgl-0
+#SBATCH --account=cpu-s1-pgl-0
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=96G
+#SBATCH --time=16:00:00
+# Issue #15 / BUG-18: --mem=96G covers cucumber MaxRSS ~67G (64G default was
+# the root cause of T11 _3/_4 OOM failures). rice/tomato peak ~15-40G so the
+# extra reservation is safe headroom. Per-host memory requirements:
+#   rice     ~10G  | tomato ~38G  | cucumber ~67G  | soybean ~4G
+# If cluster scheduling pressure grows, split this into per-host arrays.
 
 set -euo pipefail
 eval "$(micromamba shell hook --shell bash)"
