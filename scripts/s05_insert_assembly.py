@@ -41,6 +41,15 @@ from pathlib import Path
 
 import pysam
 
+# Local sub-modules (T6 verdict helpers — Issue #3 partial wire-in).
+try:
+    from s05.verdict import VerdictRules
+    from s05.config_loader import load_verdict_rules
+except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from s05.verdict import VerdictRules
+    from s05.config_loader import load_verdict_rules
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -113,6 +122,37 @@ UNKNOWN_MAX_CONSTRUCT_FRAC = 0.05  # max construct fraction for host-only
 
 def log(msg: str) -> None:
     print(f"[{STEP}] {msg}", file=sys.stderr, flush=True)
+
+
+def _apply_canonical_override(
+    verdict: str,
+    reason: str,
+    unique_elems: set[str],
+    host_fraction: float,
+    rules: "VerdictRules | None",
+) -> tuple[str, str]:
+    """Promote verdict to CANDIDATE when a canonical transgene triplet matches.
+
+    Issue #3 (v1.0 wire-in, scoped). Mirrors compute_verdict rule 1 priority:
+    canonical_triplet wins over any FP filter when host_fraction is acceptable.
+    """
+    if rules is None or not rules.canonical_triplets or not unique_elems:
+        return verdict, reason
+    if host_fraction >= rules.cand_host_fraction_max:
+        return verdict, reason
+    for triplet_name, triplet in rules.canonical_triplets.items():
+        if triplet and triplet.issubset(unique_elems):
+            if verdict == "CANDIDATE":
+                return verdict, reason
+            new_reason = (
+                f"canonical_triplet[{triplet_name}] matched "
+                f"({sorted(triplet)}); host_fraction="
+                f"{host_fraction:.0%} below "
+                f"{rules.cand_host_fraction_max:.0%} "
+                f"[override {verdict}: {reason}]"
+            )
+            return "CANDIDATE", new_reason
+    return verdict, reason
 
 
 # ---------------------------------------------------------------------------
@@ -3352,6 +3392,7 @@ def generate_report(
     element_db: Path | None = None,
     threads: int = 4,
     construct_flanking: list[tuple[str, int, int]] | None = None,
+    rules: VerdictRules | None = None,
 ) -> tuple[Path, str]:
     """Generate human-readable linear map report."""
     report_path = output_dir / f"{site.site_id}_report.txt"
@@ -3534,6 +3575,14 @@ def generate_report(
                 f"genome ({host_bp:,}bp) with {construct_frac_unk:.0%} construct "
                 f"— host genomic DNA"
             )
+
+    # Issue #3 wire-in (scoped): canonical_triplet override.
+    # Highest-priority rule from compute_verdict — promotes FP/UNKNOWN to
+    # CANDIDATE when a canonical transgene triplet (e.g., bar + P-CaMV35S +
+    # T-ocs) is fully present and host_fraction is acceptable.
+    verdict, verdict_reason = _apply_canonical_override(
+        verdict, verdict_reason, unique_elems, host_fraction, rules,
+    )
 
     # Build linear map with orientation arrows
     linear_parts = []
@@ -3736,6 +3785,12 @@ def main() -> None:
     )
     parser.add_argument("--s03-r1", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--s03-r2", default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to config.yaml for verdict rules / canonical triplets "
+             "(Issue #3 wire-in). Missing file falls back to DEFAULT_TRIPLETS.",
+    )
     # --- T8: per-site SLURM array fan-out (v1.0 임시안) -----------------------
     # v1.1 에서 full module split 완료 후 이 flag 제거 예정.
     parser.add_argument(
@@ -4094,6 +4149,12 @@ def main() -> None:
         # Generate report for each site
         verdict_counts: Counter = Counter()
         verdict_by_site: dict[str, str] = {}
+        # Issue #3 wire-in: load canonical-triplet + threshold rules from config
+        # (falls back to DEFAULT_TRIPLETS when --config is omitted / missing).
+        rules = load_verdict_rules(
+            Path(args.config) if args.config else Path("config.yaml"),
+            args.sample_name,
+        )
         for site in sites:
             site_fa = step_dir / f"{site.site_id}_insert.fasta"
             if site_fa.exists():
@@ -4109,6 +4170,7 @@ def main() -> None:
                         element_db=element_db,
                         threads=args.threads,
                         construct_flanking=construct_flanking,
+                        rules=rules,
                     )
                     verdict_counts[verdict] += 1
                     verdict_by_site[site.site_id] = verdict

@@ -254,7 +254,8 @@ def build_step_cmd(
                "--s03-r2", str(s03_r2),
                "--outdir", str(outdir),
                "--sample-name", sname,
-               "--threads", str(threads)]
+               "--threads", str(threads),
+               "--config", str(base_dir / "config.yaml")]
         if no_remote_blast:
             cmd.append("--no-remote-blast")
         # If s04b produced a non-empty per-sample construct assembly, pass
