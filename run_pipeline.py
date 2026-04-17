@@ -166,6 +166,7 @@ def build_step_cmd(
     base_dir: Path,
     no_remote_blast: bool = False,
     cfg: dict[str, Any] | None = None,
+    host_bam_override: str | None = None,
 ) -> list[str]:
     """Build the command-line arguments for a specific step."""
     script = str(base_dir / STEP_SCRIPTS[step])
@@ -182,6 +183,13 @@ def build_step_cmd(
     s04 = outdir / sname / "s04_host_map"
     s04b = outdir / sname / "s04b_construct_asm"
     s05 = outdir / sname / "s05_insert_assembly"
+
+    # T12 PoC: --host-bam-override replaces the s04 BAM for every step that
+    # otherwise reads {outdir}/{sample}/s04_host_map/{sample}_host.bam.
+    host_bam_path: str = (
+        host_bam_override if host_bam_override
+        else str(s04 / f"{sname}_host.bam")
+    )
 
     reads = sample_cfg.get("reads", {})
     construct_ref = rp(sample_cfg["construct_reference"])
@@ -238,7 +246,7 @@ def build_step_cmd(
             s03_r1 = s03 / f"{sname}_construct_R1.fq.gz"
             s03_r2 = s03 / f"{sname}_construct_R2.fq.gz"
         cmd = [sys.executable, script,
-               "--host-bam", str(s04 / f"{sname}_host.bam"),
+               "--host-bam", host_bam_path,
                "--host-ref", host_ref,
                "--element-db", construct_ref,
                "--construct-ref", construct_ref,
@@ -292,7 +300,7 @@ def build_step_cmd(
             wt_bam = outdir / wt_sample / "s04_host_map" / f"{wt_sample}_host.bam"
 
         cmd = [sys.executable, script,
-               "--treatment-bam", str(s04 / f"{sname}_host.bam"),
+               "--treatment-bam", host_bam_path,
                "--wt-bam", str(wt_bam),
                "--host-ref", host_ref,
                "--outdir", str(outdir),
@@ -308,7 +316,7 @@ def build_step_cmd(
         # Copy number: junctions optional (use s05 site count if available)
         cmd = [sys.executable, script,
                 "--construct-bam", str(s02 / f"{sname}_construct.bam"),
-                "--host-bam", str(s04 / f"{sname}_host.bam"),
+                "--host-bam", host_bam_path,
                 "--construct-ref", construct_ref,
                 "--host-ref", host_ref,
                 "--outdir", str(outdir),
@@ -416,6 +424,7 @@ def run_step(
     no_remote_blast: bool = False,
     cfg: dict[str, Any] | None = None,
     fanout: bool = False,
+    host_bam_override: str | None = None,
 ) -> None:
     """Execute a single pipeline step for one sample."""
     script = base_dir / STEP_SCRIPTS[step]
@@ -425,7 +434,8 @@ def run_step(
         sys.exit(f"ERROR: Script not found: {script}")
 
     cmd = build_step_cmd(step, sample_key, sample_cfg, outdir, threads, base_dir,
-                         no_remote_blast=no_remote_blast, cfg=cfg)
+                         no_remote_blast=no_remote_blast, cfg=cfg,
+                         host_bam_override=host_bam_override)
 
     log.info("Step %s: %s  [%s]", step, label, sample_key)
 
@@ -508,6 +518,24 @@ def build_parser() -> argparse.ArgumentParser:
             "UGT72E3 path: ~48 h sequential → ~4 h fan-out."
         ),
     )
+    parser.add_argument(
+        "--host-bam-override",
+        default=None,
+        help=(
+            "T12 PoC: skip s04 and use this pre-built BAM as the host_bam "
+            "input for downstream steps (4b, 5, 6, 7). Enables minimap2 "
+            "PoC without disturbing the canonical BWA output tree."
+        ),
+    )
+    parser.add_argument(
+        "--outdir-override",
+        default=None,
+        help=(
+            "T12 PoC: alternative output root directory "
+            "(e.g., results/rice_G281_mm2_poc). Takes precedence over "
+            "--outdir and config output_dir."
+        ),
+    )
     return parser
 
 
@@ -522,8 +550,11 @@ def main() -> None:
     config_path = args.config if args.config.is_absolute() else base_dir / args.config
     cfg = load_config(config_path)
 
-    # Determine output directory
+    # Determine output directory. --outdir-override (T12 PoC) takes highest
+    # precedence so the PoC tree stays isolated from the canonical results/.
     outdir = args.outdir
+    if args.outdir_override is not None:
+        outdir = Path(args.outdir_override)
     if outdir is None:
         outdir = Path(cfg.get("output_dir", "results"))
     if not outdir.is_absolute():
@@ -595,6 +626,7 @@ def main() -> None:
                 no_remote_blast=args.no_remote_blast,
                 cfg=cfg,
                 fanout=args.fanout,
+                host_bam_override=args.host_bam_override,
             )
 
         log.info("=== Sample %s: all steps completed ===\n", sample_key)
