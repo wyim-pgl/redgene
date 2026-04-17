@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -306,6 +307,89 @@ def build_step_cmd(
         sys.exit(f"ERROR: No command builder for step {step}")
 
 
+def _fanout_step5(
+    cmd: list[str],
+    sample_key: str,
+    outdir: Path,
+    threads: int,
+    base_dir: Path,
+    dry_run: bool,
+) -> None:
+    """T8: run s05 Phase 1+1.5 inline, then submit SLURM array (Phase 2_3)
+    and Phase 4 afterok job via scripts/submit_s05_array.sh.
+
+    `cmd` is the full s05 command built by build_step_cmd("5", ...). We
+    reuse it for the inline Phase 1_1.5 call (adding `--phase 1_1.5`) and
+    parse out the path args we need to re-emit as env vars for the array
+    wrapper (which builds its own s05 invocations for Phase 2_3 / 4).
+    """
+    # Parse out key=value-ish pairs from the s05 CLI so we can re-thread
+    # them through to the array wrapper as env vars.  cmd layout is:
+    #   [python, scripts/s05_insert_assembly.py, --host-bam, X, --host-ref, Y, ...]
+    flag_map = {
+        "--host-bam": "S05_HOST_BAM",
+        "--host-ref": "S05_HOST_REF",
+        "--element-db": "S05_ELEMENT_DB",
+        "--construct-ref": "S05_CONSTRUCT_REF",
+        "--extra-element-db": "S05_EXTRA_ELEMENT_DB",
+        "--common-payload-db": "S05_COMMON_PAYLOAD_DB",
+        "--s03-r1": "S05_S03_R1",
+        "--s03-r2": "S05_S03_R2",
+    }
+    env_overrides: dict[str, str] = {}
+    i = 2  # skip [python, script.py]
+    has_no_remote_blast = False
+    while i < len(cmd):
+        tok = cmd[i]
+        if tok == "--no-remote-blast":
+            has_no_remote_blast = True
+            i += 1
+            continue
+        if tok in flag_map and i + 1 < len(cmd):
+            env_overrides[flag_map[tok]] = cmd[i + 1]
+            i += 2
+            continue
+        i += 1
+    if has_no_remote_blast:
+        env_overrides["S05_NO_REMOTE_BLAST"] = "1"
+
+    # Phase 1_1.5 inline: reuse exact same cmd, just append --phase.
+    phase_cmd = list(cmd) + ["--phase", "1_1.5"]
+    log.info("  [T8] Phase 1+1.5 inline: %s", " ".join(phase_cmd))
+    if not dry_run:
+        result = subprocess.run(phase_cmd, cwd=str(base_dir))
+        if result.returncode != 0:
+            sys.exit(
+                f"FAILED: T8 Phase 1+1.5 for '{sample_key}' "
+                f"exited with code {result.returncode}"
+            )
+
+    step_dir = outdir / sample_key / "s05_insert_assembly"
+    array_cmd = [
+        "bash",
+        str(base_dir / "scripts" / "submit_s05_array.sh"),
+        sample_key,
+        str(step_dir),
+        str(threads),
+        str(outdir),
+    ]
+    env_str = " ".join(f"{k}={v}" for k, v in env_overrides.items())
+    log.info("  [T8] Array submit: %s %s", env_str, " ".join(array_cmd))
+    if dry_run:
+        log.info("  [T8] (dry-run: sbatch calls suppressed)")
+        return
+
+    env = dict(os.environ)
+    env.update(env_overrides)
+    result = subprocess.run(array_cmd, cwd=str(base_dir), env=env)
+    if result.returncode != 0:
+        sys.exit(
+            f"FAILED: T8 submit_s05_array.sh for '{sample_key}' "
+            f"exited with code {result.returncode}"
+        )
+    log.info("  [T8] sbatch submissions complete; exiting without waiting.")
+
+
 def run_step(
     step: str,
     sample_key: str,
@@ -316,6 +400,7 @@ def run_step(
     dry_run: bool,
     no_remote_blast: bool = False,
     cfg: dict[str, Any] | None = None,
+    fanout: bool = False,
 ) -> None:
     """Execute a single pipeline step for one sample."""
     script = base_dir / STEP_SCRIPTS[step]
@@ -328,6 +413,13 @@ def run_step(
                          no_remote_blast=no_remote_blast, cfg=cfg)
 
     log.info("Step %s: %s  [%s]", step, label, sample_key)
+
+    # T8 임시안: step 5 fan-out path.  Only applies to step 5.  v1.1 replaces
+    # this with the full module split.
+    if step == "5" and fanout:
+        _fanout_step5(cmd, sample_key, outdir, threads, base_dir, dry_run)
+        return
+
     if dry_run:
         log.info("  DRY-RUN: %s", " ".join(cmd))
         return
@@ -390,6 +482,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-remote-blast", action="store_true",
         help="Skip remote NCBI nt BLAST in step 5 (use local element_db only)",
+    )
+    parser.add_argument(
+        "--fanout", action="store_true",
+        help=(
+            "T8 임시안 (v1.0 MVP): for step 5 only, run Phase 1+1.5 inline, "
+            "then submit a SLURM array (one task per positive site) for "
+            "Phase 2+3, and a Phase 4 afterok-dependency job. Exits after "
+            "sbatch submission (does not wait for the array to finish). "
+            "UGT72E3 path: ~48 h sequential → ~4 h fan-out."
+        ),
     )
     return parser
 
@@ -477,6 +579,7 @@ def main() -> None:
                 dry_run=args.dry_run,
                 no_remote_blast=args.no_remote_blast,
                 cfg=cfg,
+                fanout=args.fanout,
             )
 
         log.info("=== Sample %s: all steps completed ===\n", sample_key)
