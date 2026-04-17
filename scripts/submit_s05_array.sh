@@ -52,12 +52,14 @@ fi
 : "${S05_HOST_REF:?S05_HOST_REF must be set}"
 : "${S05_ELEMENT_DB:?S05_ELEMENT_DB must be set}"
 # Optional args — collect into a string passed through to the array tasks.
+# Values are single-quoted so paths with whitespace/special chars survive
+# the `sbatch --wrap="..."` heredoc intact (M-7, same fix-class as I-2).
 EXTRA_ARGS=""
-[ -n "${S05_CONSTRUCT_REF:-}" ] && EXTRA_ARGS+=" --construct-ref ${S05_CONSTRUCT_REF}"
-[ -n "${S05_EXTRA_ELEMENT_DB:-}" ] && EXTRA_ARGS+=" --extra-element-db ${S05_EXTRA_ELEMENT_DB}"
-[ -n "${S05_COMMON_PAYLOAD_DB:-}" ] && EXTRA_ARGS+=" --common-payload-db ${S05_COMMON_PAYLOAD_DB}"
-[ -n "${S05_S03_R1:-}" ] && EXTRA_ARGS+=" --s03-r1 ${S05_S03_R1}"
-[ -n "${S05_S03_R2:-}" ] && EXTRA_ARGS+=" --s03-r2 ${S05_S03_R2}"
+[ -n "${S05_CONSTRUCT_REF:-}" ] && EXTRA_ARGS+=" --construct-ref '${S05_CONSTRUCT_REF}'"
+[ -n "${S05_EXTRA_ELEMENT_DB:-}" ] && EXTRA_ARGS+=" --extra-element-db '${S05_EXTRA_ELEMENT_DB}'"
+[ -n "${S05_COMMON_PAYLOAD_DB:-}" ] && EXTRA_ARGS+=" --common-payload-db '${S05_COMMON_PAYLOAD_DB}'"
+[ -n "${S05_S03_R1:-}" ] && EXTRA_ARGS+=" --s03-r1 '${S05_S03_R1}'"
+[ -n "${S05_S03_R2:-}" ] && EXTRA_ARGS+=" --s03-r2 '${S05_S03_R2}'"
 if [ "${S05_NO_REMOTE_BLAST:-0}" = "1" ]; then
     EXTRA_ARGS+=" --no-remote-blast"
 fi
@@ -72,10 +74,12 @@ echo "[T8] $SAMPLE: $N positive sites in $SITES_JSON"
 mkdir -p "${OUTDIR}/slurm_logs"
 
 # Build the shared CLI args once — they're identical across array tasks
-# modulo the --site-id that each task picks.
-COMMON_ARGS="--host-bam $S05_HOST_BAM --host-ref $S05_HOST_REF"
-COMMON_ARGS+=" --element-db $S05_ELEMENT_DB"
-COMMON_ARGS+=" --outdir $OUTDIR --sample-name $SAMPLE"
+# modulo the --site-id that each task picks.  All paths are single-quoted
+# so the `sbatch --wrap="..."` heredoc below passes them through a single
+# extra shell layer without word-splitting on whitespace/glob chars (I-2).
+COMMON_ARGS="--host-bam '$S05_HOST_BAM' --host-ref '$S05_HOST_REF'"
+COMMON_ARGS+=" --element-db '$S05_ELEMENT_DB'"
+COMMON_ARGS+=" --outdir '$OUTDIR' --sample-name '$SAMPLE'"
 COMMON_ARGS+="${EXTRA_ARGS}"
 
 if [ "$N" -eq 0 ]; then
@@ -93,12 +97,20 @@ python scripts/s05_insert_assembly.py --phase 4 --threads 4 $COMMON_ARGS")
     exit 0
 fi
 
-# Generate the space-separated site-id list for the array indexer.
-SITES_STR=$(python -c "
+# Build the SITES array — one site_id per line via mapfile so whitespace
+# or special chars in a site_id can't break bash word-splitting (I-3).
+mapfile -t SITES < <(python -c "
 import json, sys
-d = json.load(open(sys.argv[1]))
-print(' '.join(s['site_id'] for s in d))
+with open(sys.argv[1]) as f:
+    for s in json.load(f):
+        print(s['site_id'])
 " "$SITES_JSON")
+# Shell-safe re-materialization for the sbatch heredoc below: each element
+# is individually `printf %q`-escaped so the array survives a second parse
+# without word-splitting (I-3).
+SITES_QUOTED=$(printf '%q ' "${SITES[@]}")
+# Space-separated form for the human log line only; never re-parse.
+SITES_STR="${SITES[*]}"
 
 # Array job — one task per positive site, max 25 concurrent.
 ARRAY_SCRIPT="${STEPDIR}/s05_array_${SAMPLE}.sbatch"
@@ -117,7 +129,7 @@ set -euo pipefail
 eval "\$(micromamba shell hook --shell bash)"
 micromamba activate redgene
 
-SITES=(${SITES_STR})
+SITES=(${SITES_QUOTED})
 SITE="\${SITES[\$SLURM_ARRAY_TASK_ID]}"
 echo "=== [T8] site \$SITE (task \$SLURM_ARRAY_TASK_ID / $((N-1))) ==="
 

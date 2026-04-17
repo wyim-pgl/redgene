@@ -3801,6 +3801,9 @@ def main() -> None:
             ],
             indent=2,
         ) + "\n")
+        # SECURITY: pickle is consumed only from the same sample's step_dir
+        # (same user writes and reads). Never rehydrate from untrusted sources.
+        # v1.1 module split will replace with typed JSON + dataclasses loader.
         positive_sites_pkl.write_bytes(pickle.dumps(
             {"sites": sites, "host_endo_ids": host_endo_ids}
         ))
