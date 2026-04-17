@@ -15,10 +15,16 @@ cd "$(dirname "$0")"
 MANIFEST=common_payload_manifest.tsv
 OUT=common_payload.fa
 
-TMPOUT=$(mktemp)
+# I-3: stage the temp file next to the final output so `mv` is an atomic
+# rename (same filesystem) instead of a cross-device copy.  Documented in
+# element_db/common_payload_schema.md alongside the TSV column layout.
+TMPOUT=$(mktemp -p "$(dirname "$OUT")" common_payload.XXXXXX.fa)
 trap 'rm -f "$TMPOUT"' EXIT
 
-while IFS=$'\t' read -r acc purpose seq_start seq_stop notes; do
+# I-1: `|| [[ -n "$acc" ]]` keeps the loop running on the final record even
+# when the manifest ends without a trailing newline (otherwise `read` returns
+# non-zero and the last entry is silently dropped).
+while IFS=$'\t' read -r acc purpose seq_start seq_stop notes || [[ -n "$acc" ]]; do
     [[ "$acc" == "accession" ]] && continue
     [[ -z "$acc" ]] && continue
     if [[ -n "$seq_start" && -n "$seq_stop" ]]; then
