@@ -89,3 +89,51 @@ def test_canonical_triplet_promotion_from_sample_contig():
     verdict, reason = compute_verdict(ev, _RULES)
     assert verdict == "CANDIDATE"
     assert "canonical_triplet" in reason
+
+
+# Issue #11 I-3: host_endogenous rule port from generate_report
+def test_fp_host_endogenous_all_elements():
+    # 모든 annotated element 가 host-endogenous 이면 FALSE_POSITIVE
+    ev = _ev(
+        elements=["OsActin1", "OsUbi1"],
+        host_endogenous_elements={"OsActin1", "OsUbi1"},
+        host_fraction=0.30,
+    )
+    verdict, reason = compute_verdict(ev, _RULES)
+    assert verdict == "FALSE_POSITIVE"
+    assert "host-endogenous" in reason
+
+
+def test_host_endogenous_partial_still_candidate():
+    # 일부만 host-endogenous 이면 일반 흐름 유지 (CANDIDATE)
+    ev = _ev(
+        elements=["OsActin1", "bar"],
+        host_endogenous_elements={"OsActin1"},
+        host_fraction=0.30,
+    )
+    verdict, _ = compute_verdict(ev, _RULES)
+    assert verdict == "CANDIDATE"
+
+
+def test_canonical_triplet_beats_host_endogenous():
+    # canonical triplet 이 매칭되면 host_endogenous 무시 (promotion 우선)
+    ev = _ev(
+        elements=["bar", "P-CaMV35S", "T-ocs"],
+        host_endogenous_elements={"bar", "P-CaMV35S", "T-ocs"},
+        matched_canonical={"bar", "P-CaMV35S", "T-ocs"},
+        host_fraction=0.30,
+    )
+    verdict, reason = compute_verdict(ev, _RULES)
+    assert verdict == "CANDIDATE"
+    assert "canonical_triplet" in reason
+
+
+def test_host_endogenous_empty_set_no_effect():
+    # host_endogenous set 이 비어있으면 아무 영향 없음
+    ev = _ev(
+        elements=["bar", "P-CaMV35S"],
+        host_endogenous_elements=set(),
+        host_fraction=0.30,
+    )
+    verdict, _ = compute_verdict(ev, _RULES)
+    assert verdict == "CANDIDATE"

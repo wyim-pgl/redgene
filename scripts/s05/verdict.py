@@ -52,6 +52,8 @@ class FilterEvidence:
     matched_canonical: set[str] = field(default_factory=set)
     # Element → source-tier tag (sample_contig / element_db / common_payload / univec).
     sources_by_element: dict[str, str] = field(default_factory=dict)
+    # Element names excluded at Tier 1/2 DB-level host BLAST (Phase 4 host filter).
+    host_endogenous_elements: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -122,6 +124,8 @@ def compute_verdict(
 
       1. canonical-triplet match + host_fraction < cand_host_fraction_max
          -> CANDIDATE
+      1.5. all annotated elements are host-endogenous (Phase 4 host filter)
+         -> FALSE_POSITIVE (host-endogenous)
       2. site overlaps a construct-flanking region
          -> FALSE_POSITIVE (flanking)
       3. off_target_chrs >= fp_off_target_chrs_min
@@ -147,6 +151,16 @@ def compute_verdict(
                 f"canonical_triplet[{triplet_name}] matched "
                 f"({sorted(ev.matched_canonical)}); host_fraction="
                 f"{ev.host_fraction:.0%} below {rules.cand_host_fraction_max:.0%}")
+
+    # Rule 1.5: Phase 4 host-endogenous filter.
+    # If every unique annotated element was excluded at Tier 1/2 DB-level
+    # host BLAST, the whole assembly is host-endogenous noise.
+    if ev.elements and ev.host_endogenous_elements:
+        unique_elems = set(ev.elements)
+        if unique_elems and unique_elems <= ev.host_endogenous_elements:
+            return ("FALSE_POSITIVE",
+                    "all annotated elements are host-endogenous "
+                    "(matched host genome at Tier 1/2 BLAST threshold)")
 
     # Rule 2: construct-flanking overlap (Filter B).
     if _flanking_overlaps_site(ev.flanking_hit, ev.site_chr, ev.site_pos):
