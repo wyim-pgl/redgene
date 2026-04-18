@@ -23,7 +23,7 @@ RAW     := _raw_combined.fa
 MANI    := gmo_combined_db_manifest.tsv
 CDH_C   := 0.95    # see header comment for rationale (Issue #10 M-6)
 
-SRCS := common_payload.fa gmo_combined_db.fa cas9_sgrna.fa euginius_missing.fa payload_cds.fa
+SRCS := common_payload.fa gmo_combined_db.fa cas9_sgrna.fa euginius_missing.fa payload_cds.fa crl_amplicons.fa
 
 all: $(DB) $(MANI)
 

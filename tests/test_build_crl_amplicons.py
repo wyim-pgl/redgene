@@ -15,6 +15,8 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "element_db" / "build_crl_amplicons.sh"
@@ -160,4 +162,53 @@ def test_tag_and_concat_srcmap_includes_crl():
     # Issue #10 M-3 whitelist.
     assert re.search(r'"crl_amplicons\.fa"\s*:\s*"crl"', text), (
         "crl_amplicons.fa must map to `crl` source tag"
+    )
+
+
+# ---- New tests for Makefile + DB integration (Issue #5 v1.1 AC) ----------
+
+MAKEFILE = REPO_ROOT / "element_db" / "Makefile"
+DB_V2 = REPO_ROOT / "element_db" / "gmo_combined_db_v2.fa"
+
+
+def test_makefile_srcs_includes_crl_amplicons():
+    """element_db/Makefile SRCS list must include crl_amplicons.fa so
+    `make all` passes it to tag_and_concat.py and into gmo_combined_db_v2.fa."""
+    mk = MAKEFILE.read_text()
+    m = re.search(r"^SRCS\s*:=\s*(.+)$", mk, re.MULTILINE)
+    assert m, "Makefile missing SRCS := line"
+    srcs = m.group(1)
+    assert "crl_amplicons.fa" in srcs, (
+        "Makefile SRCS must list crl_amplicons.fa so DB rebuild includes CRL sequences"
+    )
+
+
+@pytest.mark.skipif(not DB_V2.exists(), reason="gmo_combined_db_v2.fa not built yet")
+def test_combined_db_contains_crl_src_tag():
+    """After `make all`, gmo_combined_db_v2.fa must contain at least one
+    header with `|src=crl` (the 5th source tag from EU CRL GMOMETHODS)."""
+    headers = [
+        ln for ln in DB_V2.read_text().splitlines()
+        if ln.startswith(">")
+    ]
+    crl_headers = [h for h in headers if "|src=crl" in h]
+    assert crl_headers, (
+        f"gmo_combined_db_v2.fa has no |src=crl headers; "
+        "run `make clean all` in element_db/ to rebuild with CRL amplicons"
+    )
+
+
+@pytest.mark.skipif(not DB_V2.exists(), reason="gmo_combined_db_v2.fa not built yet")
+def test_combined_db_crl_count_within_range():
+    """cd-hit-est dedup at 95% must retain between 60 and 85 CRL sequences
+    (82 input after hand-curation; some share >=95% identity with EUginius
+    seqs already in the DB but the majority should survive deduplication)."""
+    headers = [
+        ln for ln in DB_V2.read_text().splitlines()
+        if ln.startswith(">")
+    ]
+    crl_count = sum(1 for h in headers if "|src=crl" in h)
+    assert 60 <= crl_count <= 85, (
+        f"Expected 60–85 CRL sequences after cd-hit-est dedup, got {crl_count}. "
+        "Check element_db/gmo_combined_db_v2.fa.clstr for cluster details."
     )
