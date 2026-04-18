@@ -1,0 +1,7 @@
+Chr1	40106790	40107516	taxon-specific|QT-TAX-SPS_primer_f_SPS_primer_r|Oryza_sativa|KT225496.1|fullseq_721bp|euginius_v1|src=element_db	99.311
+Chr2	24688238	24688529	event-specific|QL-EVE-OS-KM2_for_KM1_rev|KMD1|EU980363.1|fullseq_556bp|euginius_v1|src=element_db	100
+Chr4	33015167	33015852	element-specific|QL-ELE-Cry1Ac-F(_R)-n4_Cry1AcR-n2|CS-cry1Ac-BACTU|HQ161057.1|fullseq_1867bp|euginius_v1|src=element_db	99.854
+Chr6	19825094	19825411	event-specific|QL-EVE-Kef6_forward_Kef6_reverse|Kefeng6|HM124448.1|fullseq_506bp|euginius_v1|src=element_db	99.369
+Chr6	23929086	23931000	taxon-specific|QT-TAX-OS-002|Oryza_sativa|XM_052303253.1|fullseq_2740bp|euginius_v1|src=element_db	99.739
+Chr6	23931381	23931954	taxon-specific|QT-TAX-OS-002|Oryza_sativa|XM_052303253.1|fullseq_2740bp|euginius_v1|src=element_db	100
+Chr6	25065313	25065533	event-specific|QT-EVE-OS-002|LLRICE62|JQ406881.1|fullseq_628bp|euginius_v1|src=element_db	99.091

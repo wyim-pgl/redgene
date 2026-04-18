@@ -20,12 +20,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from scripts.util.coc_logger import CocLogger, sha256_file
+
+from scripts._write_audit_header import write_audit_header
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -163,6 +168,7 @@ def build_step_cmd(
     base_dir: Path,
     no_remote_blast: bool = False,
     cfg: dict[str, Any] | None = None,
+    host_bam_override: str | None = None,
 ) -> list[str]:
     """Build the command-line arguments for a specific step."""
     script = str(base_dir / STEP_SCRIPTS[step])
@@ -179,6 +185,13 @@ def build_step_cmd(
     s04 = outdir / sname / "s04_host_map"
     s04b = outdir / sname / "s04b_construct_asm"
     s05 = outdir / sname / "s05_insert_assembly"
+
+    # T12 PoC: --host-bam-override replaces the s04 BAM for every step that
+    # otherwise reads {outdir}/{sample}/s04_host_map/{sample}_host.bam.
+    host_bam_path: str = (
+        host_bam_override if host_bam_override
+        else str(s04 / f"{sname}_host.bam")
+    )
 
     reads = sample_cfg.get("reads", {})
     construct_ref = rp(sample_cfg["construct_reference"])
@@ -235,7 +248,7 @@ def build_step_cmd(
             s03_r1 = s03 / f"{sname}_construct_R1.fq.gz"
             s03_r2 = s03 / f"{sname}_construct_R2.fq.gz"
         cmd = [sys.executable, script,
-               "--host-bam", str(s04 / f"{sname}_host.bam"),
+               "--host-bam", host_bam_path,
                "--host-ref", host_ref,
                "--element-db", construct_ref,
                "--construct-ref", construct_ref,
@@ -243,7 +256,8 @@ def build_step_cmd(
                "--s03-r2", str(s03_r2),
                "--outdir", str(outdir),
                "--sample-name", sname,
-               "--threads", str(threads)]
+               "--threads", str(threads),
+               "--config", str(base_dir / "config.yaml")]
         if no_remote_blast:
             cmd.append("--no-remote-blast")
         # If s04b produced a non-empty per-sample construct assembly, pass
@@ -252,15 +266,32 @@ def build_step_cmd(
         extra_db = s04b / "contigs.fasta"
         if extra_db.exists() and extra_db.stat().st_size > 0:
             cmd.extend(["--extra-element-db", str(extra_db)])
-        # Always-on shared payload DB (common_payload.fa), applied to every
-        # sample. Path comes from cfg.pipeline.common_payload_db, defaulting
-        # to element_db/common_payload.fa relative to the repo root.
+        # Always-on shared transgene reference DB (T5: gmo_combined_db_v2.fa -
+        # cd-hit-est @ 0.95 dedup of common_payload + element_db + cas9_sgrna +
+        # euginius_missing + payload_cds, with 4-way |src= tags for tier-based
+        # merge in s05 classify_site_tiers). Path comes from
+        # cfg.pipeline.common_payload_db, defaulting to the v2 tagged DB.
         cpd_rel = (cfg or {}).get("pipeline", {}).get(
-            "common_payload_db", "element_db/common_payload.fa"
+            "common_payload_db", "element_db/gmo_combined_db_v2.fa"
         )
         cpd_path = base_dir / cpd_rel if not Path(cpd_rel).is_absolute() else Path(cpd_rel)
         if cpd_path.exists() and cpd_path.stat().st_size > 0:
             cmd.extend(["--common-payload-db", str(cpd_path)])
+        # T10: auto-inject --mask-bed (host-endogenous ortholog regions from T9)
+        # matched by host_reference filename stem. Missing BED → no-op.
+        host_key = Path(host_ref).stem.lower()
+        bed_map = {
+            "osativa_323_v7.0": "rice_osativa_v7.bed",
+            "slm_r2.0.pmol": "tomato_slm_r2.bed",
+            "cucsat_b10v3": "cucumber_b10v3.bed",
+            "zm_b73_v5": "corn_zm_b73_v5.bed",
+            "gmax_v4.0": "soybean_gmax_v4.bed",
+        }
+        bed_name = next((v for k, v in bed_map.items() if k in host_key), None)
+        if bed_name:
+            bed_path = base_dir / "docs" / "host_masks" / bed_name
+            if bed_path.exists():
+                cmd.extend(["--mask-bed", str(bed_path)])
         return cmd
     elif step == "6":
         # Step 6 needs a WT BAM for comparison
@@ -272,7 +303,7 @@ def build_step_cmd(
             wt_bam = outdir / wt_sample / "s04_host_map" / f"{wt_sample}_host.bam"
 
         cmd = [sys.executable, script,
-               "--treatment-bam", str(s04 / f"{sname}_host.bam"),
+               "--treatment-bam", host_bam_path,
                "--wt-bam", str(wt_bam),
                "--host-ref", host_ref,
                "--outdir", str(outdir),
@@ -288,7 +319,7 @@ def build_step_cmd(
         # Copy number: junctions optional (use s05 site count if available)
         cmd = [sys.executable, script,
                 "--construct-bam", str(s02 / f"{sname}_construct.bam"),
-                "--host-bam", str(s04 / f"{sname}_host.bam"),
+                "--host-bam", host_bam_path,
                 "--construct-ref", construct_ref,
                 "--host-ref", host_ref,
                 "--outdir", str(outdir),
@@ -302,6 +333,194 @@ def build_step_cmd(
         sys.exit(f"ERROR: No command builder for step {step}")
 
 
+# ---------------------------------------------------------------------------
+# CoC helpers
+# ---------------------------------------------------------------------------
+
+def _step_input_files(
+    step: str,
+    sample_key: str,
+    sample_cfg: dict[str, Any],
+    outdir: Path,
+    base_dir: Path,
+) -> list[Path]:
+    """Return a list of the primary input file(s) for a step (best-effort).
+
+    Used by the CoC wire-in to record input SHA-256 hashes *before* executing
+    the step.  Only files that already exist on-disk are returned; missing
+    paths are silently skipped so the pre-entry is never blocked.
+    """
+    sname = sample_key
+    s01 = outdir / sname / "s01_qc"
+    s02 = outdir / sname / "s02_construct_map"
+    s03 = outdir / sname / "s03_extract"
+    s04 = outdir / sname / "s04_host_map"
+
+    def rp(p: str) -> Path:
+        pp = Path(p)
+        return base_dir / pp if not pp.is_absolute() else pp
+
+    reads = sample_cfg.get("reads", {})
+    candidates: list[Path] = []
+
+    if step == "1":
+        candidates = [rp(reads.get("r1", "")), rp(reads.get("r2", ""))]
+    elif step == "2":
+        candidates = [s01 / f"{sname}_R1.fq.gz", s01 / f"{sname}_R2.fq.gz"]
+    elif step == "3":
+        candidates = [s02 / f"{sname}_construct.bam"]
+    elif step == "4":
+        candidates = [s01 / f"{sname}_R1.fq.gz", s01 / f"{sname}_R2.fq.gz"]
+    elif step == "4b":
+        candidates = [
+            s03 / f"{sname}_construct_R1.fq.gz",
+            s03 / f"{sname}_construct_R2.fq.gz",
+        ]
+    elif step == "5":
+        candidates = [s04 / f"{sname}_host.bam"]
+    elif step == "6":
+        candidates = [s04 / f"{sname}_host.bam"]
+    elif step == "7":
+        candidates = [
+            s02 / f"{sname}_construct.bam",
+            s04 / f"{sname}_host.bam",
+        ]
+
+    return [p for p in candidates if p.exists()]
+
+
+def _step_output_files(
+    step: str,
+    sample_key: str,
+    outdir: Path,
+) -> list[Path]:
+    """Return a list of the primary output file(s) for a step (best-effort).
+
+    Used by the CoC wire-in to record output SHA-256 hashes *after* a step
+    completes.  Only files that exist post-execution are included.
+    """
+    sname = sample_key
+    s01 = outdir / sname / "s01_qc"
+    s02 = outdir / sname / "s02_construct_map"
+    s03 = outdir / sname / "s03_extract"
+    s04 = outdir / sname / "s04_host_map"
+    s04b = outdir / sname / "s04b_construct_asm"
+    s05 = outdir / sname / "s05_insert_assembly"
+    s06 = outdir / sname / "s06_indel"
+    s07 = outdir / sname / "s07_copynumber"
+
+    candidates: list[Path] = []
+    if step == "1":
+        candidates = [s01 / f"{sname}_R1.fq.gz", s01 / f"{sname}_R2.fq.gz"]
+    elif step == "2":
+        candidates = [s02 / f"{sname}_construct.bam"]
+    elif step == "3":
+        candidates = [
+            s03 / f"{sname}_construct_R1.fq.gz",
+            s03 / f"{sname}_construct_R2.fq.gz",
+        ]
+    elif step == "4":
+        candidates = [s04 / f"{sname}_host.bam"]
+    elif step == "4b":
+        candidates = [s04b / "contigs.fasta"]
+    elif step == "5":
+        candidates = [s05 / "insertions.tsv"]
+    elif step == "6":
+        candidates = [s06 / "editing_sites.tsv"]
+    elif step == "7":
+        candidates = [s07 / "copy_number.tsv"]
+
+    return [p for p in candidates if p.exists()]
+
+
+def _sha256_files(paths: list[Path]) -> dict[str, str]:
+    """Return a mapping of filename → SHA-256 hex digest for each path."""
+    return {p.name: sha256_file(p) for p in paths}
+
+
+def _fanout_step5(
+    cmd: list[str],
+    sample_key: str,
+    outdir: Path,
+    threads: int,
+    base_dir: Path,
+    dry_run: bool,
+) -> None:
+    """T8: run s05 Phase 1+1.5 inline, then submit SLURM array (Phase 2_3)
+    and Phase 4 afterok job via scripts/submit_s05_array.sh.
+
+    `cmd` is the full s05 command built by build_step_cmd("5", ...). We
+    reuse it for the inline Phase 1_1.5 call (adding `--phase 1_1.5`) and
+    parse out the path args we need to re-emit as env vars for the array
+    wrapper (which builds its own s05 invocations for Phase 2_3 / 4).
+    """
+    # Parse out key=value-ish pairs from the s05 CLI so we can re-thread
+    # them through to the array wrapper as env vars.  cmd layout is:
+    #   [python, scripts/s05_insert_assembly.py, --host-bam, X, --host-ref, Y, ...]
+    flag_map = {
+        "--host-bam": "S05_HOST_BAM",
+        "--host-ref": "S05_HOST_REF",
+        "--element-db": "S05_ELEMENT_DB",
+        "--construct-ref": "S05_CONSTRUCT_REF",
+        "--extra-element-db": "S05_EXTRA_ELEMENT_DB",
+        "--common-payload-db": "S05_COMMON_PAYLOAD_DB",
+        "--s03-r1": "S05_S03_R1",
+        "--s03-r2": "S05_S03_R2",
+    }
+    env_overrides: dict[str, str] = {}
+    i = 2  # skip [python, script.py]
+    has_no_remote_blast = False
+    while i < len(cmd):
+        tok = cmd[i]
+        if tok == "--no-remote-blast":
+            has_no_remote_blast = True
+            i += 1
+            continue
+        if tok in flag_map and i + 1 < len(cmd):
+            env_overrides[flag_map[tok]] = cmd[i + 1]
+            i += 2
+            continue
+        i += 1
+    if has_no_remote_blast:
+        env_overrides["S05_NO_REMOTE_BLAST"] = "1"
+
+    # Phase 1_1.5 inline: reuse exact same cmd, just append --phase.
+    phase_cmd = list(cmd) + ["--phase", "1_1.5"]
+    log.info("  [T8] Phase 1+1.5 inline: %s", " ".join(phase_cmd))
+    if not dry_run:
+        result = subprocess.run(phase_cmd, cwd=str(base_dir))
+        if result.returncode != 0:
+            sys.exit(
+                f"FAILED: T8 Phase 1+1.5 for '{sample_key}' "
+                f"exited with code {result.returncode}"
+            )
+
+    step_dir = outdir / sample_key / "s05_insert_assembly"
+    array_cmd = [
+        "bash",
+        str(base_dir / "scripts" / "submit_s05_array.sh"),
+        sample_key,
+        str(step_dir),
+        str(threads),
+        str(outdir),
+    ]
+    env_str = " ".join(f"{k}={v}" for k, v in env_overrides.items())
+    log.info("  [T8] Array submit: %s %s", env_str, " ".join(array_cmd))
+    if dry_run:
+        log.info("  [T8] (dry-run: sbatch calls suppressed)")
+        return
+
+    env = dict(os.environ)
+    env.update(env_overrides)
+    result = subprocess.run(array_cmd, cwd=str(base_dir), env=env)
+    if result.returncode != 0:
+        sys.exit(
+            f"FAILED: T8 submit_s05_array.sh for '{sample_key}' "
+            f"exited with code {result.returncode}"
+        )
+    log.info("  [T8] sbatch submissions complete; exiting without waiting.")
+
+
 def run_step(
     step: str,
     sample_key: str,
@@ -312,8 +531,16 @@ def run_step(
     dry_run: bool,
     no_remote_blast: bool = False,
     cfg: dict[str, Any] | None = None,
+    fanout: bool = False,
+    host_bam_override: str | None = None,
 ) -> None:
-    """Execute a single pipeline step for one sample."""
+    """Execute a single pipeline step for one sample.
+
+    When not in dry-run mode, wraps execution with a CocLogger context manager
+    that writes a pre-step entry (with input SHA-256 hashes + full CLI) and a
+    post-step entry (with output SHA-256 hashes + exit code) to
+    ``results/{sample}/chain_of_custody.jsonl``.
+    """
     script = base_dir / STEP_SCRIPTS[step]
     label = STEP_NAMES.get(step, step)
 
@@ -321,15 +548,46 @@ def run_step(
         sys.exit(f"ERROR: Script not found: {script}")
 
     cmd = build_step_cmd(step, sample_key, sample_cfg, outdir, threads, base_dir,
-                         no_remote_blast=no_remote_blast, cfg=cfg)
+                         no_remote_blast=no_remote_blast, cfg=cfg,
+                         host_bam_override=host_bam_override)
 
     log.info("Step %s: %s  [%s]", step, label, sample_key)
+
+    # T8 임시안: step 5 fan-out path.  Only applies to step 5.  v1.1 replaces
+    # this with the full module split.
+    if step == "5" and fanout:
+        _fanout_step5(cmd, sample_key, outdir, threads, base_dir, dry_run)
+        return
+
     if dry_run:
         log.info("  DRY-RUN: %s", " ".join(cmd))
         return
 
     log.info("  CMD: %s", " ".join(cmd))
-    result = subprocess.run(cmd, cwd=str(base_dir))
+
+    # Chain-of-custody logging: wrap subprocess in CocLogger so every step
+    # emits a pre-entry (inputs + cmd) and a post-entry (outputs + exit_code).
+    coc_path = outdir / sample_key / "chain_of_custody.jsonl"
+    step_label = f"s{step.zfill(2)}" if step.isdigit() else f"s{step}"
+    input_files = _step_input_files(step, sample_key, sample_cfg, outdir, base_dir)
+    cmd_str = " ".join(cmd)
+
+    with CocLogger(path=coc_path, sample=sample_key, step=step_label) as coc:
+        # Pre-step: record inputs + full command
+        coc.log("pre", {
+            "cmd": cmd_str,
+            "input_sha256": _sha256_files(input_files),
+        })
+
+        result = subprocess.run(cmd, cwd=str(base_dir))
+
+        # Post-step: record outputs + exit code
+        output_files = _step_output_files(step, sample_key, outdir)
+        coc.log("post", {
+            "exit_code": result.returncode,
+            "output_sha256": _sha256_files(output_files),
+        })
+
     if result.returncode != 0:
         sys.exit(
             f"FAILED: Step {step} ({label}) for sample '{sample_key}' "
@@ -387,6 +645,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-remote-blast", action="store_true",
         help="Skip remote NCBI nt BLAST in step 5 (use local element_db only)",
     )
+    parser.add_argument(
+        "--fanout", action="store_true",
+        help=(
+            "T8 임시안 (v1.0 MVP): for step 5 only, run Phase 1+1.5 inline, "
+            "then submit a SLURM array (one task per positive site) for "
+            "Phase 2+3, and a Phase 4 afterok-dependency job. Exits after "
+            "sbatch submission (does not wait for the array to finish). "
+            "UGT72E3 path: ~48 h sequential → ~4 h fan-out."
+        ),
+    )
+    parser.add_argument(
+        "--host-bam-override",
+        default=None,
+        help=(
+            "T12 PoC: skip s04 and use this pre-built BAM as the host_bam "
+            "input for downstream steps (4b, 5, 6, 7). Enables minimap2 "
+            "PoC without disturbing the canonical BWA output tree."
+        ),
+    )
+    parser.add_argument(
+        "--outdir-override",
+        default=None,
+        help=(
+            "T12 PoC: alternative output root directory "
+            "(e.g., results/rice_G281_mm2_poc). Takes precedence over "
+            "--outdir and config output_dir."
+        ),
+    )
     return parser
 
 
@@ -401,8 +687,11 @@ def main() -> None:
     config_path = args.config if args.config.is_absolute() else base_dir / args.config
     cfg = load_config(config_path)
 
-    # Determine output directory
+    # Determine output directory. --outdir-override (T12 PoC) takes highest
+    # precedence so the PoC tree stays isolated from the canonical results/.
     outdir = args.outdir
+    if args.outdir_override is not None:
+        outdir = Path(args.outdir_override)
     if outdir is None:
         outdir = Path(cfg.get("output_dir", "results"))
     if not outdir.is_absolute():
@@ -438,6 +727,30 @@ def main() -> None:
             (outdir / sample_key).mkdir(parents=True, exist_ok=True)
 
         sample_cfg = cfg["samples"][sample_key]
+
+        # AC-6 regulatory audit header (R-1..R-4): input SHA-256,
+        # pipeline git commit + dirty flag, element-DB manifest, and
+        # software version manifest. Written once per sample run.
+        if not args.dry_run:
+            try:
+                reads_cfg = sample_cfg.get("reads", {})
+                r1_path = Path(reads_cfg["r1"])
+                r2_path = Path(reads_cfg["r2"])
+                if not r1_path.is_absolute():
+                    r1_path = base_dir / r1_path
+                if not r2_path.is_absolute():
+                    r2_path = base_dir / r2_path
+                write_audit_header(
+                    sample=sample_key,
+                    reads_r1=r1_path,
+                    reads_r2=r2_path,
+                    db_manifest=base_dir / "element_db" / "gmo_combined_db_manifest.tsv",
+                    out_path=outdir / sample_key / "audit_header.json",
+                )
+            except Exception as exc:  # pragma: no cover - best-effort audit
+                log.warning("audit_header write failed for %s: %s",
+                            sample_key, exc)
+
         for step in steps:
             run_step(
                 step=step,
@@ -449,6 +762,8 @@ def main() -> None:
                 dry_run=args.dry_run,
                 no_remote_blast=args.no_remote_blast,
                 cfg=cfg,
+                fanout=args.fanout,
+                host_bam_override=args.host_bam_override,
             )
 
         log.info("=== Sample %s: all steps completed ===\n", sample_key)

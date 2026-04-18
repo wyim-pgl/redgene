@@ -29,6 +29,8 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import json
+import pickle
 import re
 import shutil
 import subprocess
@@ -38,6 +40,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pysam
+
+# Local sub-modules (Issue #3 full wire-in: compute_verdict + FilterEvidence).
+try:
+    from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
+    from s05.config_loader import load_verdict_rules
+except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
+    from s05.config_loader import load_verdict_rules
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -111,6 +122,37 @@ UNKNOWN_MAX_CONSTRUCT_FRAC = 0.05  # max construct fraction for host-only
 
 def log(msg: str) -> None:
     print(f"[{STEP}] {msg}", file=sys.stderr, flush=True)
+
+
+def _apply_canonical_override(
+    verdict: str,
+    reason: str,
+    unique_elems: set[str],
+    host_fraction: float,
+    rules: "VerdictRules | None",
+) -> tuple[str, str]:
+    """Promote verdict to CANDIDATE when a canonical transgene triplet matches.
+
+    Issue #3 (v1.0 wire-in, scoped). Mirrors compute_verdict rule 1 priority:
+    canonical_triplet wins over any FP filter when host_fraction is acceptable.
+    """
+    if rules is None or not rules.canonical_triplets or not unique_elems:
+        return verdict, reason
+    if host_fraction >= rules.cand_host_fraction_max:
+        return verdict, reason
+    for triplet_name, triplet in rules.canonical_triplets.items():
+        if triplet and triplet.issubset(unique_elems):
+            if verdict == "CANDIDATE":
+                return verdict, reason
+            new_reason = (
+                f"canonical_triplet[{triplet_name}] matched "
+                f"({sorted(triplet)}); host_fraction="
+                f"{host_fraction:.0%} below "
+                f"{rules.cand_host_fraction_max:.0%} "
+                f"[override {verdict}: {reason}]"
+            )
+            return "CANDIDATE", new_reason
+    return verdict, reason
 
 
 # ---------------------------------------------------------------------------
@@ -682,6 +724,132 @@ def find_softclip_junctions(
 
 
 # ---------------------------------------------------------------------------
+# T10: Pre-mask BED intersect (host-endogenous ortholog regions)
+# ---------------------------------------------------------------------------
+
+#: Tier value written onto sites that intersect a T9 host-endogenous mask
+#: region.  Centralised here so downstream consumers (generate_report audit
+#: appender, tests, future modules) can import the tag instead of duplicating
+#: the string literal.  Changing this constant is a wire-format break — update
+#: the audit TSVs and regression fixtures in lock-step.
+MASKED_SOURCE_TAG = "FALSE_NEGATIVE_MASKED"
+
+
+def _apply_mask_bed(sites: list, bed_path: Path) -> list:
+    """Tag sites whose ``(chr, pos)`` falls inside a BED mask region.
+
+    Sites are NOT dropped — their ``tier`` is changed to
+    :data:`MASKED_SOURCE_TAG` (``FALSE_NEGATIVE_MASKED``) and ``mask_element``
+    holds the element_name of the overlapping BED region.  This preserves the
+    audit trail for regulatory review while preventing CANDIDATE promotion on
+    host-endogenous ortholog regions (T9 E-01/E-02).
+
+    Interval semantics
+    ------------------
+    Regions are treated as **half-open** ``[start, end)`` — i.e. ``start`` is
+    inclusive and ``end`` is exclusive.  This matches BED convention and the
+    ``start <= pos < end`` check below; a site at ``pos == end`` is NOT
+    considered masked.
+
+    BED format (from ``scripts/build_element_mask_bed.sh``):
+    ``chr<TAB>start<TAB>end<TAB>name[<TAB>score]``.  An empty or missing BED
+    file (including a BED with zero parseable regions) is a no-op.
+
+    Parameters
+    ----------
+    sites
+        A list of site records.  The list itself is returned (not copied); the
+        records inside are mutated in place — see *Mutation contract* below.
+    bed_path
+        Path to the pre-computed mask BED.
+
+    Mutation contract
+    -----------------
+    Accepts heterogeneous site records and mutates the *original* objects:
+
+    * ``dict`` with ``chr``/``pos`` keys (test + pipeline JSON form) — sets
+      ``s["tier"]`` and ``s["mask_element"]``.
+    * Any object with ``host_chr`` + ``pos_5p`` attributes (e.g. the
+      ``InsertionSite`` dataclass) — sets ``tier`` and ``mask_element`` via
+      ``setattr``.  When ``pos_5p`` is falsy the helper falls back to
+      ``pos_3p``.
+
+    Callers that need the prior value should snapshot it before invoking this
+    function; the helper does not save or restore previous ``tier`` values.
+
+    Complexity
+    ----------
+    Regions are grouped by chromosome into a list sorted by ``start`` plus a
+    parallel ``start`` array; per-site lookup uses :func:`bisect.bisect_right`
+    and scans only intervals whose ``start <= pos``.  Runtime is therefore
+    ``O(R log R + S log R)`` for ``R`` regions and ``S`` sites, instead of the
+    ``O(S * R)`` worst case of a linear scan.
+    """
+    import bisect
+
+    if not bed_path.exists() or bed_path.stat().st_size == 0:
+        return sites
+    raw_regions: dict[str, list[tuple[int, int, str]]] = {}
+    for raw in bed_path.read_text().splitlines():
+        if not raw.strip() or raw.startswith("#"):
+            continue
+        cols = raw.split("\t")
+        if len(cols) < 3:
+            continue
+        try:
+            start = int(cols[1])
+            end = int(cols[2])
+        except ValueError:
+            continue
+        chrom = cols[0]
+        name = cols[3] if len(cols) > 3 else "masked"
+        raw_regions.setdefault(chrom, []).append((start, end, name))
+    if not raw_regions:
+        return sites
+    # Sort regions by start and stash a parallel starts array for bisect.
+    # NOTE: the intervals may still overlap each other; bisect narrows the
+    # scan to candidates with start <= pos, then we check end > pos.
+    index: dict[str, tuple[list[int], list[tuple[int, int, str]]]] = {}
+    for chrom, ivs in raw_regions.items():
+        ivs.sort(key=lambda t: t[0])
+        index[chrom] = ([iv[0] for iv in ivs], ivs)
+    for s in sites:
+        if isinstance(s, dict):
+            chrom = s.get("chr")
+            pos = s.get("pos")
+        else:
+            chrom = getattr(s, "host_chr", None)
+            pos = getattr(s, "pos_5p", None)
+            if not pos:
+                pos = getattr(s, "pos_3p", None)
+        if chrom is None or pos is None:
+            continue
+        entry = index.get(chrom)
+        if entry is None:
+            continue
+        starts, ivs = entry
+        hi = bisect.bisect_right(starts, pos)
+        # Walk backwards through candidates whose start <= pos; because the
+        # regions in the mask BED are short (<= a few kb) and only a handful
+        # overlap any given pos, this inner loop is effectively O(1).
+        for idx in range(hi - 1, -1, -1):
+            start, end, name = ivs[idx]
+            if end <= pos:
+                # Half-open: pos >= end means outside; keep scanning earlier
+                # intervals because an earlier start may still extend past pos.
+                continue
+            # start <= pos < end -> match.
+            if isinstance(s, dict):
+                s["tier"] = MASKED_SOURCE_TAG
+                s["mask_element"] = name
+            else:
+                setattr(s, "tier", MASKED_SOURCE_TAG)
+                setattr(s, "mask_element", name)
+            break
+    return sites
+
+
+# ---------------------------------------------------------------------------
 # Transgene-positive identification
 # ---------------------------------------------------------------------------
 # Strategy: Instead of asking "is this clip in the host?" (fails with wrong
@@ -815,26 +983,73 @@ def _filter_host_endogenous(
     return blast_db, exclude_ids
 
 
-def _should_replace(existing: dict | None, new_src: str, new_bit: float) -> bool:
-    """Two-tier merge priority for classify_site_tiers `hits` map.
+_SRC_TIER = {
+    "element_db":    2,
+    "payload":       2,
+    "sample_contig": 2,
+    "univec":        1,
+}
 
-    (a) An element_db hit always beats a univec hit, regardless of bitscore
-        -- Task 7 diagnosed rice_G281's real T-DNA being excluded because both
-        clips tied at 100% on AF234315.1 (univec) and on the s04b element_db
-        contig, and iteration order kept the univec entry; the
-        element_db-required positive policy then dropped the site.
-    (b) Within the same source, a strictly higher bitscore wins (ties go to
-        the incumbent, matching the prior `bitscore > hits[qname]["bitscore"]`
-        semantics).
+# Tier-2 sources collectively count as "element hits" for transgene_positive
+# classification. Derived from _SRC_TIER so adding a new tier-2 source (e.g.,
+# future 'crispr_ref') stays in sync automatically. Required because cd-hit
+# -c 0.95 clustering of gmo_combined_db_v2.fa absorbed multiple element_db
+# amplicons into payload-tagged representatives (cluster 0 P-CaMV35S, 35
+# nptII, 54 hpt, 71 T-ocs, 77 P-nos in element_db/gmo_combined_db_v2.fa.clstr);
+# a literal 'element_db' equality check at classify_site_tiers would drop
+# rice_G281 Chr3:16,439,674 (CaMV35S-containing) -> AC-1 regression.
+_TIER2_SRCS = frozenset(k for k, v in _SRC_TIER.items() if v >= 2)
+
+# Module-level cache so we only warn once per unknown tag per run.
+_UNKNOWN_SRC_WARNED: set[str] = set()
+
+
+def _parse_src_tag(sseqid: str, default: str) -> tuple[str, str]:
+    """Split a BLAST sseqid of the form 'accession|src=tag' into (accession, tag).
+
+    v2 DB headers carry a '|src=<tag>' suffix to encode one of the 4-way source
+    tags (element_db / payload / sample_contig / univec). Legacy headers lack
+    the suffix - in that case the caller-supplied `default` is used.
+
+    Returns (accession, src_tag). If no '|src=' separator is present,
+    (sseqid, default) is returned unchanged.
     """
+    accession, sep, src_tag = sseqid.partition("|src=")
+    if not sep:
+        return sseqid, default
+    return accession, src_tag
+
+
+def _should_replace(existing: dict | None, new_src: str, new_bit: float) -> bool:
+    """Tag-tiered merge priority for classify_site_tiers `hits` map (Task T5).
+
+    Tier-2 sources (element_db / payload / sample_contig) collectively beat
+    tier-1 (univec). Within a tier, a strictly greater bitscore wins;
+    ties go to the incumbent (matches the original `>` semantics and the
+    BUG-3 regression guard in test_extra_element_db).
+
+    The `existing` dict may use either the new `src`/`bit` schema or the
+    legacy `source`/`bitscore` schema - both are supported so the historic
+    callers in classify_site_tiers keep working while migration proceeds.
+    """
+    # I-1: warn once per run when an unknown tag shows up. Treated as tier 0
+    # so it will never beat a known tag, which is the safe default.
+    if new_src and new_src not in _SRC_TIER and new_src not in _UNKNOWN_SRC_WARNED:
+        _UNKNOWN_SRC_WARNED.add(new_src)
+        print(f"[s05] warn: unknown src tag {new_src!r}, treating as tier 0",
+              file=sys.stderr)
     if existing is None:
         return True
-    old_src = existing.get("source", "")
-    if new_src == "element_db" and old_src == "univec":
+    old_src = existing.get("src", existing.get("source", ""))
+    old_bit = existing.get("bit", existing.get("bitscore", 0.0))
+    new_tier = _SRC_TIER.get(new_src, 0)
+    old_tier = _SRC_TIER.get(old_src, 0)
+    if new_tier > old_tier:
         return True
-    if new_src == "univec" and old_src == "element_db":
+    if new_tier < old_tier:
         return False
-    return new_bit > existing.get("bitscore", 0.0)
+    # same tier -> strict '>' bitscore
+    return new_bit > old_bit
 
 
 def classify_site_tiers(
@@ -939,14 +1154,21 @@ def classify_site_tiers(
                     continue
 
                 sseqid = cols[1]
-                source = "univec" if sseqid.startswith("univec|") else "element_db"
-                if _should_replace(hits.get(qname), source, bitscore):
+                # T5: 4-way source tag. v2 DB headers carry a |src=<tag>
+                # suffix (payload / element_db / sample_contig); legacy
+                # univec|... headers get mapped to 'univec', everything
+                # else to 'element_db'.
+                default_main = (
+                    "univec" if sseqid.startswith("univec|") else "element_db"
+                )
+                element_id, src_tag = _parse_src_tag(sseqid, default_main)
+                if _should_replace(hits.get(qname), src_tag, bitscore):
                     hits[qname] = {
-                        "element": sseqid,
+                        "element": element_id,
                         "identity": pident,
                         "aln_length": aln_len,
                         "bitscore": bitscore,
-                        "source": source,
+                        "source": src_tag,
                     }
 
     log(f"  {len(hits)} clips hit transgene_db (identity>={min_identity}%, "
@@ -963,8 +1185,13 @@ def classify_site_tiers(
     ]
     for i, edb in enumerate(extra_dbs_list):
         extra_blast_out = tier_dir / f"transgene_blast_extra_{i}_{edb.stem}.tsv"
+        # T5 fallback tag when a header lacks |src=<tag>: per-sample SPAdes
+        # contig FASTAs from s04b are labelled 'sample_contig'; everything
+        # else (legacy common_payload, ad-hoc FASTAs) defaults to
+        # 'element_db' so tier-2 priority still holds.
+        default_tag = "sample_contig" if "contigs" in edb.name else "element_db"
         log(f"  BLASTing clips against extra transgene DB "
-            f"({edb.name}, blastn-short)...")
+            f"({edb.name}, default_src={default_tag}, blastn-short)...")
         result_extra = subprocess.run(
             ["blastn", "-task", "blastn-short",
              "-query", str(clip_fa), "-subject", str(edb),
@@ -989,13 +1216,15 @@ def classify_site_tiers(
                     bitscore = float(cols[5])
                     if pident < min_identity or aln_len < min_aln_len:
                         continue
-                    if _should_replace(hits.get(qname), "element_db", bitscore):
+                    sseqid = cols[1]
+                    element_id, src_tag = _parse_src_tag(sseqid, default_tag)
+                    if _should_replace(hits.get(qname), src_tag, bitscore):
                         hits[qname] = {
-                            "element": cols[1],
+                            "element": element_id,
                             "identity": pident,
                             "aln_length": aln_len,
                             "bitscore": bitscore,
-                            "source": "element_db",
+                            "source": src_tag,
                         }
                         n_extra += 1
         log(f"  Extra transgene DB {edb.name} contributed/updated "
@@ -1073,13 +1302,21 @@ def classify_site_tiers(
         hit_5p = hits.get(key_5p, {})
         hit_3p = hits.get(key_3p, {})
 
-        # Require at least one element_db hit (not univec-only).
+        # Require at least one tier-2 element hit (not univec-only).
         # UniVec-only matches at this step are typically short (20-31bp)
         # alignments that match native plant DNA by chance. Real T-DNA
         # insertions always have at least one characteristic element
-        # (promoter, selection marker, terminator) matching element_db.
-        has_element_hit = (hit_5p.get("source") == "element_db") or \
-                           (hit_3p.get("source") == "element_db")
+        # (promoter, selection marker, terminator) matching a tier-2 source.
+        #
+        # C-1 fix: tier-2 sources (element_db / payload / sample_contig) all
+        # count. After cd-hit -c 0.95 clustering, former element_db amplicons
+        # may be absorbed into payload-tagged representatives (e.g., CaMV35S
+        # cluster 0 in gmo_combined_db_v2.fa.clstr). A literal "element_db"
+        # check would miss rice_G281 Chr3:16,439,674 CaMV35S hits -> AC-1
+        # regression. Use the _TIER2_SRCS module constant derived from
+        # _SRC_TIER for a single source of truth.
+        has_element_hit = (hit_5p.get("source") in _TIER2_SRCS) or \
+                           (hit_3p.get("source") in _TIER2_SRCS)
         is_positive = has_element_hit
 
         tr = TierResult(
@@ -2369,7 +2606,7 @@ def assemble_insert(
     element_db: Path,
     workdir: Path,
     threads: int = 4,
-    max_rounds: int = 8,
+    max_rounds: int = 5,  # T3: reduced from 8 per T2 measurement (docs/measurements/max_rounds_study.md)
     ext_k: int = 15,
     recruit_k: int = 25,
     gap_size: int = 1000,
@@ -2652,7 +2889,13 @@ def assemble_insert(
 # ---------------------------------------------------------------------------
 
 def _parse_blast6(path: Path, min_len: int = 30) -> list[dict]:
-    """Parse BLAST outfmt-6 with 10+ columns into list of dicts."""
+    """Parse BLAST outfmt-6 with 10+ columns into list of dicts.
+
+    T5: also strip the |src=<tag> suffix that the v2 DB bakes into every
+    header so the ``subject`` field stays clean for element_annotation.tsv.
+    The extracted tag is carried in the ``src_tag`` key for downstream
+    consumers; callers that don't need it just ignore it.
+    """
     hits: list[dict] = []
     if not path.exists():
         return hits
@@ -2664,12 +2907,15 @@ def _parse_blast6(path: Path, min_len: int = 30) -> list[dict]:
             aln_len = int(cols[3])
             if aln_len < min_len:
                 continue
+            subject = cols[1]
+            subject_clean, src_tag = _parse_src_tag(subject, default="")
             hits.append({
-                "query": cols[0], "subject": cols[1],
+                "query": cols[0], "subject": subject_clean,
                 "identity": float(cols[2]), "length": aln_len,
                 "q_start": int(cols[4]), "q_end": int(cols[5]),
                 "s_start": int(cols[6]), "s_end": int(cols[7]),
                 "evalue": float(cols[8]), "bitscore": float(cols[9]),
+                "src_tag": src_tag,
             })
     return hits
 
@@ -3209,6 +3455,7 @@ def generate_report(
     element_db: Path | None = None,
     threads: int = 4,
     construct_flanking: list[tuple[str, int, int]] | None = None,
+    rules: VerdictRules | None = None,
 ) -> tuple[Path, str]:
     """Generate human-readable linear map report."""
     report_path = output_dir / f"{site.site_id}_report.txt"
@@ -3269,10 +3516,7 @@ def generate_report(
     for _, _, elem, _, _ in elements:
         elem_counts[elem] += 1
 
-    # ---- Phase 4 post-filter: host-endogenous verdict ----
-    # If every annotated element was excluded at the DB-level host BLAST
-    # (Tier 1 or Tier 2), the whole assembly is host-endogenous noise.
-    # A single genuinely foreign element is enough to keep the site.
+    # ---- Build element-level evidence (no I/O) ----
     host_endo = host_endogenous_ids or set()
     unique_elems = set(elem_counts)
     foreign_elems: set[str] = set()
@@ -3282,115 +3526,97 @@ def generate_report(
             endo_elems.add(elem)
         else:
             foreign_elems.add(elem)
-    # Need at least one annotation AND at least one foreign element to keep it.
-    if unique_elems and not foreign_elems:
-        verdict = "FALSE_POSITIVE"
-        verdict_reason = (
-            "all annotated elements are host-endogenous "
-            "(matched host genome at Tier 1/2 BLAST threshold)"
-        )
-    elif not unique_elems:
-        verdict = "UNKNOWN"
-        verdict_reason = "no element annotations"
-    else:
-        verdict = "CANDIDATE"
-        verdict_reason = ""
+    # sources_by_element: last-seen source tag per element name.
+    sources_by_element: dict[str, str] = {
+        elem: source for _, _, elem, _, source in elements
+    }
 
-    # ---- Post-assembly false-positive filters (applied to CANDIDATE only) ----
-    # Filter A: Host-fraction + small gap → chimeric assembly artifact
+    # ---- Gather BLAST filter evidence (lazy: only run when useful) ----
+    # Evidence is collected for CANDIDATE sites and UNKNOWN sites (host-only
+    # reclassification). All four filter values default to 0/None so that
+    # compute_verdict receives a complete FilterEvidence for every path.
     host_fraction = 0.0
     host_bp = 0
     largest_gap = 0
-    # Filter B: Construct-flanking overlap
-    flanking_hit = ""
-    # Filter C: Multi-locus chimeric assembly
+    flanking_hit_str = ""           # human-readable for report diagnostics
+    flanking_hit_tup: tuple[str, int, int] | None = None  # structured for verdict
     is_chimeric = False
     off_target_chrs: list[tuple[str, int]] = []
-    # Filter D: Construct-host coverage
     construct_frac = 0.0
     combined_frac = 0.0
 
-    if verdict == "CANDIDATE" and host_ref is not None:
-        # Filter A: host-fraction with non-host gap check
+    # Determine whether this site is worth running BLASTs on.
+    # Sites that are all-host-endogenous skip BLAST, matching old behaviour;
+    # canonical_triplet override (highest priority in compute_verdict) still
+    # works because ev.host_fraction defaults to 0.0 < cand_host_fraction_max.
+    _needs_blast = bool(unique_elems and foreign_elems) or not unique_elems
+    # "not unique_elems" → UNKNOWN path, needs BLAST for host-only reclassification.
+    # "foreign_elems" → CANDIDATE path, needs BLAST for all four FP filters.
+
+    if _needs_blast and host_ref is not None:
+        # Filter A evidence: host-fraction + largest non-host gap
         host_fraction, host_bp, _, largest_gap = _blast_insert_vs_host(
             insert_fasta, host_ref, output_dir, threads=threads,
         )
-        if (host_fraction >= INSERT_HOST_FRACTION
-                and largest_gap < INSERT_MIN_FOREIGN_GAP):
-            verdict = "FALSE_POSITIVE"
-            verdict_reason = (
-                f"assembled insert is {host_fraction:.0%} host genome "
-                f"({host_bp:,}/{insert_len - n_count:,}bp) with only "
-                f"{largest_gap}bp non-host gap "
-                f"(need ≥{INSERT_MIN_FOREIGN_GAP}bp for real T-DNA)"
-            )
+        if not unique_elems:
+            log(f"  UNKNOWN reclassification: BLASTed {insert_fasta.name} vs host")
 
-    if verdict == "CANDIDATE" and construct_flanking:
-        # Filter B: site coordinates overlap with construct→host flanking
+    if _needs_blast and construct_flanking:
+        # Filter B evidence: find first overlapping flanking region
         site_pos = site.pos_5p
-        overlaps, flanking_hit = _site_overlaps_flanking(
+        _, flanking_hit_str = _site_overlaps_flanking(
             site.host_chr, site_pos, construct_flanking,
         )
-        if overlaps:
-            verdict = "FALSE_POSITIVE"
-            verdict_reason = (
-                f"site {site.host_chr}:{site_pos:,} overlaps construct-flanking "
-                f"region {flanking_hit} — host DNA in construct reference"
-            )
+        for chrom, lo, hi in construct_flanking:
+            slop = CONSTRUCT_FLANK_SLOP
+            if chrom == site.host_chr and lo - slop <= site_pos <= hi + slop:
+                # Store slop-expanded coords so compute_verdict's simple
+                # lo <= site_pos <= hi boundary check is equivalent.
+                flanking_hit_tup = (chrom, lo - slop, hi + slop)
+                break
 
-    if verdict == "CANDIDATE" and host_ref is not None:
-        # Filter C: assembled insert spans ≥2 off-target chromosomes
+    if _needs_blast and host_ref is not None:
+        # Filter C evidence: off-target chromosome spans
         is_chimeric, off_target_chrs = _check_chimeric_assembly(
             insert_fasta, host_ref, site.host_chr, output_dir, threads=threads,
         )
-        if is_chimeric:
-            off_str = ", ".join(f"{c}:{bp}bp" for c, bp in off_target_chrs)
-            verdict = "FALSE_POSITIVE"
-            verdict_reason = (
-                f"chimeric assembly — host-aligned portions span "
-                f"{len(off_target_chrs)} off-target chromosomes ({off_str})"
-            )
 
-    if verdict == "CANDIDATE" and host_ref is not None and element_db is not None:
-        # Filter D: construct + host coverage fully explains insert
-        is_construct_fp, construct_frac, _, combined_frac = \
-            _check_construct_host_coverage(
-                insert_fasta, element_db,
-                host_fraction, host_bp, insert_len, n_count,
-                output_dir, threads=threads,
-            )
-        if is_construct_fp:
-            verdict = "FALSE_POSITIVE"
-            verdict_reason = (
-                f"insert fully explained by construct ({construct_frac:.0%}) "
-                f"+ host ({host_fraction:.0%}) = {combined_frac:.0%} combined "
-                f"coverage — host genomic DNA with construct-element homology"
-            )
-
-    # ---- UNKNOWN reclassification: host-only insert ----
-    # If no element annotations but insert is mostly host DNA with
-    # negligible construct match, reclassify as FALSE_POSITIVE.
-    if verdict == "UNKNOWN" and host_ref is not None:
-        log(f"  UNKNOWN reclassification: BLASTing {insert_fasta.name} vs host")
-        host_fraction, host_bp, _, largest_gap = _blast_insert_vs_host(
-            insert_fasta, host_ref, output_dir, threads=threads,
+    if _needs_blast and host_ref is not None and element_db is not None:
+        # Filter D evidence: construct + host combined coverage
+        _, construct_frac, _, combined_frac = _check_construct_host_coverage(
+            insert_fasta, element_db,
+            host_fraction, host_bp, insert_len, n_count,
+            output_dir, threads=threads,
         )
-        construct_frac_unk = 0.0
-        if element_db is not None:
-            _, construct_frac_unk, _, _ = _check_construct_host_coverage(
-                insert_fasta, element_db,
-                host_fraction, host_bp, insert_len, n_count,
-                output_dir, threads=threads,
-            )
-        if (host_fraction >= UNKNOWN_HOST_MIN_FRACTION
-                and construct_frac_unk <= UNKNOWN_MAX_CONSTRUCT_FRAC):
-            verdict = "FALSE_POSITIVE"
-            construct_frac = construct_frac_unk
-            verdict_reason = (
-                f"no element annotations; insert is {host_fraction:.0%} host "
-                f"genome ({host_bp:,}bp) with {construct_frac_unk:.0%} construct "
-                f"— host genomic DNA"
-            )
+
+    # ---- Delegate verdict to compute_verdict (Issue #3 full wire-in) ----
+    # Build a FilterEvidence bundle from all gathered evidence and call the
+    # pure function.  This replaces the old inline if/else verdict chain plus
+    # the _apply_canonical_override post-hoc call.
+    _ev = FilterEvidence(
+        elements=list(unique_elems),
+        host_bp=host_bp,
+        host_fraction=host_fraction,
+        largest_gap=largest_gap,
+        flanking_hit=flanking_hit_tup,
+        off_target_chrs=off_target_chrs,
+        construct_frac=construct_frac,
+        combined_frac=combined_frac,
+        is_chimeric=is_chimeric,
+        site_chr=site.host_chr,
+        site_pos=site.pos_5p,
+        matched_canonical=unique_elems,   # canonical triplet check uses all elements
+        sources_by_element=sources_by_element,
+        host_endogenous_elements=endo_elems,
+    )
+    _verdict_rules = rules if rules is not None else VerdictRules()
+    verdict, verdict_reason = compute_verdict(_ev, _verdict_rules)
+
+    # For report diagnostics: restore the human-readable flanking string if
+    # compute_verdict returned a flanking FP (flanking_hit_str may differ from
+    # the structured tuple representation used internally).
+    # The reporting block below uses flanking_hit_str for display; verdict_reason
+    # already contains the full human-readable text from compute_verdict.
 
     # Build linear map with orientation arrows
     linear_parts = []
@@ -3500,8 +3726,8 @@ def generate_report(
                      f"({host_bp:,}/{insert_len - n_count:,}bp at "
                      f"≥{INSERT_HOST_MIN_PIDENT}% identity), "
                      f"largest non-host gap: {largest_gap:,}bp\n")
-        if flanking_hit:
-            fh.write(f"Construct-flanking overlap: site overlaps {flanking_hit}\n")
+        if flanking_hit_str:
+            fh.write(f"Construct-flanking overlap: site overlaps {flanking_hit_str}\n")
         if off_target_chrs:
             off_str = ", ".join(f"{c}:{bp}bp" for c, bp in off_target_chrs)
             tag = " → chimeric" if is_chimeric else ""
@@ -3558,8 +3784,8 @@ def main() -> None:
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--sample-name", required=True)
     parser.add_argument("--threads", type=int, default=8)
-    parser.add_argument("--max-rounds", type=int, default=8,
-                        help="Max alternating extension+Pilon rounds")
+    parser.add_argument("--max-rounds", type=int, default=5,
+                        help="Max alternating extension+Pilon rounds (T3: reduced from 8 per max_rounds_study.md)")
     parser.add_argument("--seed-k", type=int, default=15,
                         help="k-mer size for seed extension")
     parser.add_argument("--recruit-k", type=int, default=25,
@@ -3583,9 +3809,45 @@ def main() -> None:
                         help="Construct reference FASTA (for flanking detection)")
     parser.add_argument("--no-remote-blast", action="store_true",
                         help="Skip remote NCBI nt BLAST (use local element_db only)")
+    parser.add_argument(
+        "--mask-bed",
+        default=None,
+        help="BED file of host-endogenous ortholog regions (T9/T10). "
+             "Sites overlapping a region are tagged FALSE_NEGATIVE_MASKED "
+             "(not dropped) after Phase 1 discovery, preventing CANDIDATE "
+             "promotion while preserving the audit trail.",
+    )
     parser.add_argument("--s03-r1", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--s03-r2", default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to config.yaml for verdict rules / canonical triplets "
+             "(Issue #3 wire-in). Missing file falls back to DEFAULT_TRIPLETS.",
+    )
+    # --- T8: per-site SLURM array fan-out (v1.0 임시안) -----------------------
+    # v1.1 에서 full module split 완료 후 이 flag 제거 예정.
+    parser.add_argument(
+        "--phase",
+        choices=["all", "1_1.5", "2_3", "4"],
+        default="all",
+        help="Run specific phase(s). all=default sequential (backwards compat). "
+             "1_1.5=site discovery + transgene-positive classify, dumps "
+             "positive_sites.json and exits. 2_3=per-site candidate read "
+             "extraction + iterative assembly (requires --site-id). "
+             "4=annotate + per-site report (consumes per-site "
+             "<site_id>_insert.fasta dropped by 2_3 runs).",
+    )
+    parser.add_argument(
+        "--site-id",
+        default=None,
+        help="For --phase=2_3: run assembly for only the given site_id "
+             "(as stored in positive_sites.json).",
+    )
     args = parser.parse_args()
+
+    if args.phase == "2_3" and not args.site_id:
+        parser.error("--site-id is required when --phase=2_3")
 
     step_dir = Path(args.outdir) / args.sample_name / STEP
     step_dir.mkdir(parents=True, exist_ok=True)
@@ -3601,6 +3863,8 @@ def main() -> None:
     extra_dbs = [p for p in [common_payload_db, extra_db] if p is not None]
 
     log(f"=== Step 5: Targeted Insert Assembly for {args.sample_name} ===")
+    log(f"  Phase: {args.phase}"
+        + (f" (site_id={args.site_id})" if args.site_id else ""))
     log(f"  Host BAM: {host_bam}")
     log(f"  Host ref: {host_ref}")
     log(f"  Element DB: {element_db}")
@@ -3609,123 +3873,280 @@ def main() -> None:
     if extra_db is not None:
         log(f"  Extra element DB: {extra_db}")
 
-    # ---- Phase 1: Soft-clip junction detection ----
-    sites = find_softclip_junctions(
-        host_bam, host_ref, element_db, step_dir,
-        min_clip=args.min_clip,
-        extra_dbs=extra_dbs,
-    )
+    # Paths used by T8 fan-out contract between phases.
+    positive_sites_json = step_dir / "positive_sites.json"
+    positive_sites_pkl = step_dir / "positive_sites.pkl"
 
-    # Fallback to step 6 junctions if no sites found
-    if not sites and args.junctions:
-        junctions_path = Path(args.junctions)
-        if junctions_path.exists() and junctions_path.stat().st_size > 0:
-            log("No soft-clip sites found, falling back to legacy junctions file...")
-            legacy_juncs = parse_legacy_junctions(junctions_path)
-            if legacy_juncs:
-                sites = legacy_junctions_to_sites(legacy_juncs, host_bam)
-                log(f"  Converted {len(legacy_juncs)} legacy junctions → "
-                    f"{len(sites)} sites")
+    # ---- Phase 1 + 1.5 (site discovery + transgene-positive classify) ----
+    # Runs when --phase is 'all' or '1_1.5'. For 2_3 / 4, we load the
+    # pickled state that a previous 1_1.5 (or all) invocation wrote.
+    sites: list[InsertionSite] = []
+    host_endo_ids: set[str] = set()
 
-    if not sites:
-        log("No insertion sites found. Nothing to assemble.")
-        write_stats(step_dir / "s05_stats.txt", args.sample_name, 0, 0, [])
-        return
-
-    log(f"\nPhase 1 found {len(sites)} insertion site(s):")
-    for site in sites:
-        log(f"  {site.site_id}: {site.host_chr}:{site.pos_5p}"
-            f"{f'-{site.pos_3p}' if site.pos_3p else ''} "
-            f"({site.confidence}, 5p={len(site.seed_5p)}bp, "
-            f"3p={len(site.seed_3p)}bp)")
-
-    # ---- Phase 1.5: Transgene-positive identification ----
-    log("\n--- Phase 1.5: Transgene-positive identification ---")
-    assembly_sites, skip_sites, tier_results, host_endo_ids = classify_site_tiers(
-        sites, element_db, host_ref, step_dir,
-        threads=args.threads,
-        extra_transgene_dbs=extra_dbs,
-    )
-    write_tier_classification(
-        tier_results, step_dir / "site_tier_classification.tsv",
-    )
-
-    if not assembly_sites:
-        log("No transgene-positive sites found. Nothing to assemble.")
-        write_stats(step_dir / "s05_stats.txt", args.sample_name, len(sites), 0, [])
-        return
-
-    sites = assembly_sites  # Only assemble transgene-positive sites
-
-    # ---- Process each insertion site ----
-    all_results = []
-    for site in sites:
-        log(f"\n{'=' * 60}")
-        log(f"=== Processing {site.site_id}: "
-            f"{site.host_chr}:{site.pos_5p} ===")
-
-        # Phase 2: Extract candidate reads
-        cand_r1 = step_dir / f"{site.site_id}_candidate_R1.fastq.gz"
-        cand_r2 = step_dir / f"{site.site_id}_candidate_R2.fastq.gz"
-        if not cand_r1.exists():
-            n_cand = extract_candidate_reads(
-                host_bam, site, cand_r1, cand_r2,
-                flank=args.flank, threads=args.threads,
-                min_clip=args.min_clip,
-                junction_window=args.junction_window,
-            )
-            log(f"  Candidate reads: {n_cand:,} pairs")
-        else:
-            n_cand = 0
-            opener = gzip.open if str(cand_r1).endswith(".gz") else open
-            with opener(str(cand_r1), "rt") as fh:
-                for _ in fh:
-                    n_cand += 1
-            n_cand = n_cand // 4
-            log(f"  Candidate reads (cached): {n_cand:,} pairs")
-
-        # Phase 3: Iterative assembly
-        s03_r1 = Path(args.s03_r1) if args.s03_r1 else None
-        s03_r2 = Path(args.s03_r2) if args.s03_r2 else None
-        assembly_fa, rounds, status = assemble_insert(
-            site=site,
-            candidate_r1=cand_r1,
-            candidate_r2=cand_r2,
-            host_bam=host_bam,
-            host_ref=host_ref,
-            element_db=element_db,
-            workdir=step_dir,
-            threads=args.threads,
-            max_rounds=args.max_rounds,
-            ext_k=args.seed_k,
-            recruit_k=args.recruit_k,
-            gap_size=args.gap_size,
-            s03_r1=s03_r1,
-            s03_r2=s03_r2,
+    if args.phase in ("all", "1_1.5"):
+        # ---- Phase 1: Soft-clip junction detection ----
+        sites = find_softclip_junctions(
+            host_bam, host_ref, element_db, step_dir,
+            min_clip=args.min_clip,
+            extra_dbs=extra_dbs,
         )
 
-        # Record result
-        if assembly_fa and assembly_fa.exists():
-            contigs = read_fasta(assembly_fa)
-            if contigs:
-                longest_name = max(contigs, key=lambda k: len(contigs[k]))
-                longest_seq = contigs[longest_name]
-                insert_len = len(longest_seq)
-                insert_ns = longest_seq.upper().count("N")
+        # Fallback to step 6 junctions if no sites found
+        if not sites and args.junctions:
+            junctions_path = Path(args.junctions)
+            if junctions_path.exists() and junctions_path.stat().st_size > 0:
+                log("No soft-clip sites found, falling back to legacy junctions file...")
+                legacy_juncs = parse_legacy_junctions(junctions_path)
+                if legacy_juncs:
+                    sites = legacy_junctions_to_sites(legacy_juncs, host_bam)
+                    log(f"  Converted {len(legacy_juncs)} legacy junctions → "
+                        f"{len(sites)} sites")
+
+        if not sites:
+            log("No insertion sites found. Nothing to assemble.")
+            write_stats(step_dir / "s05_stats.txt", args.sample_name, 0, 0, [])
+            # Still emit an empty positive_sites.json so the array wrapper
+            # can detect 'nothing to fan out' cleanly.
+            positive_sites_json.write_text("[]\n")
+            positive_sites_pkl.write_bytes(pickle.dumps(
+                {"sites": [], "host_endo_ids": set()}
+            ))
+            return
+
+        log(f"\nPhase 1 found {len(sites)} insertion site(s):")
+        for site in sites:
+            log(f"  {site.site_id}: {site.host_chr}:{site.pos_5p}"
+                f"{f'-{site.pos_3p}' if site.pos_3p else ''} "
+                f"({site.confidence}, 5p={len(site.seed_5p)}bp, "
+                f"3p={len(site.seed_3p)}bp)")
+
+        # ---- T10: pre-mask BED intersect (host-endogenous ortholog regions) ----
+        # Sites inside a T9 mask region are tagged FALSE_NEGATIVE_MASKED and
+        # excluded from Phase 1.5 CANDIDATE classification. They still appear
+        # in site_tier_classification.tsv for regulatory audit trail.
+        masked_sites: list[InsertionSite] = []
+        if args.mask_bed:
+            bed_path = Path(args.mask_bed)
+            _apply_mask_bed(sites, bed_path)
+            masked_sites = [
+                s for s in sites
+                if getattr(s, "tier", None) == MASKED_SOURCE_TAG
+            ]
+            sites = [
+                s for s in sites
+                if getattr(s, "tier", None) != MASKED_SOURCE_TAG
+            ]
+            print(
+                f"[Phase 1] mask-bed {bed_path.name}: "
+                f"{len(masked_sites)}/{len(masked_sites) + len(sites)} "
+                f"sites tagged {MASKED_SOURCE_TAG}",
+                file=sys.stderr,
+            )
+            for s in masked_sites:
+                log(f"  MASKED: {s.site_id} {s.host_chr}:{s.pos_5p} "
+                    f"→ {getattr(s, 'mask_element', 'masked')}")
+
+        # ---- Phase 1.5: Transgene-positive identification ----
+        log("\n--- Phase 1.5: Transgene-positive identification ---")
+        assembly_sites, skip_sites, tier_results, host_endo_ids = classify_site_tiers(
+            sites, element_db, host_ref, step_dir,
+            threads=args.threads,
+            extra_transgene_dbs=extra_dbs,
+        )
+        # T10: append FALSE_NEGATIVE_MASKED entries to tier_results for audit
+        for s in masked_sites:
+            tier_results.append(TierResult(
+                site_id=s.site_id,
+                chrom=s.host_chr,
+                pos=s.pos_5p or s.pos_3p or 0,
+                transgene_positive=False,
+                clip_5p_len=len(s.seed_5p) if s.seed_5p else 0,
+                clip_3p_len=len(s.seed_3p) if s.seed_3p else 0,
+                hit_5p=getattr(s, "mask_element", ""),
+                hit_5p_source=MASKED_SOURCE_TAG,
+                hit_3p=getattr(s, "mask_element", ""),
+                hit_3p_source=MASKED_SOURCE_TAG,
+            ))
+        write_tier_classification(
+            tier_results, step_dir / "site_tier_classification.tsv",
+        )
+
+        if not assembly_sites:
+            log("No transgene-positive sites found. Nothing to assemble.")
+            write_stats(step_dir / "s05_stats.txt", args.sample_name, len(sites), 0, [])
+            positive_sites_json.write_text("[]\n")
+            positive_sites_pkl.write_bytes(pickle.dumps(
+                {"sites": [], "host_endo_ids": host_endo_ids}
+            ))
+            return
+
+        sites = assembly_sites  # Only assemble transgene-positive sites
+
+        # ---- T8: persist Phase 1/1.5 state for array fan-out -----------------
+        # positive_sites.json is the *public* contract for submit_s05_array.sh
+        # to enumerate site_ids for --array indexing.  positive_sites.pkl is
+        # the *internal* rehydration file for Phase 2_3 / 4 workers so they
+        # can run against the exact same InsertionSite objects (including
+        # seed_5p/3p consensus clips and JunctionCluster detail).
+        positive_sites_json.write_text(json.dumps(
+            [
+                {
+                    "site_id": s.site_id,
+                    "chr": s.host_chr,
+                    "pos": s.pos_5p,
+                    "pos_3p": s.pos_3p,
+                    "confidence": s.confidence,
+                }
+                for s in sites
+            ],
+            indent=2,
+        ) + "\n")
+        # SECURITY: pickle is consumed only from the same sample's step_dir
+        # (same user writes and reads). Never rehydrate from untrusted sources.
+        # v1.1 module split will replace with typed JSON + dataclasses loader.
+        positive_sites_pkl.write_bytes(pickle.dumps(
+            {"sites": sites, "host_endo_ids": host_endo_ids}
+        ))
+        log(f"  [T8] wrote {len(sites)} positive sites → "
+            f"{positive_sites_json.name} (+ .pkl)")
+
+        if args.phase == "1_1.5":
+            log(f"\n[Phase 1.5] early return — "
+                f"{len(sites)} positive sites saved for per-site fan-out.")
+            return
+
+    else:
+        # phase in {"2_3", "4"} — rehydrate from pickle written by a prior
+        # 1_1.5 / all run.  Fail loud if the pickle is missing so the user
+        # notices they skipped Phase 1.5.
+        if not positive_sites_pkl.exists():
+            sys.exit(
+                f"ERROR: --phase {args.phase} requires a prior "
+                f"--phase 1_1.5 (or --phase all) run to have produced "
+                f"{positive_sites_pkl} — not found."
+            )
+        loaded = pickle.loads(positive_sites_pkl.read_bytes())
+        sites = loaded["sites"]
+        host_endo_ids = loaded["host_endo_ids"]
+        log(f"  [T8] loaded {len(sites)} positive sites + "
+            f"{len(host_endo_ids)} host-endogenous IDs from {positive_sites_pkl.name}")
+
+    # ---- Phase 2 + 3: Per-site candidate extraction + iterative assembly ----
+    all_results: list[dict] = []
+    if args.phase in ("all", "2_3"):
+        if args.phase == "2_3":
+            # Filter to single site for array task.
+            matching = [s for s in sites if s.site_id == args.site_id]
+            if not matching:
+                sys.exit(
+                    f"ERROR: --site-id {args.site_id!r} not in "
+                    f"positive_sites.json (have: "
+                    f"{[s.site_id for s in sites]})"
+                )
+            sites_to_run = matching
+        else:
+            sites_to_run = sites
+
+        for site in sites_to_run:
+            log(f"\n{'=' * 60}")
+            log(f"=== Processing {site.site_id}: "
+                f"{site.host_chr}:{site.pos_5p} ===")
+
+            # Phase 2: Extract candidate reads
+            cand_r1 = step_dir / f"{site.site_id}_candidate_R1.fastq.gz"
+            cand_r2 = step_dir / f"{site.site_id}_candidate_R2.fastq.gz"
+            if not cand_r1.exists():
+                n_cand = extract_candidate_reads(
+                    host_bam, site, cand_r1, cand_r2,
+                    flank=args.flank, threads=args.threads,
+                    min_clip=args.min_clip,
+                    junction_window=args.junction_window,
+                )
+                log(f"  Candidate reads: {n_cand:,} pairs")
+            else:
+                n_cand = 0
+                opener = gzip.open if str(cand_r1).endswith(".gz") else open
+                with opener(str(cand_r1), "rt") as fh:
+                    for _ in fh:
+                        n_cand += 1
+                n_cand = n_cand // 4
+                log(f"  Candidate reads (cached): {n_cand:,} pairs")
+
+            # Phase 3: Iterative assembly
+            s03_r1 = Path(args.s03_r1) if args.s03_r1 else None
+            s03_r2 = Path(args.s03_r2) if args.s03_r2 else None
+            assembly_fa, rounds, status = assemble_insert(
+                site=site,
+                candidate_r1=cand_r1,
+                candidate_r2=cand_r2,
+                host_bam=host_bam,
+                host_ref=host_ref,
+                element_db=element_db,
+                workdir=step_dir,
+                threads=args.threads,
+                max_rounds=args.max_rounds,
+                ext_k=args.seed_k,
+                recruit_k=args.recruit_k,
+                gap_size=args.gap_size,
+                s03_r1=s03_r1,
+                s03_r2=s03_r2,
+            )
+
+            # Record result
+            if assembly_fa and assembly_fa.exists():
+                contigs = read_fasta(assembly_fa)
+                if contigs:
+                    longest_name = max(contigs, key=lambda k: len(contigs[k]))
+                    longest_seq = contigs[longest_name]
+                    insert_len = len(longest_seq)
+                    insert_ns = longest_seq.upper().count("N")
+                else:
+                    insert_len, insert_ns = 0, 0
+                    status = "no_assembly"
             else:
                 insert_len, insert_ns = 0, 0
                 status = "no_assembly"
-        else:
-            insert_len, insert_ns = 0, 0
-            status = "no_assembly"
 
-        all_results.append({
-            "site_id": site.site_id,
-            "insert_length": insert_len,
-            "remaining_ns": insert_ns,
-            "rounds": rounds,
-            "status": status,
-        })
+            result = {
+                "site_id": site.site_id,
+                "insert_length": insert_len,
+                "remaining_ns": insert_ns,
+                "rounds": rounds,
+                "status": status,
+            }
+            all_results.append(result)
+
+            # T8: per-site runs drop a small JSON sidecar so Phase 4
+            # can rebuild all_results without re-running assembly.
+            if args.phase == "2_3":
+                (step_dir / f"{site.site_id}_result.json").write_text(
+                    json.dumps(result, indent=2) + "\n"
+                )
+
+        if args.phase == "2_3":
+            log(f"\n[Phase 2_3] done for site {args.site_id}. "
+                f"Phase 4 collects results after the full array completes.")
+            return
+
+    # ---- Phase 4: Annotation & Report ----
+    # For --phase=4 we rehydrate all_results from per-site sidecars dropped
+    # by each --phase=2_3 worker.  For --phase=all we already built
+    # all_results above.
+    if args.phase == "4":
+        for site in sites:
+            sidecar = step_dir / f"{site.site_id}_result.json"
+            if sidecar.exists():
+                all_results.append(json.loads(sidecar.read_text()))
+            else:
+                log(f"  [T8 Phase 4] missing sidecar for {site.site_id}, "
+                    f"marking as no_assembly")
+                all_results.append({
+                    "site_id": site.site_id,
+                    "insert_length": 0,
+                    "remaining_ns": 0,
+                    "rounds": 0,
+                    "status": "no_assembly",
+                })
 
     # ---- Combine inserts ----
     combined_insert = step_dir / "insert_only.fasta"
@@ -3762,6 +4183,12 @@ def main() -> None:
         # Generate report for each site
         verdict_counts: Counter = Counter()
         verdict_by_site: dict[str, str] = {}
+        # Issue #3 wire-in: load canonical-triplet + threshold rules from config
+        # (falls back to DEFAULT_TRIPLETS when --config is omitted / missing).
+        rules = load_verdict_rules(
+            Path(args.config) if args.config else Path("config.yaml"),
+            args.sample_name,
+        )
         for site in sites:
             site_fa = step_dir / f"{site.site_id}_insert.fasta"
             if site_fa.exists():
@@ -3777,6 +4204,7 @@ def main() -> None:
                         element_db=element_db,
                         threads=args.threads,
                         construct_flanking=construct_flanking,
+                        rules=rules,
                     )
                     verdict_counts[verdict] += 1
                     verdict_by_site[site.site_id] = verdict

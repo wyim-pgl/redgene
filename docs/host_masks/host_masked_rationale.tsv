@@ -1,0 +1,24 @@
+host	region_chr	region_start	region_end	element_name	identity	length	rationale_code	rationale_note
+corn_zm_b73_v5	NC_050096.1	280593630	280593989	taxon-specific|QT-TAX-ZM-003|Zea_mays|K03285.1|fullseq_360bp|euginius_v1|src=element_db	99.722	359	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050097.1	4499478	4499778	construct-specific|QL-CON-gat_T-pinII-F_gat_T-pinII-R|61061,_73496,_98140,_DP356043|KP784699.1|fullseq_917bp|euginius_v1|src=element_db	100	300	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050098.1	221780023	221780653	construct-specific|QL-CON-00-014|1345-4,_16-0-1,_18-2-4,_35_1_N,_55-1,_5B,_63-1,_A1-DFR_Petunias,_B_tomato,_C5,_C|MF521566.1|fullseq_3304bp|euginius_v1|src=element_db	98.734	630	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050099.1	187215603	187215927	taxon-specific|QT-TAX-zSSIIb-3F_zSSIIb-4R|Zea_mays|AF019297.1|fullseq_2480bp|euginius_v1|src=element_db	100	324	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050099.1	187216213	187216611	taxon-specific|QT-TAX-zSSIIb-3F_zSSIIb-4R|Zea_mays|AF019297.1|fullseq_2480bp|euginius_v1|src=element_db	100	398	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050099.1	187219744	187221022	taxon-specific|QT-TAX-zSSIIb-3F_zSSIIb-4R|Zea_mays|AF019297.1|fullseq_2480bp|euginius_v1|src=element_db	99.609	1278	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050100.1	84400716	84404558	promoter|P-Ubi1-maize|Zea_mays|S94464.1|promoter_plus_5-UTR_exon1_and_intron1|canonical_v1|src=element_db	99.948	3842	E-01	corn x P-Ubi1-maize (endogenous source, 100% ortholog)
+corn_zm_b73_v5	NC_050103.1	169595835	169596139	taxon-specific|QT-TAX-ZM-004|Zea_mays|EU963452.1|fullseq_928bp|euginius_v1|src=element_db	100	304	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050103.1	169596699	169597030	taxon-specific|QT-TAX-ZM-004|Zea_mays|EU963452.1|fullseq_928bp|euginius_v1|src=element_db	100	331	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050104.1	24558405	24558630	X63374.1	99.111	225	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050104.1	24558875	24559089	X63374.1	100	214	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050104.1	24559871	24560090	X63374.1	99.543	219	X-01	other >=98% identity endogenous (manual curation)
+corn_zm_b73_v5	NC_050104.1	24560608	24560858	X63374.1	98.4	250	X-01	other >=98% identity endogenous (manual curation)
+rice_osativa_v7	Chr1	40106790	40107516	taxon-specific|QT-TAX-SPS_primer_f_SPS_primer_r|Oryza_sativa|KT225496.1|fullseq_721bp|euginius_v1|src=element_db	99.311	726	X-01	other >=98% identity endogenous (manual curation)
+rice_osativa_v7	Chr2	24688238	24688529	event-specific|QL-EVE-OS-KM2_for_KM1_rev|KMD1|EU980363.1|fullseq_556bp|euginius_v1|src=element_db	100	291	X-01	other >=98% identity endogenous (manual curation)
+rice_osativa_v7	Chr4	33015167	33015852	element-specific|QL-ELE-Cry1Ac-F(_R)-n4_Cry1AcR-n2|CS-cry1Ac-BACTU|HQ161057.1|fullseq_1867bp|euginius_v1|src=element_db	99.854	685	X-01	other >=98% identity endogenous (manual curation)
+rice_osativa_v7	Chr6	19825094	19825411	event-specific|QL-EVE-Kef6_forward_Kef6_reverse|Kefeng6|HM124448.1|fullseq_506bp|euginius_v1|src=element_db	99.369	317	X-01	other >=98% identity endogenous (manual curation)
+rice_osativa_v7	Chr6	23929086	23931000	taxon-specific|QT-TAX-OS-002|Oryza_sativa|XM_052303253.1|fullseq_2740bp|euginius_v1|src=element_db	99.739	1914	X-01	other >=98% identity endogenous (manual curation)
+rice_osativa_v7	Chr6	23931381	23931954	taxon-specific|QT-TAX-OS-002|Oryza_sativa|XM_052303253.1|fullseq_2740bp|euginius_v1|src=element_db	100	573	X-01	other >=98% identity endogenous (manual curation)
+rice_osativa_v7	Chr6	25065313	25065533	event-specific|QT-EVE-OS-002|LLRICE62|JQ406881.1|fullseq_628bp|euginius_v1|src=element_db	99.091	220	X-01	other >=98% identity endogenous (manual curation)
+soybean_gmax_v4	NA	NA	NA	NM_122473.3_AtYUCCA6	79.0	105	E-03-EMPTY	AtYUCCA6 vs Gmax best identity 79% (dc-megablast); below 98% threshold. Pre-mask not applicable at MAPQ=60 FP mechanism. Canonical-triplet rule (T6) covers soybean_AtYUCCA6 CAND promotion via {bar, P-CaMV35S, T-ocs}. If Round 1 §5 H1 FP recurs in T11, add second-tier 70-95% pre-mask pass as T10.5.
+soybean_gmax_v4	NA	NA	NA	NM_122532.3_UGT72E3	74.0	<200	E-04-EMPTY	UGT72E3 vs Gmax best identity 70-74% (dc-megablast); below 98% threshold. Same rationale as E-03. Canonical-triplet soybean_UGT72E3 = {bar, P-CaMV35S, T-nos}.
+rice_osativa_v7	NA	NA	NA	S44221.1_P-Act1-rice	85.8	162	E-02-EMPTY	Construct's P-Act1-rice (S44221.1) vs Osativa_323_v7.0 best identity 85% — below 98% threshold because construct clone differs from reference Act1 gene (different accession/intron modifications). Not MVP-BLOCKING; X-01 rice regions already cover taxon-specific endogenous.

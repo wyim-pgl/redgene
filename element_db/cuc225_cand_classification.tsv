@@ -1,0 +1,9 @@
+qseqid	top_stitle	top_pident	classification	note
+cucumber_line225|LKUO03000822.1_8440|0|insertion_LKUO03000822.1_8440_assembled_insert	Expression vector pRNAi-GG, complete sequence	100.0	TRUE_INSERTION	vector/plasmid/T-DNA backbone
+cucumber_line225|LKUO03000822.1_8540|0|insertion_LKUO03000822.1_8540_assembled_insert	Expression vector pRNAi-GG, complete sequence	100.0	TRUE_INSERTION	vector/plasmid/T-DNA backbone
+cucumber_line225|LKUO03000939.1_800850|0|insertion_LKUO03000939.1_800850_assembled_insert	Binary vector pGV4945 kanamycin resistance and ribosome-inactivating protein genes, complete cds	100.0	TRUE_INSERTION	vector/plasmid/T-DNA backbone
+cucumber_line225|LKUO03001451.1_6501|0|insertion_LKUO03001451.1_6501_assembled_insert	Binary vector pBI121-ELEMENTS, complete sequence	100.0	TRUE_INSERTION	vector/plasmid/T-DNA backbone
+cucumber_line225|LKUO03001826.1_6663169|0|insertion_LKUO03001826.1_6663169_assembled_insert	Klebsiella variicola subsp. tropica strain BSK_177V2 plasmid pBSKP3, complete sequence	100.0	TRUE_INSERTION	vector/plasmid/T-DNA backbone
+cucumber_line225|LKUO03001997.1_4219576|0|insertion_LKUO03001997.1_4219576_assembled_insert	Binary vector pBI121-ELEMENTS, complete sequence	100.0	TRUE_INSERTION	vector/plasmid/T-DNA backbone
+cucumber_line225|LKUO03002166.1_547982|0|insertion_LKUO03002166.1_547982_assembled_insert	Klebsiella variicola subsp. tropica strain BSK_177V2 plasmid pBSKP3, complete sequence	100.0	TRUE_INSERTION	vector/plasmid/T-DNA backbone
+cucumber_line225|LKUO03003260.1_75|0|insertion_LKUO03003260.1_75_assembled_insert	Ti plasmid binary vector pGA18.0214, complete sequence	100.0	TRUE_INSERTION	vector/plasmid/T-DNA backbone

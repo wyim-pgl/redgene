@@ -1,0 +1,13 @@
+NC_050096.1	280593630	280593989	taxon-specific|QT-TAX-ZM-003|Zea_mays|K03285.1|fullseq_360bp|euginius_v1|src=element_db	99.722
+NC_050097.1	4499478	4499778	construct-specific|QL-CON-gat_T-pinII-F_gat_T-pinII-R|61061,_73496,_98140,_DP356043|KP784699.1|fullseq_917bp|euginius_v1|src=element_db	100
+NC_050098.1	221780023	221780653	construct-specific|QL-CON-00-014|1345-4,_16-0-1,_18-2-4,_35_1_N,_55-1,_5B,_63-1,_A1-DFR_Petunias,_B_tomato,_C5,_C|MF521566.1|fullseq_3304bp|euginius_v1|src=element_db	98.734
+NC_050099.1	187215603	187215927	taxon-specific|QT-TAX-zSSIIb-3F_zSSIIb-4R|Zea_mays|AF019297.1|fullseq_2480bp|euginius_v1|src=element_db	100
+NC_050099.1	187216213	187216611	taxon-specific|QT-TAX-zSSIIb-3F_zSSIIb-4R|Zea_mays|AF019297.1|fullseq_2480bp|euginius_v1|src=element_db	100
+NC_050099.1	187219744	187221022	taxon-specific|QT-TAX-zSSIIb-3F_zSSIIb-4R|Zea_mays|AF019297.1|fullseq_2480bp|euginius_v1|src=element_db	99.609
+NC_050100.1	84400716	84404558	promoter|P-Ubi1-maize|Zea_mays|S94464.1|promoter_plus_5-UTR_exon1_and_intron1|canonical_v1|src=element_db	99.948
+NC_050103.1	169595835	169596139	taxon-specific|QT-TAX-ZM-004|Zea_mays|EU963452.1|fullseq_928bp|euginius_v1|src=element_db	100
+NC_050103.1	169596699	169597030	taxon-specific|QT-TAX-ZM-004|Zea_mays|EU963452.1|fullseq_928bp|euginius_v1|src=element_db	100
+NC_050104.1	24558405	24558630	X63374.1	99.111
+NC_050104.1	24558875	24559089	X63374.1	100
+NC_050104.1	24559871	24560090	X63374.1	99.543
+NC_050104.1	24560608	24560858	X63374.1	98.4

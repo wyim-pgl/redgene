@@ -20,6 +20,26 @@ element_db/*.fa.*
 !element_db/common_payload.fa.nsq
 !element_db/common_payload.fa.ntf
 !element_db/common_payload.fa.nto
+!element_db/cas9_sgrna.fa
+!element_db/euginius_missing.fa
+!element_db/payload_cds.fa
+# Issue #5: EU CRL GMOMETHODS amplicons (5th source tag)
+!element_db/crl_amplicons.fa
+!element_db/crl_amplicons_raw.tsv
+# T5: cd-hit-est dedup + 4-way source-tagged DB
+!element_db/gmo_combined_db_v2.fa
+!element_db/gmo_combined_db_v2.fa.clstr
+!element_db/gmo_combined_db_v2.fa.ndb
+!element_db/gmo_combined_db_v2.fa.nhr
+!element_db/gmo_combined_db_v2.fa.nin
+!element_db/gmo_combined_db_v2.fa.njs
+!element_db/gmo_combined_db_v2.fa.not
+!element_db/gmo_combined_db_v2.fa.nsq
+!element_db/gmo_combined_db_v2.fa.ntf
+!element_db/gmo_combined_db_v2.fa.nto
+!element_db/gmo_combined_db_manifest.tsv
+!element_db/Makefile
+!element_db/tag_and_concat.py
 results/
 *.bam
 *.bam.bai

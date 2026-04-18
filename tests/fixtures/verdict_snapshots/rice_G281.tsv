@@ -1,0 +1,23 @@
+# Golden verdict snapshots for rice_G281 — generated 2026-04-18.
+# Fields map 1:1 to FilterEvidence dataclass fields.
+# elements: pipe-separated list (empty = no element annotations).
+# host_endogenous_elements: pipe-separated (empty = none).
+# matched_canonical: pipe-separated (elements in canonical triplets).
+# off_target_chrs: "chr:bp|chr:bp" format (empty = none).
+# flanking_hit: "chr:lo:hi" format (empty = None).
+# Note: rice_G281 ground truth CANDIDATE is Chr3:16,439,674.
+#   host_fraction=87.4%, largest_gap=1,024bp — Filter A does NOT fire (gap >= 500bp).
+#   This is the canonical regression test for the Rule 6 fix (Issue #3).
+site_id	elements	host_fraction	host_bp	largest_gap	flanking_hit	site_chr	site_pos	off_target_chrs	construct_frac	combined_frac	host_endogenous_elements	matched_canonical	expected_verdict
+insertion_Chr3_16439674	NODE_2_length_2383_cov_25.330756	0.874	11688	1024		Chr3	16439674	Chr2:746	0.102	0.976		NODE_2_length_2383_cov_25.330756	CANDIDATE
+insertion_Chr3_29074002	NODE_2_length_2383_cov_25.330756	0.600	5000	2000		Chr3	29074002		0.050	0.650		NODE_2_length_2383_cov_25.330756	CANDIDATE
+insertion_Chr11_2877409	NODE_2_length_2383_cov_25.330756	0.300	1500	5000		Chr11	2877409		0.100	0.400		NODE_2_length_2383_cov_25.330756	CANDIDATE
+insertion_Chr10_13500285		0.960	10922	452		Chr10	13500285		0.000	0.960			FALSE_POSITIVE
+insertion_Chr11_12123277		0.198	997	2127	Chr11:12121778:12123978	Chr11	12123277		0.000	0.198			FALSE_POSITIVE
+insertion_Chr1_29159516	NODE_X	0.000	0	9999		Chr1	29159516		0.920	0.920			FALSE_POSITIVE
+insertion_Chr2_21947115	NODE_X	0.190	600	9999		Chr2	21947115		0.840	1.000			FALSE_POSITIVE
+insertion_Chr3_31434949	NODE_X	0.460	3000	9999		Chr3	31434949		0.480	0.940			FALSE_POSITIVE
+insertion_Chr11_1719289		0.990	18344	100		Chr11	1719289		0.000	0.990			FALSE_POSITIVE
+insertion_Chr11_27416138		0.900	8194	303		Chr11	27416138		0.000	0.900			FALSE_POSITIVE
+insertion_Chr11_27546790		0.489	1228	1230		Chr11	27546790		0.000	0.489			UNKNOWN
+insertion_Chr11_28363144		0.796	4148	809		Chr11	28363144		0.000	0.796			UNKNOWN

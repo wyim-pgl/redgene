@@ -20,6 +20,31 @@ references:
   # Element database for construct identification
   element_db: element_db/gmo_combined_db.fa
 
+# T6 (v1.0 MVP): thresholds consumed by scripts/s05/verdict.compute_verdict
+# via scripts/s05/config_loader.load_verdict_rules. Keys mirror the compiled
+# defaults in s05_insert_assembly.py; omitting the section keeps legacy
+# behaviour unchanged.
+verdict_rules:
+  cand_host_fraction_max: 0.80
+  cand_largest_gap_min: 500
+  fp_host_fraction_min: 0.80
+  fp_largest_gap_max: 500
+  fp_off_target_chrs_min: 2
+  fp_combined_frac_min: 0.85
+  fp_construct_frac_min: 0.25
+  unknown_to_fp_host_fraction_min: 0.85
+  unknown_to_fp_construct_frac_max: 0.05
+  canonical_triplet_min_identity: 0.90
+
+# Per-sample canonical element triplets for the CANDIDATE promotion rule.
+# `default` applies when the sample has no dedicated entry.
+canonical_triplets:
+  default: [bar, P-CaMV35S, T-ocs]
+  rice_G281: [hLF1, P-Gt1, T-nos]
+  soybean_AtYUCCA6: [bar, P-CaMV35S, T-ocs]
+  soybean_UGT72E3: [bar, P-CaMV35S, T-nos]
+  tomato_Cas9_A2_3: [bar, SpCas9, sgRNA_scaffold_generic]
+
 # Samples to process
 samples:
   rice_G281:
@@ -365,6 +390,172 @@ samples:
     reads:
       r1: data/corn_ND207/subsampled/ND207_1x_R1.fq.gz
       r2: data/corn_ND207/subsampled/ND207_1x_R2.fq.gz
+
+  # ============================================================
+  # Issue #2 [AC-7] coverage-sensitivity sweep — 3 hosts x 4 cov
+  # Subsampled by run_coverage_sensitivity.sh via seqkit sample -p.
+  # Fractions 0.25/0.50/0.75/1.00 approximate 5/10/15/20x assuming
+  # a ~20x master input. See docs/measurements/coverage_sensitivity.md.
+  # ============================================================
+  rice_G281_cov5x:
+    name: "Rice G281 - coverage-sensitivity 5x subsample (AC-7)"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: results/rice_G281_cov5x/rice_G281_cov5x_R1.fq.gz
+      r2: results/rice_G281_cov5x/rice_G281_cov5x_R2.fq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+      copy_number: 2
+      orientation: head-to-head
+
+  rice_G281_cov10x:
+    name: "Rice G281 - coverage-sensitivity 10x subsample (AC-7)"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: results/rice_G281_cov10x/rice_G281_cov10x_R1.fq.gz
+      r2: results/rice_G281_cov10x/rice_G281_cov10x_R2.fq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+      copy_number: 2
+      orientation: head-to-head
+
+  rice_G281_cov15x:
+    name: "Rice G281 - coverage-sensitivity 15x subsample (AC-7)"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: results/rice_G281_cov15x/rice_G281_cov15x_R1.fq.gz
+      r2: results/rice_G281_cov15x/rice_G281_cov15x_R2.fq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+      copy_number: 2
+      orientation: head-to-head
+
+  rice_G281_cov20x:
+    name: "Rice G281 - coverage-sensitivity 20x subsample (AC-7)"
+    host_reference: db/Osativa_323_v7.0.fa
+    construct_reference: db/G281_construct.fa
+    reads:
+      r1: results/rice_G281_cov20x/rice_G281_cov20x_R1.fq.gz
+      r2: results/rice_G281_cov20x/rice_G281_cov20x_R2.fq.gz
+    expected:
+      insertion_chr: Chr3
+      insertion_pos: 16439674
+      copy_number: 2
+      orientation: head-to-head
+
+  tomato_Cas9_A2_3_cov5x:
+    name: "Tomato A2_3 - coverage-sensitivity 5x subsample (AC-7)"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    wt_control: tomato_WT
+    grna: db/tomato_grna.txt
+    reads:
+      r1: results/tomato_Cas9_A2_3_cov5x/tomato_Cas9_A2_3_cov5x_R1.fq.gz
+      r2: results/tomato_Cas9_A2_3_cov5x/tomato_Cas9_A2_3_cov5x_R2.fq.gz
+    expected:
+      cas9_present: true
+      edit_type: heterozygous
+      tdna_insertion_chr: SLM_r2.0ch08
+      tdna_insertion_pos: 65107378
+
+  tomato_Cas9_A2_3_cov10x:
+    name: "Tomato A2_3 - coverage-sensitivity 10x subsample (AC-7)"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    wt_control: tomato_WT
+    grna: db/tomato_grna.txt
+    reads:
+      r1: results/tomato_Cas9_A2_3_cov10x/tomato_Cas9_A2_3_cov10x_R1.fq.gz
+      r2: results/tomato_Cas9_A2_3_cov10x/tomato_Cas9_A2_3_cov10x_R2.fq.gz
+    expected:
+      cas9_present: true
+      edit_type: heterozygous
+      tdna_insertion_chr: SLM_r2.0ch08
+      tdna_insertion_pos: 65107378
+
+  tomato_Cas9_A2_3_cov15x:
+    name: "Tomato A2_3 - coverage-sensitivity 15x subsample (AC-7)"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    wt_control: tomato_WT
+    grna: db/tomato_grna.txt
+    reads:
+      r1: results/tomato_Cas9_A2_3_cov15x/tomato_Cas9_A2_3_cov15x_R1.fq.gz
+      r2: results/tomato_Cas9_A2_3_cov15x/tomato_Cas9_A2_3_cov15x_R2.fq.gz
+    expected:
+      cas9_present: true
+      edit_type: heterozygous
+      tdna_insertion_chr: SLM_r2.0ch08
+      tdna_insertion_pos: 65107378
+
+  tomato_Cas9_A2_3_cov20x:
+    name: "Tomato A2_3 - coverage-sensitivity 20x subsample (AC-7)"
+    host_reference: db/SLM_r2.0.pmol.fasta
+    construct_reference: element_db/gmo_combined_db.fa
+    wt_control: tomato_WT
+    grna: db/tomato_grna.txt
+    reads:
+      r1: results/tomato_Cas9_A2_3_cov20x/tomato_Cas9_A2_3_cov20x_R1.fq.gz
+      r2: results/tomato_Cas9_A2_3_cov20x/tomato_Cas9_A2_3_cov20x_R2.fq.gz
+    expected:
+      cas9_present: true
+      edit_type: heterozygous
+      tdna_insertion_chr: SLM_r2.0ch08
+      tdna_insertion_pos: 65107378
+
+  cucumber_line225_cov5x:
+    name: "Cucumber line225 - coverage-sensitivity 5x subsample (AC-7)"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: results/cucumber_line225_cov5x/cucumber_line225_cov5x_R1.fq.gz
+      r2: results/cucumber_line225_cov5x/cucumber_line225_cov5x_R2.fq.gz
+    expected:
+      insertion_chr: Chr2
+      insertion_type: T-DNA
+      copy_number: 2
+
+  cucumber_line225_cov10x:
+    name: "Cucumber line225 - coverage-sensitivity 10x subsample (AC-7)"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: results/cucumber_line225_cov10x/cucumber_line225_cov10x_R1.fq.gz
+      r2: results/cucumber_line225_cov10x/cucumber_line225_cov10x_R2.fq.gz
+    expected:
+      insertion_chr: Chr2
+      insertion_type: T-DNA
+      copy_number: 2
+
+  cucumber_line225_cov15x:
+    name: "Cucumber line225 - coverage-sensitivity 15x subsample (AC-7)"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: results/cucumber_line225_cov15x/cucumber_line225_cov15x_R1.fq.gz
+      r2: results/cucumber_line225_cov15x/cucumber_line225_cov15x_R2.fq.gz
+    expected:
+      insertion_chr: Chr2
+      insertion_type: T-DNA
+      copy_number: 2
+
+  cucumber_line225_cov20x:
+    name: "Cucumber line225 - coverage-sensitivity 20x subsample (AC-7)"
+    host_reference: db/CucSat_B10v3.fa
+    construct_reference: element_db/gmo_combined_db.fa
+    reads:
+      r1: results/cucumber_line225_cov20x/cucumber_line225_cov20x_R1.fq.gz
+      r2: results/cucumber_line225_cov20x/cucumber_line225_cov20x_R2.fq.gz
+    expected:
+      insertion_chr: Chr2
+      insertion_type: T-DNA
+      copy_number: 2
 
 # Output directory
 output_dir: results

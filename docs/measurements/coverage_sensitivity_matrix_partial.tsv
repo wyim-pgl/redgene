@@ -1,0 +1,13 @@
+sample	coverage_tag	n_sites_total	n_candidate	n_true	n_unknown	gt_anchor_hit	notes
+rice_G281	5x	9	0	0	1	pending	
+rice_G281	10x	12	1	0	3	pending	
+rice_G281	15x	15	1	0	5	pending	
+rice_G281	20x	24	3	0	11	pending	
+tomato_Cas9_A2_3	5x	1	1	0	0	pending	
+tomato_Cas9_A2_3	10x	0	0	0	0	pending	no s05 output (pipeline incomplete?)
+tomato_Cas9_A2_3	15x	1	1	0	0	pending	
+tomato_Cas9_A2_3	20x	2	2	0	0	pending	
+cucumber_line225	5x	4	2	0	2	pending	
+cucumber_line225	10x	9	3	0	4	pending	
+cucumber_line225	15x	0	0	0	0	pending	no s05 output (pipeline incomplete?)
+cucumber_line225	20x	0	0	0	0	pending	no s05 output (pipeline incomplete?)

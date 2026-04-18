@@ -1,0 +1,19 @@
+# Golden verdict snapshots for cucumber_line225 — generated 2026-04-18.
+# Fields map 1:1 to FilterEvidence dataclass fields.
+# 8 CANDIDATE sites confirmed by AC-2 (Issue #1, commit 025c1ed).
+# elements: pipe-separated list (empty = no annotations).
+# off_target_chrs: "chr:bp" format (empty = none).
+# flanking_hit: "chr:lo:hi" format (empty = None).
+site_id	elements	host_fraction	host_bp	largest_gap	flanking_hit	site_chr	site_pos	off_target_chrs	construct_frac	combined_frac	host_endogenous_elements	matched_canonical	expected_verdict
+insertion_LKUO03001451.1_6501	NODE_1_length_5568_cov_20.471431	0.032	356	5403		LKUO03001451.1	6501	LKUO03002166.1:356	0.677	0.709		NODE_1_length_5568_cov_20.471431	CANDIDATE
+insertion_LKUO03002166.1_547982	NODE_1_length_5568_cov_20.471431	0.452	5266	6381		LKUO03002166.1	547982		0.058	0.510		NODE_1_length_5568_cov_20.471431	CANDIDATE
+insertion_LKUO03003260.1_75	NODE_1_length_5568_cov_20.471431	0.022	76	3110		LKUO03003260.1	75		0.465	0.487		NODE_1_length_5568_cov_20.471431	CANDIDATE
+insertion_LKUO03000822.1_8440	NODE_1_length_5568_cov_20.471431	0.000	0	9999		LKUO03000822.1	8440		0.050	0.050		NODE_1_length_5568_cov_20.471431	CANDIDATE
+insertion_LKUO03000822.1_8540	NODE_1_length_5568_cov_20.471431	0.000	0	9999		LKUO03000822.1	8540		0.050	0.050		NODE_1_length_5568_cov_20.471431	CANDIDATE
+insertion_LKUO03000939.1_800850	NODE_1_length_5568_cov_20.471431	0.000	0	9999		LKUO03000939.1	800850		0.510	0.510		NODE_1_length_5568_cov_20.471431	CANDIDATE
+insertion_LKUO03001826.1_6663169	NODE_1_length_5568_cov_20.471431	0.000	0	9999		LKUO03001826.1	6663169		0.100	0.100		NODE_1_length_5568_cov_20.471431	CANDIDATE
+insertion_LKUO03001997.1_4219576	NODE_1_length_5568_cov_20.471431	0.000	0	9999		LKUO03001997.1	4219576		0.607	0.607		NODE_1_length_5568_cov_20.471431	CANDIDATE
+insertion_LKUO03000992.1_1982508		0.993	5398	138		LKUO03000992.1	1982508		0.000	0.993			FALSE_POSITIVE
+insertion_LKUO03001544.1_362523		0.917	7492	317		LKUO03001544.1	362523		0.000	0.917			FALSE_POSITIVE
+insertion_LKUO03004213.1_8069		0.997	10432	134		LKUO03004213.1	8069		0.000	0.997			FALSE_POSITIVE
+insertion_LKUO03002166.1_547872	NODE_1_length_5568_cov_20.471431	0.000	0	9999		LKUO03002166.1	547872		0.874	0.874			FALSE_POSITIVE

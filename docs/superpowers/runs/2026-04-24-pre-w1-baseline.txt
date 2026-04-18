@@ -1,0 +1,26 @@
+=== rice_G281 ===
+      3 Verdict: CANDIDATE
+     32 Verdict: FALSE_POSITIVE
+     33 Verdict: UNKNOWN
+=== tomato_Cas9_A2_3 ===
+      2 Verdict: CANDIDATE
+=== tomato_Cas9_A2_2 ===
+(no s05 results)
+=== cucumber_line212 ===
+      1 Verdict: CANDIDATE
+      4 Verdict: FALSE_POSITIVE
+     26 Verdict: UNKNOWN
+=== cucumber_line224 ===
+      1 Verdict: CANDIDATE
+      2 Verdict: FALSE_POSITIVE
+     15 Verdict: UNKNOWN
+=== cucumber_line225 ===
+      8 Verdict: CANDIDATE
+      4 Verdict: FALSE_POSITIVE
+     26 Verdict: UNKNOWN
+=== soybean_AtYUCCA6 ===
+     15 Verdict: FALSE_POSITIVE
+     30 Verdict: UNKNOWN
+=== soybean_UGT72E3 ===
+     15 Verdict: FALSE_POSITIVE
+     38 Verdict: UNKNOWN
