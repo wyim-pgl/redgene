@@ -41,13 +41,13 @@ from pathlib import Path
 
 import pysam
 
-# Local sub-modules (T6 verdict helpers — Issue #3 partial wire-in).
+# Local sub-modules (Issue #3 full wire-in: compute_verdict + FilterEvidence).
 try:
-    from s05.verdict import VerdictRules
+    from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
     from s05.config_loader import load_verdict_rules
 except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from s05.verdict import VerdictRules
+    from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
     from s05.config_loader import load_verdict_rules
 
 # ---------------------------------------------------------------------------
@@ -3516,10 +3516,7 @@ def generate_report(
     for _, _, elem, _, _ in elements:
         elem_counts[elem] += 1
 
-    # ---- Phase 4 post-filter: host-endogenous verdict ----
-    # If every annotated element was excluded at the DB-level host BLAST
-    # (Tier 1 or Tier 2), the whole assembly is host-endogenous noise.
-    # A single genuinely foreign element is enough to keep the site.
+    # ---- Build element-level evidence (no I/O) ----
     host_endo = host_endogenous_ids or set()
     unique_elems = set(elem_counts)
     foreign_elems: set[str] = set()
@@ -3529,123 +3526,97 @@ def generate_report(
             endo_elems.add(elem)
         else:
             foreign_elems.add(elem)
-    # Need at least one annotation AND at least one foreign element to keep it.
-    if unique_elems and not foreign_elems:
-        verdict = "FALSE_POSITIVE"
-        verdict_reason = (
-            "all annotated elements are host-endogenous "
-            "(matched host genome at Tier 1/2 BLAST threshold)"
-        )
-    elif not unique_elems:
-        verdict = "UNKNOWN"
-        verdict_reason = "no element annotations"
-    else:
-        verdict = "CANDIDATE"
-        verdict_reason = ""
+    # sources_by_element: last-seen source tag per element name.
+    sources_by_element: dict[str, str] = {
+        elem: source for _, _, elem, _, source in elements
+    }
 
-    # ---- Post-assembly false-positive filters (applied to CANDIDATE only) ----
-    # Filter A: Host-fraction + small gap → chimeric assembly artifact
+    # ---- Gather BLAST filter evidence (lazy: only run when useful) ----
+    # Evidence is collected for CANDIDATE sites and UNKNOWN sites (host-only
+    # reclassification). All four filter values default to 0/None so that
+    # compute_verdict receives a complete FilterEvidence for every path.
     host_fraction = 0.0
     host_bp = 0
     largest_gap = 0
-    # Filter B: Construct-flanking overlap
-    flanking_hit = ""
-    # Filter C: Multi-locus chimeric assembly
+    flanking_hit_str = ""           # human-readable for report diagnostics
+    flanking_hit_tup: tuple[str, int, int] | None = None  # structured for verdict
     is_chimeric = False
     off_target_chrs: list[tuple[str, int]] = []
-    # Filter D: Construct-host coverage
     construct_frac = 0.0
     combined_frac = 0.0
 
-    if verdict == "CANDIDATE" and host_ref is not None:
-        # Filter A: host-fraction with non-host gap check
+    # Determine whether this site is worth running BLASTs on.
+    # Sites that are all-host-endogenous skip BLAST, matching old behaviour;
+    # canonical_triplet override (highest priority in compute_verdict) still
+    # works because ev.host_fraction defaults to 0.0 < cand_host_fraction_max.
+    _needs_blast = bool(unique_elems and foreign_elems) or not unique_elems
+    # "not unique_elems" → UNKNOWN path, needs BLAST for host-only reclassification.
+    # "foreign_elems" → CANDIDATE path, needs BLAST for all four FP filters.
+
+    if _needs_blast and host_ref is not None:
+        # Filter A evidence: host-fraction + largest non-host gap
         host_fraction, host_bp, _, largest_gap = _blast_insert_vs_host(
             insert_fasta, host_ref, output_dir, threads=threads,
         )
-        if (host_fraction >= INSERT_HOST_FRACTION
-                and largest_gap < INSERT_MIN_FOREIGN_GAP):
-            verdict = "FALSE_POSITIVE"
-            verdict_reason = (
-                f"assembled insert is {host_fraction:.0%} host genome "
-                f"({host_bp:,}/{insert_len - n_count:,}bp) with only "
-                f"{largest_gap}bp non-host gap "
-                f"(need ≥{INSERT_MIN_FOREIGN_GAP}bp for real T-DNA)"
-            )
+        if not unique_elems:
+            log(f"  UNKNOWN reclassification: BLASTed {insert_fasta.name} vs host")
 
-    if verdict == "CANDIDATE" and construct_flanking:
-        # Filter B: site coordinates overlap with construct→host flanking
+    if _needs_blast and construct_flanking:
+        # Filter B evidence: find first overlapping flanking region
         site_pos = site.pos_5p
-        overlaps, flanking_hit = _site_overlaps_flanking(
+        _, flanking_hit_str = _site_overlaps_flanking(
             site.host_chr, site_pos, construct_flanking,
         )
-        if overlaps:
-            verdict = "FALSE_POSITIVE"
-            verdict_reason = (
-                f"site {site.host_chr}:{site_pos:,} overlaps construct-flanking "
-                f"region {flanking_hit} — host DNA in construct reference"
-            )
+        for chrom, lo, hi in construct_flanking:
+            slop = CONSTRUCT_FLANK_SLOP
+            if chrom == site.host_chr and lo - slop <= site_pos <= hi + slop:
+                # Store slop-expanded coords so compute_verdict's simple
+                # lo <= site_pos <= hi boundary check is equivalent.
+                flanking_hit_tup = (chrom, lo - slop, hi + slop)
+                break
 
-    if verdict == "CANDIDATE" and host_ref is not None:
-        # Filter C: assembled insert spans ≥2 off-target chromosomes
+    if _needs_blast and host_ref is not None:
+        # Filter C evidence: off-target chromosome spans
         is_chimeric, off_target_chrs = _check_chimeric_assembly(
             insert_fasta, host_ref, site.host_chr, output_dir, threads=threads,
         )
-        if is_chimeric:
-            off_str = ", ".join(f"{c}:{bp}bp" for c, bp in off_target_chrs)
-            verdict = "FALSE_POSITIVE"
-            verdict_reason = (
-                f"chimeric assembly — host-aligned portions span "
-                f"{len(off_target_chrs)} off-target chromosomes ({off_str})"
-            )
 
-    if verdict == "CANDIDATE" and host_ref is not None and element_db is not None:
-        # Filter D: construct + host coverage fully explains insert
-        is_construct_fp, construct_frac, _, combined_frac = \
-            _check_construct_host_coverage(
-                insert_fasta, element_db,
-                host_fraction, host_bp, insert_len, n_count,
-                output_dir, threads=threads,
-            )
-        if is_construct_fp:
-            verdict = "FALSE_POSITIVE"
-            verdict_reason = (
-                f"insert fully explained by construct ({construct_frac:.0%}) "
-                f"+ host ({host_fraction:.0%}) = {combined_frac:.0%} combined "
-                f"coverage — host genomic DNA with construct-element homology"
-            )
-
-    # ---- UNKNOWN reclassification: host-only insert ----
-    # If no element annotations but insert is mostly host DNA with
-    # negligible construct match, reclassify as FALSE_POSITIVE.
-    if verdict == "UNKNOWN" and host_ref is not None:
-        log(f"  UNKNOWN reclassification: BLASTing {insert_fasta.name} vs host")
-        host_fraction, host_bp, _, largest_gap = _blast_insert_vs_host(
-            insert_fasta, host_ref, output_dir, threads=threads,
+    if _needs_blast and host_ref is not None and element_db is not None:
+        # Filter D evidence: construct + host combined coverage
+        _, construct_frac, _, combined_frac = _check_construct_host_coverage(
+            insert_fasta, element_db,
+            host_fraction, host_bp, insert_len, n_count,
+            output_dir, threads=threads,
         )
-        construct_frac_unk = 0.0
-        if element_db is not None:
-            _, construct_frac_unk, _, _ = _check_construct_host_coverage(
-                insert_fasta, element_db,
-                host_fraction, host_bp, insert_len, n_count,
-                output_dir, threads=threads,
-            )
-        if (host_fraction >= UNKNOWN_HOST_MIN_FRACTION
-                and construct_frac_unk <= UNKNOWN_MAX_CONSTRUCT_FRAC):
-            verdict = "FALSE_POSITIVE"
-            construct_frac = construct_frac_unk
-            verdict_reason = (
-                f"no element annotations; insert is {host_fraction:.0%} host "
-                f"genome ({host_bp:,}bp) with {construct_frac_unk:.0%} construct "
-                f"— host genomic DNA"
-            )
 
-    # Issue #3 wire-in (scoped): canonical_triplet override.
-    # Highest-priority rule from compute_verdict — promotes FP/UNKNOWN to
-    # CANDIDATE when a canonical transgene triplet (e.g., bar + P-CaMV35S +
-    # T-ocs) is fully present and host_fraction is acceptable.
-    verdict, verdict_reason = _apply_canonical_override(
-        verdict, verdict_reason, unique_elems, host_fraction, rules,
+    # ---- Delegate verdict to compute_verdict (Issue #3 full wire-in) ----
+    # Build a FilterEvidence bundle from all gathered evidence and call the
+    # pure function.  This replaces the old inline if/else verdict chain plus
+    # the _apply_canonical_override post-hoc call.
+    _ev = FilterEvidence(
+        elements=list(unique_elems),
+        host_bp=host_bp,
+        host_fraction=host_fraction,
+        largest_gap=largest_gap,
+        flanking_hit=flanking_hit_tup,
+        off_target_chrs=off_target_chrs,
+        construct_frac=construct_frac,
+        combined_frac=combined_frac,
+        is_chimeric=is_chimeric,
+        site_chr=site.host_chr,
+        site_pos=site.pos_5p,
+        matched_canonical=unique_elems,   # canonical triplet check uses all elements
+        sources_by_element=sources_by_element,
+        host_endogenous_elements=endo_elems,
     )
+    _verdict_rules = rules if rules is not None else VerdictRules()
+    verdict, verdict_reason = compute_verdict(_ev, _verdict_rules)
+
+    # For report diagnostics: restore the human-readable flanking string if
+    # compute_verdict returned a flanking FP (flanking_hit_str may differ from
+    # the structured tuple representation used internally).
+    # The reporting block below uses flanking_hit_str for display; verdict_reason
+    # already contains the full human-readable text from compute_verdict.
 
     # Build linear map with orientation arrows
     linear_parts = []
@@ -3755,8 +3726,8 @@ def generate_report(
                      f"({host_bp:,}/{insert_len - n_count:,}bp at "
                      f"≥{INSERT_HOST_MIN_PIDENT}% identity), "
                      f"largest non-host gap: {largest_gap:,}bp\n")
-        if flanking_hit:
-            fh.write(f"Construct-flanking overlap: site overlaps {flanking_hit}\n")
+        if flanking_hit_str:
+            fh.write(f"Construct-flanking overlap: site overlaps {flanking_hit_str}\n")
         if off_target_chrs:
             off_str = ", ".join(f"{c}:{bp}bp" for c, bp in off_target_chrs)
             tag = " → chimeric" if is_chimeric else ""
