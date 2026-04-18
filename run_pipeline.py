@@ -28,6 +28,8 @@ from typing import Any
 
 import yaml
 
+from scripts.util.coc_logger import CocLogger, sha256_file
+
 from scripts._write_audit_header import write_audit_header
 
 # ---------------------------------------------------------------------------
@@ -331,6 +333,111 @@ def build_step_cmd(
         sys.exit(f"ERROR: No command builder for step {step}")
 
 
+# ---------------------------------------------------------------------------
+# CoC helpers
+# ---------------------------------------------------------------------------
+
+def _step_input_files(
+    step: str,
+    sample_key: str,
+    sample_cfg: dict[str, Any],
+    outdir: Path,
+    base_dir: Path,
+) -> list[Path]:
+    """Return a list of the primary input file(s) for a step (best-effort).
+
+    Used by the CoC wire-in to record input SHA-256 hashes *before* executing
+    the step.  Only files that already exist on-disk are returned; missing
+    paths are silently skipped so the pre-entry is never blocked.
+    """
+    sname = sample_key
+    s01 = outdir / sname / "s01_qc"
+    s02 = outdir / sname / "s02_construct_map"
+    s03 = outdir / sname / "s03_extract"
+    s04 = outdir / sname / "s04_host_map"
+
+    def rp(p: str) -> Path:
+        pp = Path(p)
+        return base_dir / pp if not pp.is_absolute() else pp
+
+    reads = sample_cfg.get("reads", {})
+    candidates: list[Path] = []
+
+    if step == "1":
+        candidates = [rp(reads.get("r1", "")), rp(reads.get("r2", ""))]
+    elif step == "2":
+        candidates = [s01 / f"{sname}_R1.fq.gz", s01 / f"{sname}_R2.fq.gz"]
+    elif step == "3":
+        candidates = [s02 / f"{sname}_construct.bam"]
+    elif step == "4":
+        candidates = [s01 / f"{sname}_R1.fq.gz", s01 / f"{sname}_R2.fq.gz"]
+    elif step == "4b":
+        candidates = [
+            s03 / f"{sname}_construct_R1.fq.gz",
+            s03 / f"{sname}_construct_R2.fq.gz",
+        ]
+    elif step == "5":
+        candidates = [s04 / f"{sname}_host.bam"]
+    elif step == "6":
+        candidates = [s04 / f"{sname}_host.bam"]
+    elif step == "7":
+        candidates = [
+            s02 / f"{sname}_construct.bam",
+            s04 / f"{sname}_host.bam",
+        ]
+
+    return [p for p in candidates if p.exists()]
+
+
+def _step_output_files(
+    step: str,
+    sample_key: str,
+    outdir: Path,
+) -> list[Path]:
+    """Return a list of the primary output file(s) for a step (best-effort).
+
+    Used by the CoC wire-in to record output SHA-256 hashes *after* a step
+    completes.  Only files that exist post-execution are included.
+    """
+    sname = sample_key
+    s01 = outdir / sname / "s01_qc"
+    s02 = outdir / sname / "s02_construct_map"
+    s03 = outdir / sname / "s03_extract"
+    s04 = outdir / sname / "s04_host_map"
+    s04b = outdir / sname / "s04b_construct_asm"
+    s05 = outdir / sname / "s05_insert_assembly"
+    s06 = outdir / sname / "s06_indel"
+    s07 = outdir / sname / "s07_copynumber"
+
+    candidates: list[Path] = []
+    if step == "1":
+        candidates = [s01 / f"{sname}_R1.fq.gz", s01 / f"{sname}_R2.fq.gz"]
+    elif step == "2":
+        candidates = [s02 / f"{sname}_construct.bam"]
+    elif step == "3":
+        candidates = [
+            s03 / f"{sname}_construct_R1.fq.gz",
+            s03 / f"{sname}_construct_R2.fq.gz",
+        ]
+    elif step == "4":
+        candidates = [s04 / f"{sname}_host.bam"]
+    elif step == "4b":
+        candidates = [s04b / "contigs.fasta"]
+    elif step == "5":
+        candidates = [s05 / "insertions.tsv"]
+    elif step == "6":
+        candidates = [s06 / "editing_sites.tsv"]
+    elif step == "7":
+        candidates = [s07 / "copy_number.tsv"]
+
+    return [p for p in candidates if p.exists()]
+
+
+def _sha256_files(paths: list[Path]) -> dict[str, str]:
+    """Return a mapping of filename → SHA-256 hex digest for each path."""
+    return {p.name: sha256_file(p) for p in paths}
+
+
 def _fanout_step5(
     cmd: list[str],
     sample_key: str,
@@ -427,7 +534,13 @@ def run_step(
     fanout: bool = False,
     host_bam_override: str | None = None,
 ) -> None:
-    """Execute a single pipeline step for one sample."""
+    """Execute a single pipeline step for one sample.
+
+    When not in dry-run mode, wraps execution with a CocLogger context manager
+    that writes a pre-step entry (with input SHA-256 hashes + full CLI) and a
+    post-step entry (with output SHA-256 hashes + exit code) to
+    ``results/{sample}/chain_of_custody.jsonl``.
+    """
     script = base_dir / STEP_SCRIPTS[step]
     label = STEP_NAMES.get(step, step)
 
@@ -451,7 +564,30 @@ def run_step(
         return
 
     log.info("  CMD: %s", " ".join(cmd))
-    result = subprocess.run(cmd, cwd=str(base_dir))
+
+    # Chain-of-custody logging: wrap subprocess in CocLogger so every step
+    # emits a pre-entry (inputs + cmd) and a post-entry (outputs + exit_code).
+    coc_path = outdir / sample_key / "chain_of_custody.jsonl"
+    step_label = f"s{step.zfill(2)}" if step.isdigit() else f"s{step}"
+    input_files = _step_input_files(step, sample_key, sample_cfg, outdir, base_dir)
+    cmd_str = " ".join(cmd)
+
+    with CocLogger(path=coc_path, sample=sample_key, step=step_label) as coc:
+        # Pre-step: record inputs + full command
+        coc.log("pre", {
+            "cmd": cmd_str,
+            "input_sha256": _sha256_files(input_files),
+        })
+
+        result = subprocess.run(cmd, cwd=str(base_dir))
+
+        # Post-step: record outputs + exit code
+        output_files = _step_output_files(step, sample_key, outdir)
+        coc.log("post", {
+            "exit_code": result.returncode,
+            "output_sha256": _sha256_files(output_files),
+        })
+
     if result.returncode != 0:
         sys.exit(
             f"FAILED: Step {step} ({label}) for sample '{sample_key}' "
