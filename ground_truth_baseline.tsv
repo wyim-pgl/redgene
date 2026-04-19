@@ -1,0 +1,5 @@
+sample	chrom	position	description	right_clip_count	left_clip_count	right_clip_max_len	left_clip_max_len	right_clip_median_len	left_clip_median_len	element_hit_5p	element_id_5p	element_identity_5p	element_aln_len_5p	element_hit_3p	element_id_3p	element_identity_3p	element_aln_len_3p	maps_to_host_5p	maps_to_host_3p
+rice_G281	Chr3	16439674	T-DNA insertion, 2-copy head-to-head	12	21	70	79	27	32	True	rice_G281	100.0	70	True	rice_G281	100.0	76	False	False
+rice_G281	Chr3	16439710	T-DNA insertion, second junction	12	21	70	79	27	32	True	rice_G281	100.0	70	True	rice_G281	100.0	76	False	False
+tomato_Cas9_A2_3	SLM_r2.0ch01	91002744	T-DNA insertion (Cas9 line A2_3)
+cucumber_line225	LKUO03001451	6501	T-DNA insertion (line 225)
