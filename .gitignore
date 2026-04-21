@@ -96,9 +96,10 @@ Thumbs.db
 # Graphify output (Claude Code skill artifact)
 /graphify-out/
 
-# Legacy analysis dirs kept for reference but not tracked
-/atyucca6_gap_blast/
-/rice_G281_foreign/
-
 # Session-local codex placeholder
 /.codex
+
+# NOTE: /atyucca6_gap_blast/ and /rice_G281_foreign/ are intentionally NOT
+# gitignored. They hold regulatory / ground-truth validation evidence; leave
+# them untracked so the user can decide whether to commit them as-is or
+# replace with a summary .md, rather than silently excluding audit trail.

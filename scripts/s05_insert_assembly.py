@@ -45,7 +45,7 @@ import pysam
 # FASTA/FASTQ helpers) from scripts.s05.primitives so downstream submodules
 # share a single definition without cycling back through this entrypoint.
 try:
-    from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
+    from s05.verdict import VerdictRules, FilterEvidence, compute_verdict, _apply_canonical_override
     from s05.config_loader import load_verdict_rules
     from s05.primitives import (
         STEP,
@@ -73,7 +73,7 @@ try:
     )
 except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
+    from s05.verdict import VerdictRules, FilterEvidence, compute_verdict, _apply_canonical_override
     from s05.config_loader import load_verdict_rules
     from s05.primitives import (
         STEP,
@@ -158,35 +158,8 @@ UNKNOWN_HOST_MIN_FRACTION = 0.85   # min host fraction to classify as host-only
 UNKNOWN_MAX_CONSTRUCT_FRAC = 0.05  # max construct fraction for host-only
 
 
-def _apply_canonical_override(
-    verdict: str,
-    reason: str,
-    unique_elems: set[str],
-    host_fraction: float,
-    rules: "VerdictRules | None",
-) -> tuple[str, str]:
-    """Promote verdict to CANDIDATE when a canonical transgene triplet matches.
-
-    Issue #3 (v1.0 wire-in, scoped). Mirrors compute_verdict rule 1 priority:
-    canonical_triplet wins over any FP filter when host_fraction is acceptable.
-    """
-    if rules is None or not rules.canonical_triplets or not unique_elems:
-        return verdict, reason
-    if host_fraction >= rules.cand_host_fraction_max:
-        return verdict, reason
-    for triplet_name, triplet in rules.canonical_triplets.items():
-        if triplet and triplet.issubset(unique_elems):
-            if verdict == "CANDIDATE":
-                return verdict, reason
-            new_reason = (
-                f"canonical_triplet[{triplet_name}] matched "
-                f"({sorted(triplet)}); host_fraction="
-                f"{host_fraction:.0%} below "
-                f"{rules.cand_host_fraction_max:.0%} "
-                f"[override {verdict}: {reason}]"
-            )
-            return "CANDIDATE", new_reason
-    return verdict, reason
+# _apply_canonical_override moved to scripts/s05/verdict.py and re-imported
+# here for backward compatibility with tests/test_canonical_override.py.
 
 
 # ---------------------------------------------------------------------------

@@ -632,6 +632,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  python run_pipeline.py --sample rice_G281       # one sample\n"
             "  python run_pipeline.py --steps 1-5,7            # core + copy number\n"
             "  python run_pipeline.py --steps 5                # re-run insert assembly\n"
+            "  python run_pipeline.py --steps 8                # PDF report only (reads existing s05 output)\n"
             "  python run_pipeline.py --dry-run                # preview commands\n"
         ),
     )
@@ -646,9 +647,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--steps", type=str, default="1-5",
         help=(
-            "Steps to run (1, 2, 3, 4, 4b, 5, 6, 7). "
+            "Steps to run (1, 2, 3, 4, 4b, 5, 6, 7, 8). "
             "Ranges expand across step 4b, so '1-5' includes 4b "
-            "(de novo construct assembly). (default: 1-5)"
+            "(de novo construct assembly). Step 8 (PDF insertion report) is "
+            "opt-in and not part of the default range. (default: 1-5)"
         ),
     )
     parser.add_argument(

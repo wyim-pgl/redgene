@@ -137,8 +137,8 @@ def test_module_imports_respect_dag(module_file: Path) -> None:
     )
 
 
-def test_stage_ranking_is_sorted_and_unique_or_tied() -> None:
-    """Sanity check: every ranked module file exists under scripts/s05/."""
+def test_required_session1_modules_present() -> None:
+    """Sanity check: every Session-1 ranked module file exists under scripts/s05/."""
     present = {p.stem for p in _iter_module_files()}
     # Only enforce existence for the Session-1 modules; later sessions will
     # add the rest. STAGE can hold forward-looking entries without failing.

@@ -73,6 +73,18 @@ from typing import Optional
 
 
 # ---------------------------------------------------------------------------
+# Public verdict vocabulary
+# ---------------------------------------------------------------------------
+
+# Verdicts considered "interesting" by downstream reporting code (e.g.
+# scripts/reports/insertion_pdf.py junction diagram). Centralising here
+# prevents drift when new verdicts are added to compute_verdict's rule set.
+REPORT_INTERESTING_VERDICTS: frozenset[str] = frozenset(
+    {"CANDIDATE", "TRUE_INSERTION"}
+)
+
+
+# ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
 
@@ -294,3 +306,42 @@ def compute_verdict(
     return ("UNKNOWN",
             f"{len(ev.elements)} element(s) annotated but evidence inconclusive "
             f"(host_fraction={ev.host_fraction:.0%})")
+
+
+# ---------------------------------------------------------------------------
+# Legacy canonical-override helper (Issue #3 v1.0 wire-in, scoped)
+# ---------------------------------------------------------------------------
+# Retained as a post-hoc override path that tests still exercise directly.
+# compute_verdict's Rule 1 covers the same promotion; this helper stays to
+# support callers that already computed a verdict via the pre-v1.0 inline
+# chain and want the canonical-triplet promotion applied afterwards.
+
+def _apply_canonical_override(
+    verdict: str,
+    reason: str,
+    unique_elems: set[str],
+    host_fraction: float,
+    rules: "VerdictRules | None",
+) -> tuple[str, str]:
+    """Promote verdict to CANDIDATE when a canonical transgene triplet matches.
+
+    Mirrors :func:`compute_verdict` Rule 1 priority: canonical_triplet wins
+    over any FP filter when host_fraction is below ``cand_host_fraction_max``.
+    """
+    if rules is None or not rules.canonical_triplets or not unique_elems:
+        return verdict, reason
+    if host_fraction >= rules.cand_host_fraction_max:
+        return verdict, reason
+    for triplet_name, triplet in rules.canonical_triplets.items():
+        if triplet and triplet.issubset(unique_elems):
+            if verdict == "CANDIDATE":
+                return verdict, reason
+            new_reason = (
+                f"canonical_triplet[{triplet_name}] matched "
+                f"({sorted(triplet)}); host_fraction="
+                f"{host_fraction:.0%} below "
+                f"{rules.cand_host_fraction_max:.0%} "
+                f"[override {verdict}: {reason}]"
+            )
+            return "CANDIDATE", new_reason
+    return verdict, reason

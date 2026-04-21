@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from .primitives import log
 
@@ -68,9 +67,12 @@ def _find_construct_flanking_regions(
          "-evalue", "1e-20", "-max_target_seqs", "5",
          "-num_threads", str(threads),
          "-out", str(blast_out)],
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
     if result.returncode != 0 or not blast_out.exists():
+        stderr_tail = (result.stderr or b"").decode("utf-8", errors="replace")[-400:]
+        log(f"[filter_b] blastn rc={result.returncode}, skipping flanking scan. "
+            f"stderr: {stderr_tail}")
         return []
 
     flanking: list[tuple[str, int, int]] = []
@@ -137,7 +139,7 @@ def filter_b_flanking_hit(
     site_pos: int,
     flanking_regions: list[tuple[str, int, int]],
     slop: int = CONSTRUCT_FLANK_SLOP,
-) -> Optional[tuple[str, int, int]]:
+) -> tuple[str, int, int] | None:
     """Return the slop-expanded flanking hit that contains the site, or None.
 
     Pure function — no BLAST, no file I/O. Used by the caller that builds a

@@ -13,15 +13,17 @@ to distinguish actual chimeric DNA pieces from low-level element homologies
 (~80-90%).  See ``scripts/s05/verdict.py`` Rule 3.
 
 This module is intentionally side-effect free aside from the BLAST subprocess
-call inside ``_check_chimeric_assembly``. The "pure filter-C check"
-(``filter_c_offtarget_chrs``) builds the ``FilterEvidence.off_target_chrs``
-list consumed by ``compute_verdict`` without any I/O of its own.
+call inside ``_check_chimeric_assembly``. The returned ``off_target`` list is
+assigned directly to ``FilterEvidence.off_target_chrs`` by the caller and
+consumed by ``compute_verdict`` Rule 3.
 """
 from __future__ import annotations
 
 import subprocess
 from collections import defaultdict
 from pathlib import Path
+
+from .primitives import log
 
 
 # ---------------------------------------------------------------------------
@@ -59,9 +61,12 @@ def _check_chimeric_assembly(
              "-evalue", "1e-10", "-max_target_seqs", "10",
              "-num_threads", str(threads),
              "-out", str(blast_out)],
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
         if result.returncode != 0 or not blast_out.exists():
+            stderr_tail = (result.stderr or b"").decode("utf-8", errors="replace")[-400:]
+            log(f"[filter_c] blastn rc={result.returncode}, skipping chimera check "
+                f"for {insert_fasta.name}. stderr: {stderr_tail}")
             return False, []
 
     # Accumulate aligned bp per chromosome (strict identity to avoid
@@ -86,23 +91,3 @@ def _check_chimeric_assembly(
 
     is_chimeric = len(off_target) >= 2
     return is_chimeric, off_target
-
-
-# ---------------------------------------------------------------------------
-# Pure filter-C check (consumed by verdict.compute_verdict)
-# ---------------------------------------------------------------------------
-
-def filter_c_offtarget_chrs(
-    is_chimeric: bool,
-    off_target_hits: list[tuple[str, int]],
-) -> list[tuple[str, int]]:
-    """Return the off-target chromosome list for FilterEvidence.
-
-    Pure function — no BLAST, no file I/O. Thin pass-through today; kept as a
-    named helper so that future refactors (Issue #11 M-3 deprecation of
-    ``FilterEvidence.is_chimeric``) can adjust the contract in one place.
-    """
-    # Rule 3 in compute_verdict is driven by ``len(off_target_chrs)``; the
-    # ``is_chimeric`` boolean is retained only for backward compatibility.
-    del is_chimeric  # suppress unused-argument lint; kept for call-site parity
-    return list(off_target_hits)

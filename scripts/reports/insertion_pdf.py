@@ -55,6 +55,16 @@ matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
+# Import the canonical "interesting" verdict set from the verdict module so the
+# PDF renderer stays in sync when compute_verdict's vocabulary evolves.
+try:
+    from scripts.s05.verdict import REPORT_INTERESTING_VERDICTS
+except ImportError:  # pragma: no cover - allow standalone invocation
+    _scripts_dir = Path(__file__).resolve().parents[1]
+    if str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+    from s05.verdict import REPORT_INTERESTING_VERDICTS
+
 
 _SITE_RE = re.compile(r"^Insertion site:\s*(?P<site>.+)$", re.MULTILINE)
 _VERDICT_RE = re.compile(r"^Verdict:\s*(?P<v>[A-Z_]+)", re.MULTILINE)
@@ -386,10 +396,9 @@ def _page_junction_diagram(pdf: PdfPages, rows: list[dict[str, Any]]) -> None:
     genome-scale overview of candidate anchors so reviewers can spot clustering
     and check against known ground-truth (e.g., rice Chr3:16,439,674).
     """
-    # Filter to CANDIDATE / TRUE_INSERTION verdicts — false-positives would
-    # drown out the signal.
-    interesting = {"CANDIDATE", "TRUE_INSERTION"}
-    interesting_rows = [r for r in rows if r["verdict"] in interesting]
+    # Filter to interesting verdicts (imported from scripts.s05.verdict so the
+    # set stays in sync when compute_verdict adds / renames verdict labels).
+    interesting_rows = [r for r in rows if r["verdict"] in REPORT_INTERESTING_VERDICTS]
     anchors = extract_site_anchors(interesting_rows or rows)
 
     fig, ax = plt.subplots(figsize=(8.5, 11))
@@ -461,7 +470,9 @@ def _page_copy_number(pdf: PdfPages, sample_dir: Path) -> None:
                  transform=ax1.transAxes, verticalalignment="top")
         y -= 0.08
 
-    # Bar chart: construct vs host median depth + their ratio.
+    # Bar chart: construct vs host median depth on the primary axis, depth
+    # ratio on a secondary axis. Depth values (20-50 reads) and ratio (0.5-3.0)
+    # are orders of magnitude apart; without twinx() the ratio bar vanishes.
     try:
         cd = float(cn.get("construct_median_depth", 0) or 0)
         hd = float(cn.get("host_median_depth", 0) or 0)
@@ -469,16 +480,26 @@ def _page_copy_number(pdf: PdfPages, sample_dir: Path) -> None:
     except ValueError:
         cd, hd, ratio = 0.0, 0.0, 0.0
 
-    labels = ["Construct median", "Host median", "Depth ratio"]
-    values = [cd, hd, ratio]
-    colors = ["tab:blue", "tab:gray", "tab:red"]
-    bars = ax2.bar(labels, values, color=colors)
-    ax2.set_ylabel("Depth (reads) / Ratio")
+    depth_labels = ["Construct median", "Host median"]
+    depth_values = [cd, hd]
+    x_depth = list(range(len(depth_labels)))
+    bars_depth = ax2.bar(x_depth, depth_values,
+                         color=["tab:blue", "tab:gray"], width=0.6)
+    ax2.set_xticks(x_depth + [len(x_depth)])
+    ax2.set_xticklabels(depth_labels + ["Depth ratio"])
+    ax2.set_ylabel("Depth (reads)")
     ax2.set_title("Construct vs Host Coverage", fontsize=12)
-    for bar, v in zip(bars, values):
+    for bar, v in zip(bars_depth, depth_values):
         ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                  f"{v:.2f}", ha="center", va="bottom", fontsize=10)
     ax2.grid(True, axis="y", linestyle=":", alpha=0.4)
+
+    ax2r = ax2.twinx()
+    bar_ratio = ax2r.bar([len(x_depth)], [ratio], color="tab:red", width=0.6)
+    ax2r.set_ylabel("Depth ratio (construct / host)")
+    for bar in bar_ratio:
+        ax2r.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                  f"{ratio:.2f}", ha="center", va="bottom", fontsize=10)
 
     fig.tight_layout()
     pdf.savefig(fig)

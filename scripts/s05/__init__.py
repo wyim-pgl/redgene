@@ -31,7 +31,12 @@ from .filter_c_chimeric import (  # noqa: F401
     CHIMERIC_MIN_PIDENT,
     CHIMERIC_MIN_OFFTARGET_BP,
     _check_chimeric_assembly,
-    filter_c_offtarget_chrs,
 )
-from .verdict import compute_verdict, FilterEvidence, VerdictRules  # noqa: F401
+from .verdict import (  # noqa: F401
+    compute_verdict,
+    FilterEvidence,
+    VerdictRules,
+    _apply_canonical_override,
+    REPORT_INTERESTING_VERDICTS,
+)
 from .config_loader import load_verdict_rules  # noqa: F401
