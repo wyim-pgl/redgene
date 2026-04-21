@@ -74,3 +74,31 @@ Thumbs.db
 
 # Worktrees
 .worktrees/
+
+# Root-level SLURM JOBID-tagged logs (blast_*, sens_blast_*, gene_blast_*, pilon_ext_*,
+# kmer_ext_*, foreign_asm_*, ins_gene_*, s09_v2_*, etc.)
+/blast_*.log
+/sens_blast_*.log
+/gene_blast_*.log
+/pilon_ext_*.log
+/kmer_ext_*.log
+/foreign_asm_*.log
+/ins_gene_*.log
+/s09_*.log
+
+# sra-tools temp dirs
+/fasterq.tmp.*/
+
+# Ad-hoc analysis intermediates at repo root
+/_tmp_*.fa
+/cucumber_line225_cand_*
+
+# Graphify output (Claude Code skill artifact)
+/graphify-out/
+
+# Legacy analysis dirs kept for reference but not tracked
+/atyucca6_gap_blast/
+/rice_G281_foreign/
+
+# Session-local codex placeholder
+/.codex

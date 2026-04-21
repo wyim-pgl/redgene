@@ -1,0 +1,6 @@
+=== verdict counts ===
+     30 Verdict: UNKNOWN
+     15 Verdict: FALSE_POSITIVE
+=== s04b contigs ===
+filtered: 1345
+unfiltered: no output yet
