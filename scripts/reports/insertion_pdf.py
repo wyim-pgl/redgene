@@ -1,29 +1,47 @@
 #!/usr/bin/env python3
-"""v1.1 PDF insertion report scaffold (Issue #6).
+"""v1.1 PDF insertion report (Issue #6 / R-5).
 
-Generates a 7-section PDF summarizing a single sample's RedGene pipeline
-output. This is a *scaffold*: several sections (junction diagram, CRISPR
-editing) are placeholders that will be fleshed out in v1.1.
+Generates a multi-section PDF summarizing a single sample's RedGene pipeline
+output.  Uses matplotlib's PdfPages backend (``reportlab`` is not available in
+the ``redgene`` micromamba env; we intentionally stay pure-matplotlib).
 
-Sections:
-    (1) Cover page        — sample name, date, audit_header summary
-    (2) Sample summary    — site count, verdict distribution
-    (3) Insertion sites   — tabular view parsed from insertion_*_report.txt
-    (4) Junction diagram  — placeholder ("diagram pending v1.1")
-    (5) Copy number       — optional, shown if results/<sample>/s07_copynumber/ exists
-    (6) CRISPR editing    — placeholder ("pending v1.1")
-    (7) Appendix          — pipeline commit, DB md5s, software versions
+Sections rendered (one page each unless noted):
+    (1) Cover page          — sample name, date, audit_header summary
+    (2) Sample information  — sample_id, host, construct, date
+    (3) Pipeline version    — git commit, dirty flag, software versions
+    (4) Sample summary      — site count, verdict distribution
+    (5) Insertion sites     — paginated table (parsed from
+        insertion_*_report.txt) with verdict / length / structure / elements
+    (6) Junction diagrams   — per-candidate soft-clip anchor markers (one
+        page; sites beyond first N are summarised)
+    (7) Copy number         — matplotlib bar chart if s07_copynumber/
+        copynumber.tsv exists, text block otherwise
+    (8) CRISPR editing      — placeholder ("pending v1.1")
+    (9) Appendix — audit    — pipeline commit, DB md5s, software versions
+    (10) Appendix — CoC     — chain_of_custody.jsonl digest (only rendered
+        when the file is present on disk)
 
-Dependency: matplotlib (already in the `redgene` micromamba env). NO reportlab.
+The module exposes small pure-Python helpers (``load_audit_header``,
+``parse_insertion_reports``, ``summarize``, ``load_copynumber``,
+``load_coc_log``, ``extract_site_anchors``, ``build_sample_info``,
+``build_pipeline_version``) so unit tests can assert each data block
+independently without rendering a PDF.
 
 Usage:
     python scripts/reports/insertion_pdf.py \\
         --sample rice_G281 --sample-dir results/rice_G281 \\
         --out results/rice_G281/rice_G281_insertion_report.pdf
+
+Optional:
+    --config config.yaml       (to look up host / construct references)
+    --host HOST_LABEL          (overrides config)
+    --construct CONSTRUCT_LBL  (overrides config)
 """
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import re
 import sys
@@ -41,6 +59,16 @@ from matplotlib.backends.backend_pdf import PdfPages
 _SITE_RE = re.compile(r"^Insertion site:\s*(?P<site>.+)$", re.MULTILINE)
 _VERDICT_RE = re.compile(r"^Verdict:\s*(?P<v>[A-Z_]+)", re.MULTILINE)
 _LEN_RE = re.compile(r"^Insert length:\s*(?P<len>[\d,]+)\s*bp", re.MULTILINE)
+_STRUCT_RE = re.compile(r"^Structure:\s*(?P<s>.+)$", re.MULTILINE)
+_FOREIGN_BLOCK_RE = re.compile(
+    r"Foreign elements \(not in host genome\):\s*\d+\s*\n"
+    r"(?P<body>(?:\s*[+\-*]\s.+\n?)+)",
+    re.MULTILINE,
+)
+_SITE_ANCHOR_RE = re.compile(
+    r"^Insertion site:\s*(?P<chrom>[^\s:]+):\s*(?P<pos>[\d,]+)",
+    re.MULTILINE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -59,8 +87,30 @@ def load_audit_header(sample_dir: Path) -> dict[str, Any]:
         return {}
 
 
+def _parse_foreign_elements(text: str) -> list[str]:
+    """Return the list of foreign-element names from a report body."""
+    m = _FOREIGN_BLOCK_RE.search(text)
+    if not m:
+        return []
+    out: list[str] = []
+    for line in m.group("body").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # lines look like "  + NODE_2_length_..."
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            out.append(parts[1].strip())
+    return out
+
+
 def parse_insertion_reports(s05_dir: Path) -> list[dict[str, Any]]:
-    """Parse ``insertion_*_report.txt`` into structured rows."""
+    """Parse ``insertion_*_report.txt`` into structured rows.
+
+    Each row has: ``site``, ``verdict``, ``insert_length`` (string, digits+commas
+    as in the source, or ``"—"``), ``structure``, ``elements`` (list[str]),
+    and ``source`` (original filename).
+    """
     s05_dir = Path(s05_dir)
     rows: list[dict[str, Any]] = []
     if not s05_dir.is_dir():
@@ -73,13 +123,38 @@ def parse_insertion_reports(s05_dir: Path) -> list[dict[str, Any]]:
         site = (m := _SITE_RE.search(text)) and m.group("site").strip() or report.stem
         verdict = (m := _VERDICT_RE.search(text)) and m.group("v") or "UNSPECIFIED"
         length = (m := _LEN_RE.search(text)) and m.group("len") or "—"
+        structure = (m := _STRUCT_RE.search(text)) and m.group("s").strip() or ""
+        elements = _parse_foreign_elements(text)
         rows.append({
             "site": site,
             "verdict": verdict,
             "insert_length": length,
+            "structure": structure,
+            "elements": elements,
             "source": report.name,
         })
     return rows
+
+
+def extract_site_anchors(rows: list[dict[str, Any]]) -> list[tuple[str, int]]:
+    """Extract (chrom, pos) anchors from parsed site strings for diagramming.
+
+    The site field looks like ``"Chr3:16,439,674-16,439,709 (35bp deletion)"``
+    or simply ``"Chr10:13500285"``. Rows with unparseable sites are skipped.
+    """
+    anchors: list[tuple[str, int]] = []
+    for r in rows:
+        site = str(r.get("site", ""))
+        m = re.match(r"^([^\s:]+):\s*([\d,]+)", site)
+        if not m:
+            continue
+        chrom = m.group(1)
+        try:
+            pos = int(m.group(2).replace(",", ""))
+        except ValueError:
+            continue
+        anchors.append((chrom, pos))
+    return anchors
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -91,25 +166,114 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def load_copynumber(sample_dir: Path) -> dict[str, Any] | None:
+    """Parse ``s07_copynumber/copynumber.tsv`` into a dict (first data row).
+
+    Returns ``None`` if the file is missing or empty.
+    """
+    path = Path(sample_dir) / "s07_copynumber" / "copynumber.tsv"
+    if not path.exists():
+        return None
+    try:
+        with open(path, newline="") as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            for row in reader:
+                return dict(row)
+    except (OSError, csv.Error):
+        return None
+    return None
+
+
+def load_coc_log(sample_dir: Path) -> list[dict[str, Any]]:
+    """Parse ``chain_of_custody.jsonl`` into a list of JSON entries.
+
+    Missing / unreadable file → empty list.  Malformed individual lines are
+    silently skipped.
+    """
+    path = Path(sample_dir) / "chain_of_custody.jsonl"
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return out
+
+
+def build_sample_info(
+    sample_dir: Path,
+    *,
+    sample_name: str,
+    host: str | None = None,
+    construct: str | None = None,
+) -> dict[str, Any]:
+    """Assemble the sample-information block (section 2)."""
+    audit = load_audit_header(sample_dir)
+    return {
+        "sample": sample_name,
+        "host": host or "(unspecified)",
+        "construct": construct or "(unspecified)",
+        "date": audit.get("generated_at", "—"),
+        "input_sha256": audit.get("input_sha256", {}) or {},
+    }
+
+
+def build_pipeline_version(audit: dict[str, Any]) -> dict[str, Any]:
+    """Assemble the pipeline-version block (section 3)."""
+    return {
+        "pipeline_commit": audit.get("pipeline_commit", "—"),
+        "pipeline_dirty": audit.get("pipeline_dirty", "—"),
+        "software_versions": audit.get("software_versions", {}) or {},
+        "db_manifest": audit.get("db_manifest", []) or [],
+    }
+
+
 # ---------------------------------------------------------------------------
-# PDF rendering
+# PDF rendering primitives
 # ---------------------------------------------------------------------------
 
 
-def _page_text(pdf: PdfPages, title: str, body_lines: list[str]) -> None:
+def _page_text(pdf: PdfPages, title: str, body_lines: list[str],
+               *, line_fontsize: int = 10, family: str = "monospace") -> None:
+    """Render a single-column text page. Lines that overflow are truncated."""
     fig, ax = plt.subplots(figsize=(8.5, 11))
     ax.axis("off")
     ax.text(0.05, 0.95, title, fontsize=18, fontweight="bold",
             transform=ax.transAxes, verticalalignment="top")
     y = 0.88
+    step = 0.022 if line_fontsize <= 9 else 0.025
     for line in body_lines:
-        ax.text(0.05, y, line, fontsize=11, family="monospace",
+        ax.text(0.05, y, line, fontsize=line_fontsize, family=family,
                 transform=ax.transAxes, verticalalignment="top")
-        y -= 0.025
-        if y < 0.05:
+        y -= step
+        if y < 0.04:
             break
     pdf.savefig(fig)
     plt.close(fig)
+
+
+def _paginate(lines: list[str], *, page_lines: int = 38) -> list[list[str]]:
+    """Split body lines into pages of ``page_lines`` each."""
+    pages: list[list[str]] = []
+    if not lines:
+        return [[]]
+    for i in range(0, len(lines), page_lines):
+        pages.append(lines[i:i + page_lines])
+    return pages
+
+
+# ---------------------------------------------------------------------------
+# Section renderers
+# ---------------------------------------------------------------------------
 
 
 def _page_cover(pdf: PdfPages, sample_name: str, audit: dict[str, Any]) -> None:
@@ -125,11 +289,55 @@ def _page_cover(pdf: PdfPages, sample_name: str, audit: dict[str, Any]) -> None:
     lines += ["", "DB manifest:"]
     for db in audit.get("db_manifest", []) or []:
         lines.append(
-            f"  - {db.get('name')} md5={db.get('md5')} built={db.get('build_date')} seqs={db.get('seq_count')}"
+            f"  - {db.get('name')} md5={db.get('md5')} built={db.get('build_date')} "
+            f"seqs={db.get('seq_count')}"
         )
     if not audit:
         lines.append("  (audit_header.json not present — placeholder page)")
     _page_text(pdf, "RedGene Insertion Report", lines)
+
+
+def _page_sample_info(pdf: PdfPages, info: dict[str, Any]) -> None:
+    lines = [
+        f"Sample ID:   {info['sample']}",
+        f"Host:        {info['host']}",
+        f"Construct:   {info['construct']}",
+        f"Generated:   {info['date']}",
+        "",
+        "Input SHA-256:",
+    ]
+    if info.get("input_sha256"):
+        for k, v in info["input_sha256"].items():
+            lines.append(f"  {k}: {v}")
+    else:
+        lines.append("  (no audit_header.json)")
+    _page_text(pdf, "Sample Information", lines)
+
+
+def _page_pipeline_version(pdf: PdfPages, ver: dict[str, Any]) -> None:
+    lines = [
+        f"Pipeline commit: {ver['pipeline_commit']}",
+        f"Working tree dirty: {ver['pipeline_dirty']}",
+        "",
+        "Software versions:",
+    ]
+    sv = ver.get("software_versions") or {}
+    if sv:
+        for k, v in sv.items():
+            # Trim very long version strings to keep layout tidy.
+            v_str = str(v).splitlines()[0][:100]
+            lines.append(f"  {k:<10s}  {v_str}")
+    else:
+        lines.append("  (audit_header.json not present)")
+    lines += ["", "Database manifest:"]
+    for db in ver.get("db_manifest") or []:
+        lines.append(
+            f"  - {db.get('name')} md5={db.get('md5')} "
+            f"built={db.get('build_date')} seqs={db.get('seq_count')}"
+        )
+    if not ver.get("db_manifest"):
+        lines.append("  (none)")
+    _page_text(pdf, "Pipeline Version", lines)
 
 
 def _page_summary(pdf: PdfPages, summary: dict[str, Any]) -> None:
@@ -143,36 +351,145 @@ def _page_summary(pdf: PdfPages, summary: dict[str, Any]) -> None:
     _page_text(pdf, "Sample Summary", lines)
 
 
-def _page_sites_table(pdf: PdfPages, rows: list[dict[str, Any]]) -> None:
-    body = [f"{'site':<44s}  {'verdict':<18s}  {'len_bp':>8s}  source"]
-    body.append("-" * 100)
-    for r in rows[:40]:  # first 40 fit one page; v1.1 adds pagination
-        body.append(
-            f"{r['site']:<44s}  {r['verdict']:<18s}  {r['insert_length']:>8s}  {r['source']}"
-        )
+def _sites_table_rows(rows: list[dict[str, Any]]) -> list[str]:
+    header = (f"{'site':<38s}  {'verdict':<16s}  {'len_bp':>8s}  "
+              f"{'structure':<24s}  elements")
+    out = [header, "-" * 110]
+    for r in rows:
+        site = str(r["site"])[:38]
+        verdict = str(r["verdict"])[:16]
+        length = str(r["insert_length"])[:8]
+        structure = str(r.get("structure", ""))[:24]
+        elts = ",".join(r.get("elements") or [])[:28]
+        out.append(f"{site:<38s}  {verdict:<16s}  {length:>8s}  "
+                   f"{structure:<24s}  {elts}")
     if not rows:
-        body.append("(no insertion reports found)")
-    _page_text(pdf, "Insertion Sites", body)
+        out.append("(no insertion reports found)")
+    return out
+
+
+def _page_sites_table(pdf: PdfPages, rows: list[dict[str, Any]]) -> int:
+    """Render the insertion-sites table, paginating if >40 entries. Returns pages."""
+    lines = _sites_table_rows(rows)
+    pages = _paginate(lines, page_lines=42)
+    for i, chunk in enumerate(pages, start=1):
+        title = "Insertion Sites" if len(pages) == 1 \
+            else f"Insertion Sites ({i}/{len(pages)})"
+        _page_text(pdf, title, chunk, line_fontsize=8)
+    return len(pages)
+
+
+def _page_junction_diagram(pdf: PdfPages, rows: list[dict[str, Any]]) -> None:
+    """Render a simple junction overview: scatter of anchor positions per chrom.
+
+    This is NOT a per-read soft-clip pileup (that needs BAM access); it's a
+    genome-scale overview of candidate anchors so reviewers can spot clustering
+    and check against known ground-truth (e.g., rice Chr3:16,439,674).
+    """
+    # Filter to CANDIDATE / TRUE_INSERTION verdicts — false-positives would
+    # drown out the signal.
+    interesting = {"CANDIDATE", "TRUE_INSERTION"}
+    interesting_rows = [r for r in rows if r["verdict"] in interesting]
+    anchors = extract_site_anchors(interesting_rows or rows)
+
+    fig, ax = plt.subplots(figsize=(8.5, 11))
+    ax.set_title("Junction Diagram — candidate anchor positions",
+                 fontsize=16, fontweight="bold", loc="left")
+
+    if not anchors:
+        ax.text(0.5, 0.5, "No candidate junctions parsed from s05 reports.",
+                ha="center", va="center", fontsize=12, transform=ax.transAxes)
+        ax.axis("off")
+        pdf.savefig(fig)
+        plt.close(fig)
+        return
+
+    chroms = sorted({c for c, _ in anchors})
+    chrom_to_y = {c: i for i, c in enumerate(chroms)}
+
+    for chrom, pos in anchors:
+        y = chrom_to_y[chrom]
+        ax.plot([pos], [y], marker="|", markersize=18,
+                color="tab:red", linestyle="none")
+    ax.set_yticks(list(chrom_to_y.values()))
+    ax.set_yticklabels(chroms, fontsize=9)
+    ax.set_xlabel("Genomic position (bp)")
+    ax.set_ylabel("Chromosome / contig")
+    ax.set_ylim(-1, len(chroms))
+    ax.grid(True, axis="x", linestyle=":", alpha=0.4)
+    ax.ticklabel_format(axis="x", style="plain")
+
+    # Annotate the first few anchors with their coordinate.
+    for chrom, pos in anchors[:8]:
+        y = chrom_to_y[chrom]
+        ax.annotate(f"{pos:,}", xy=(pos, y), xytext=(4, 6),
+                    textcoords="offset points", fontsize=7)
+
+    fig.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
+def _page_copy_number(pdf: PdfPages, sample_dir: Path) -> None:
+    """Render a bar chart from copynumber.tsv, or a placeholder."""
+    cn = load_copynumber(sample_dir)
+    if not cn:
+        _page_text(pdf, "Copy Number", ["(s07_copynumber/copynumber.tsv not present)"])
+        return
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 11),
+                                   gridspec_kw={"height_ratios": [1, 2]})
+    ax1.axis("off")
+    sample = cn.get("sample", "—")
+    desc = cn.get("copy_description", "—")
+    conf = cn.get("confidence", "—")
+    val = cn.get("site_validation", "—")
+    ax1.text(0.0, 0.95, "Copy Number", fontsize=18, fontweight="bold",
+             transform=ax1.transAxes, verticalalignment="top")
+    lines = [
+        f"Sample:            {sample}",
+        f"Description:       {desc}",
+        f"Estimated copies:  {cn.get('estimated_copies', '—')}",
+        f"Depth ratio:       {cn.get('depth_ratio', '—')}",
+        f"Candidate sites:   {cn.get('candidate_sites', '—')}",
+        f"Site validation:   {val}",
+        f"Confidence:        {conf}",
+    ]
+    y = 0.80
+    for line in lines:
+        ax1.text(0.02, y, line, fontsize=11, family="monospace",
+                 transform=ax1.transAxes, verticalalignment="top")
+        y -= 0.08
+
+    # Bar chart: construct vs host median depth + their ratio.
+    try:
+        cd = float(cn.get("construct_median_depth", 0) or 0)
+        hd = float(cn.get("host_median_depth", 0) or 0)
+        ratio = float(cn.get("depth_ratio", 0) or 0)
+    except ValueError:
+        cd, hd, ratio = 0.0, 0.0, 0.0
+
+    labels = ["Construct median", "Host median", "Depth ratio"]
+    values = [cd, hd, ratio]
+    colors = ["tab:blue", "tab:gray", "tab:red"]
+    bars = ax2.bar(labels, values, color=colors)
+    ax2.set_ylabel("Depth (reads) / Ratio")
+    ax2.set_title("Construct vs Host Coverage", fontsize=12)
+    for bar, v in zip(bars, values):
+        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                 f"{v:.2f}", ha="center", va="bottom", fontsize=10)
+    ax2.grid(True, axis="y", linestyle=":", alpha=0.4)
+
+    fig.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
 
 
 def _page_placeholder(pdf: PdfPages, title: str, note: str) -> None:
     _page_text(pdf, title, [note, "", "(scaffold — to be wired in v1.1)"])
 
 
-def _page_copy_number(pdf: PdfPages, sample_dir: Path) -> None:
-    s07 = Path(sample_dir) / "s07_copynumber"
-    lines: list[str] = []
-    if s07.is_dir():
-        tsvs = sorted(s07.glob("*.tsv"))
-        lines.append(f"s07_copynumber/ TSVs: {len(tsvs)}")
-        for t in tsvs[:5]:
-            lines.append(f"  - {t.name}")
-    else:
-        lines.append("(s07_copynumber/ not present — placeholder)")
-    _page_text(pdf, "Copy Number", lines)
-
-
-def _page_appendix(pdf: PdfPages, audit: dict[str, Any]) -> None:
+def _page_appendix_audit(pdf: PdfPages, audit: dict[str, Any]) -> None:
     lines = [
         f"Pipeline commit: {audit.get('pipeline_commit', '—')}",
         f"Dirty: {audit.get('pipeline_dirty', '—')}",
@@ -180,13 +497,52 @@ def _page_appendix(pdf: PdfPages, audit: dict[str, Any]) -> None:
         "Software versions:",
     ]
     for k, v in (audit.get("software_versions") or {}).items():
-        lines.append(f"  {k}: {v}")
-    lines += ["", "DB md5:"]
+        v_str = str(v).splitlines()[0][:100]
+        lines.append(f"  {k:<10s}  {v_str}")
+    lines += ["", "DB manifest:"]
     for db in audit.get("db_manifest", []) or []:
-        lines.append(f"  {db.get('name')}: {db.get('md5')}")
+        lines.append(
+            f"  - {db.get('name')} md5={db.get('md5')} "
+            f"built={db.get('build_date')} seqs={db.get('seq_count')}"
+        )
     if not audit:
         lines.append("(audit_header.json absent — appendix placeholder)")
-    _page_text(pdf, "Appendix", lines)
+    _page_text(pdf, "Appendix A — Audit Header", lines)
+
+
+def _page_appendix_coc(pdf: PdfPages, entries: list[dict[str, Any]]) -> int:
+    """Render the chain-of-custody log digest.
+
+    Each entry is summarised to one line; long logs paginate. Returns number of
+    pages emitted (0 if the log is empty / absent).
+    """
+    if not entries:
+        return 0
+    body = ["event  step    ts                                  extra"]
+    body.append("-" * 110)
+    for e in entries:
+        event = str(e.get("event", "—"))[:6]
+        step = str(e.get("step", "—"))[:6]
+        ts = str(e.get("ts", "—"))[:30]
+        extra_bits = []
+        if "exit_code" in e:
+            extra_bits.append(f"exit={e['exit_code']}")
+        if "wall_time_sec" in e:
+            extra_bits.append(f"wall={e['wall_time_sec']}s")
+        if "cmd" in e:
+            extra_bits.append("cmd=" + str(e["cmd"])[:60])
+        body.append(f"{event:<6s} {step:<6s} {ts:<32s}  " + " ".join(extra_bits))
+    pages = _paginate(body, page_lines=44)
+    for i, chunk in enumerate(pages, start=1):
+        title = "Appendix B — Chain of Custody" if len(pages) == 1 \
+            else f"Appendix B — Chain of Custody ({i}/{len(pages)})"
+        _page_text(pdf, title, chunk, line_fontsize=7)
+    return len(pages)
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point
+# ---------------------------------------------------------------------------
 
 
 def generate_pdf(
@@ -194,8 +550,10 @@ def generate_pdf(
     sample_dir: Path,
     sample_name: str,
     out_pdf: Path,
+    host: str | None = None,
+    construct: str | None = None,
 ) -> int:
-    """Render the 7-section PDF. Returns the number of pages written."""
+    """Render the full PDF. Returns the number of pages written."""
     sample_dir = Path(sample_dir)
     out_pdf = Path(out_pdf)
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -203,35 +561,91 @@ def generate_pdf(
     audit = load_audit_header(sample_dir)
     rows = parse_insertion_reports(sample_dir / "s05_insert_assembly")
     summary = summarize(rows)
+    sample_info = build_sample_info(sample_dir, sample_name=sample_name,
+                                    host=host, construct=construct)
+    pipeline_ver = build_pipeline_version(audit)
+    coc_entries = load_coc_log(sample_dir)
 
     pages = 0
     with PdfPages(out_pdf) as pdf:
-        _page_cover(pdf, sample_name, audit); pages += 1              # (1)
-        _page_summary(pdf, summary); pages += 1                        # (2)
-        _page_sites_table(pdf, rows); pages += 1                       # (3)
-        _page_placeholder(pdf, "Junction Diagram",
-                          "diagram pending v1.1"); pages += 1          # (4)
-        _page_copy_number(pdf, sample_dir); pages += 1                 # (5)
+        _page_cover(pdf, sample_name, audit); pages += 1                # (1)
+        _page_sample_info(pdf, sample_info); pages += 1                 # (2)
+        _page_pipeline_version(pdf, pipeline_ver); pages += 1           # (3)
+        _page_summary(pdf, summary); pages += 1                         # (4)
+        pages += _page_sites_table(pdf, rows)                           # (5)
+        _page_junction_diagram(pdf, rows); pages += 1                   # (6)
+        _page_copy_number(pdf, sample_dir); pages += 1                  # (7)
         _page_placeholder(pdf, "CRISPR Editing",
-                          "editing panel pending v1.1"); pages += 1    # (6)
-        _page_appendix(pdf, audit); pages += 1                         # (7)
+                          "editing panel pending v1.1"); pages += 1     # (8)
+        _page_appendix_audit(pdf, audit); pages += 1                    # (9)
+        pages += _page_appendix_coc(pdf, coc_entries)                   # (10, opt)
     return pages
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def _resolve_host_construct_from_config(
+    config_path: Path | None, sample_key: str
+) -> tuple[str | None, str | None]:
+    """Look up host_reference / construct_reference names from config.yaml."""
+    if config_path is None or not Path(config_path).exists():
+        return None, None
+    try:
+        import yaml  # local import; optional
+    except Exception:  # pragma: no cover
+        return None, None
+    try:
+        cfg = yaml.safe_load(Path(config_path).read_text()) or {}
+    except Exception:  # pragma: no cover
+        return None, None
+    samples = cfg.get("samples", {}) or {}
+    entry = samples.get(sample_key) or {}
+    host = entry.get("host_reference")
+    construct = entry.get("construct_reference")
+    # Use just the filename stem for readability.
+    if host:
+        host = Path(host).name
+    if construct:
+        construct = Path(construct).name
+    return host, construct
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--sample", required=True, help="Sample name (for page titles)")
+    p.add_argument("--sample", required=False, default=None,
+                   help="Sample name (for page titles). Defaults to --sample-dir basename.")
     p.add_argument("--sample-dir", type=Path, required=True,
                    help="results/<sample>/ directory")
     p.add_argument("--out", type=Path, required=True,
                    help="Output PDF path (parent directory auto-created)")
+    p.add_argument("--config", type=Path, default=None,
+                   help="Optional path to config.yaml for host/construct lookup")
+    p.add_argument("--host", type=str, default=None,
+                   help="Override the host label in the sample-info section")
+    p.add_argument("--construct", type=str, default=None,
+                   help="Override the construct label in the sample-info section")
     args = p.parse_args(argv)
+
+    sample_name = args.sample or args.sample_dir.name
+    host = args.host
+    construct = args.construct
+    if (host is None or construct is None) and args.config is not None:
+        cfg_host, cfg_construct = _resolve_host_construct_from_config(
+            args.config, sample_name
+        )
+        host = host or cfg_host
+        construct = construct or cfg_construct
 
     n = generate_pdf(
         sample_dir=args.sample_dir,
-        sample_name=args.sample,
+        sample_name=sample_name,
         out_pdf=args.out,
+        host=host,
+        construct=construct,
     )
     print(f"[insertion-pdf] wrote {n} pages → {args.out}", file=sys.stderr)
     return 0

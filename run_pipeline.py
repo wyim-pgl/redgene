@@ -45,6 +45,7 @@ STEP_SCRIPTS: dict[str, str] = {
     "5": "scripts/s05_insert_assembly.py",
     "6": "scripts/s06_indel.py",
     "7": "scripts/s07_copynumber.py",
+    "8": "scripts/reports/insertion_pdf.py",
 }
 
 STEP_NAMES: dict[str, str] = {
@@ -56,11 +57,12 @@ STEP_NAMES: dict[str, str] = {
     "5": "Targeted insert assembly + FP filtering",
     "6": "CRISPR indel detection (treatment vs WT)",
     "7": "Copy number estimation",
+    "8": "PDF insertion report (Issue #6 R-5)",
 }
 
 # Canonical execution order for steps. Used to expand ranges and to sort
 # parsed steps. `4b` slots between `4` and `5` so `--steps 1-5` includes it.
-STEP_ORDER: list[str] = ["1", "2", "3", "4", "4b", "5", "6", "7"]
+STEP_ORDER: list[str] = ["1", "2", "3", "4", "4b", "5", "6", "7", "8"]
 STEP_INDEX: dict[str, int] = {s: i for i, s in enumerate(STEP_ORDER)}
 
 # ---------------------------------------------------------------------------
@@ -329,6 +331,20 @@ def build_step_cmd(
         if s05_stats.exists():
             cmd.extend(["--site-stats", str(s05_stats)])
         return cmd
+    elif step == "8":
+        # Issue #6 R-5 — PDF insertion report. Consumes everything that's
+        # already on disk under results/<sample>/ so it is always safe to
+        # re-run with just "--steps 8".
+        sample_dir = outdir / sname
+        out_pdf = sample_dir / f"{sname}_insertion_report.pdf"
+        cmd = [sys.executable, script,
+               "--sample", sname,
+               "--sample-dir", str(sample_dir),
+               "--out", str(out_pdf),
+               "--config", str(base_dir / "config.yaml"),
+               "--host", Path(host_ref).name,
+               "--construct", Path(construct_ref).name]
+        return cmd
     else:
         sys.exit(f"ERROR: No command builder for step {step}")
 
@@ -385,6 +401,10 @@ def _step_input_files(
             s02 / f"{sname}_construct.bam",
             s04 / f"{sname}_host.bam",
         ]
+    elif step == "8":
+        # PDF report consumes s05 reports + audit_header; hash the audit header
+        # (representative pointer into the run's audit trail).
+        candidates = [outdir / sname / "audit_header.json"]
 
     return [p for p in candidates if p.exists()]
 
@@ -429,6 +449,8 @@ def _step_output_files(
         candidates = [s06 / "editing_sites.tsv"]
     elif step == "7":
         candidates = [s07 / "copy_number.tsv"]
+    elif step == "8":
+        candidates = [outdir / sname / f"{sname}_insertion_report.pdf"]
 
     return [p for p in candidates if p.exists()]
 
