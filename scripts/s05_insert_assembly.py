@@ -36,25 +36,45 @@ import shutil
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import pysam
 
 # Local sub-modules (Issue #3 full wire-in: compute_verdict + FilterEvidence).
+# Session 1 of Issue #4 also re-imports primitives (log, revcomp, dataclasses,
+# FASTA/FASTQ helpers) from scripts.s05.primitives so downstream submodules
+# share a single definition without cycling back through this entrypoint.
 try:
     from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
     from s05.config_loader import load_verdict_rules
+    from s05.primitives import (
+        STEP,
+        log,
+        revcomp,
+        read_fasta,
+        write_fasta,
+        _read_fq_seqs,
+        JunctionCluster,
+        InsertionSite,
+        LegacyJunction,
+        TierResult,
+    )
 except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
     from s05.config_loader import load_verdict_rules
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
-STEP = "s05_insert_assembly"
+    from s05.primitives import (
+        STEP,
+        log,
+        revcomp,
+        read_fasta,
+        write_fasta,
+        _read_fq_seqs,
+        JunctionCluster,
+        InsertionSite,
+        LegacyJunction,
+        TierResult,
+    )
 
 # ---------------------------------------------------------------------------
 # Host-endogenous exclusion thresholds (used in classify_site_tiers)
@@ -120,10 +140,6 @@ UNKNOWN_HOST_MIN_FRACTION = 0.85   # min host fraction to classify as host-only
 UNKNOWN_MAX_CONSTRUCT_FRAC = 0.05  # max construct fraction for host-only
 
 
-def log(msg: str) -> None:
-    print(f"[{STEP}] {msg}", file=sys.stderr, flush=True)
-
-
 def _apply_canonical_override(
     verdict: str,
     reason: str,
@@ -156,111 +172,11 @@ def _apply_canonical_override(
 
 
 # ---------------------------------------------------------------------------
-# Reverse complement
+# Primitives moved to scripts/s05/primitives.py (Issue #4 Session 1).
+# ``revcomp``, ``read_fasta``, ``write_fasta``, ``_read_fq_seqs``, and the four
+# dataclasses (JunctionCluster, InsertionSite, LegacyJunction, TierResult) are
+# imported at the top of this module and re-exported below for test back-compat.
 # ---------------------------------------------------------------------------
-
-_COMP = str.maketrans("ACGTacgt", "TGCAtgca")
-
-
-def revcomp(seq: str) -> str:
-    return seq.translate(_COMP)[::-1]
-
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
-@dataclass
-class JunctionCluster:
-    """A cluster of soft-clipped reads at a genomic position."""
-    host_chr: str
-    position: int           # median position of cluster
-    clip_direction: str     # 'right' (fwd read 3' clip) or 'left' (rev read 5' clip)
-    clipped_seqs: list[str] = field(default_factory=list)
-    consensus_clip: str = ""
-    n_reads: int = 0
-    maps_to_host: bool = False
-    element_hits: list[str] = field(default_factory=list)
-
-
-@dataclass
-class InsertionSite:
-    """An insertion site with paired 5'/3' junction clusters."""
-    site_id: str
-    host_chr: str
-    junction_5p: JunctionCluster | None = None  # forward reads clipped on right
-    junction_3p: JunctionCluster | None = None  # reverse reads clipped on left
-    confidence: str = "low"
-    seed_5p: str = ""       # consensus clip from 5' junction (insert start)
-    seed_3p: str = ""       # consensus clip from 3' junction (insert end)
-    is_validated: bool = False
-
-    # Validation details
-    clips_are_different: bool = False
-    clips_not_in_host: bool = False
-    has_element_hits: bool = False
-
-    # Positions for read extraction
-    pos_5p: int = 0
-    pos_3p: int = 0
-
-
-@dataclass
-class LegacyJunction:
-    """Junction from step 6 junctions.tsv (fallback mode)."""
-    contig_name: str
-    contig_len: int
-    host_chr: str
-    host_start: int
-    host_end: int
-    host_strand: str
-    construct_element: str
-    construct_start: int
-    construct_end: int
-    junction_pos_host: int
-    junction_type: str
-    confidence: str
-    host_mapq: int
-
-
-# ---------------------------------------------------------------------------
-# FASTA I/O
-# ---------------------------------------------------------------------------
-
-def read_fasta(path: Path) -> dict[str, str]:
-    seqs: dict[str, str] = {}
-    name = ""
-    parts: list[str] = []
-    with open(path) as fh:
-        for line in fh:
-            line = line.rstrip()
-            if line.startswith(">"):
-                if name:
-                    seqs[name] = "".join(parts)
-                name = line[1:].split()[0]
-                parts = []
-            else:
-                parts.append(line)
-    if name:
-        seqs[name] = "".join(parts)
-    return seqs
-
-
-def write_fasta(path: Path, name: str, seq: str, wrap: int = 80) -> None:
-    with open(path, "w") as fh:
-        fh.write(f">{name}\n")
-        for i in range(0, len(seq), wrap):
-            fh.write(seq[i:i + wrap] + "\n")
-
-
-def _read_fq_seqs(path: Path) -> list[str]:
-    opener = gzip.open if str(path).endswith(".gz") else open
-    seqs: list[str] = []
-    with opener(path, "rt") as fh:
-        for i, line in enumerate(fh):
-            if i % 4 == 1:
-                seqs.append(line.strip().upper())
-    return seqs
 
 
 # ---------------------------------------------------------------------------
@@ -856,24 +772,9 @@ def _apply_mask_bed(sites: list, bed_path: Path) -> list:
 # cultivar reference), ask "is this clip from a transgene?"
 # Uses blastn-short against transgene_db (element DB + UniVec vectors).
 # Any transgene hit = assembly target. No hit = skip.
-
-@dataclass
-class TierResult:
-    """Classification result for one insertion site."""
-    site_id: str
-    chrom: str = ""
-    pos: int = 0
-    transgene_positive: bool = False
-    clip_5p_len: int = 0
-    clip_3p_len: int = 0
-    hit_5p: str = ""            # best transgene_db hit for 5p clip
-    hit_5p_identity: float = 0
-    hit_5p_aln_len: int = 0
-    hit_5p_source: str = ""     # "element_db" or "univec"
-    hit_3p: str = ""
-    hit_3p_identity: float = 0
-    hit_3p_aln_len: int = 0
-    hit_3p_source: str = ""
+#
+# NOTE: TierResult dataclass moved to scripts/s05/primitives.py
+# (Issue #4 Session 1) and re-imported at the top of this module.
 
 
 def _filter_host_endogenous(
