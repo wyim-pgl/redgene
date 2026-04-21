@@ -59,6 +59,13 @@ try:
         LegacyJunction,
         TierResult,
     )
+    from s05.filter_b_flank import (
+        CONSTRUCT_FLANK_PIDENT,
+        CONSTRUCT_FLANK_MIN_LEN,
+        CONSTRUCT_FLANK_SLOP,
+        _find_construct_flanking_regions,
+        _site_overlaps_flanking,
+    )
 except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
@@ -74,6 +81,13 @@ except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_i
         InsertionSite,
         LegacyJunction,
         TierResult,
+    )
+    from s05.filter_b_flank import (
+        CONSTRUCT_FLANK_PIDENT,
+        CONSTRUCT_FLANK_MIN_LEN,
+        CONSTRUCT_FLANK_SLOP,
+        _find_construct_flanking_regions,
+        _site_overlaps_flanking,
     )
 
 # ---------------------------------------------------------------------------
@@ -107,12 +121,9 @@ INSERT_HOST_FRACTION = 0.80     # host coverage threshold
 INSERT_MIN_FOREIGN_GAP = 500    # non-host gap must be ≥ this to be real T-DNA
 INSERT_HOST_MIN_PIDENT = 90.0   # min identity for host alignment to count
 
-# Construct-flanking filter: if a construct reference entry contains host
-# genomic DNA at its ends (common when constructs are cloned with flanking),
-# sites at those host coordinates are false detections.
-CONSTRUCT_FLANK_PIDENT = 95.0   # min identity for construct→host flanking hit
-CONSTRUCT_FLANK_MIN_LEN = 50    # min alignment length
-CONSTRUCT_FLANK_SLOP = 500      # bp slop when checking site overlap
+# Construct-flanking filter constants (CONSTRUCT_FLANK_PIDENT, _MIN_LEN, _SLOP)
+# moved to scripts/s05/filter_b_flank.py (Issue #4 Session 1) and re-imported
+# at the top of this module for backward compatibility.
 
 # Multi-locus chimeric filter: if an assembled insert's host-aligned portions
 # map to ≥2 different chromosomes (besides the site's own), the assembly
@@ -3061,86 +3072,9 @@ def annotate_insert(
 # ---------------------------------------------------------------------------
 # Post-assembly host-fraction filter
 # ---------------------------------------------------------------------------
-
-def _find_construct_flanking_regions(
-    construct_ref: Path,
-    host_ref: Path,
-    workdir: Path,
-    threads: int = 4,
-) -> list[tuple[str, int, int]]:
-    """BLAST construct reference vs host to find host-flanking regions.
-
-    Some construct references include host genomic flanking DNA at their ends
-    (e.g., rice_G281 has 201bp of Chr11 at positions 8758-8958).  Soft-clip
-    sites at these host coordinates are false detections.
-
-    Returns list of (host_chr, start, end) tuples for flanking regions.
-    """
-    if not construct_ref.exists():
-        return []
-
-    blast_out = workdir / "_construct_vs_host_flanking.tsv"
-    result = subprocess.run(
-        ["blastn", "-task", "megablast",
-         "-query", str(construct_ref), "-db", str(host_ref),
-         "-outfmt", "6 qseqid qlen qstart qend sseqid sstart send pident length",
-         "-evalue", "1e-20", "-max_target_seqs", "5",
-         "-num_threads", str(threads),
-         "-out", str(blast_out)],
-        stderr=subprocess.DEVNULL,
-    )
-    if result.returncode != 0 or not blast_out.exists():
-        return []
-
-    flanking: list[tuple[str, int, int]] = []
-    with open(blast_out) as fh:
-        for line in fh:
-            cols = line.strip().split("\t")
-            if len(cols) < 9:
-                continue
-            qlen = int(cols[1])
-            q_start = int(cols[2])
-            q_end = int(cols[3])
-            s_chr = cols[4]
-            s_start = int(cols[5])
-            s_end = int(cols[6])
-            pident = float(cols[7])
-            aln_len = int(cols[8])
-
-            if pident < CONSTRUCT_FLANK_PIDENT or aln_len < CONSTRUCT_FLANK_MIN_LEN:
-                continue
-
-            # Only count hits near the ends of a construct entry (flanking),
-            # not internal matches (e.g., host-derived promoters handled
-            # separately by _filter_host_endogenous).
-            near_start = q_start <= 100
-            near_end = q_end >= qlen - 100
-            if not (near_start or near_end):
-                continue
-
-            lo = min(s_start, s_end)
-            hi = max(s_start, s_end)
-            flanking.append((s_chr, lo, hi))
-
-    if flanking:
-        log(f"  Construct-flanking regions found: {len(flanking)}")
-        for chrom, lo, hi in flanking:
-            log(f"    {chrom}:{lo:,}-{hi:,} ({hi - lo + 1}bp)")
-
-    return flanking
-
-
-def _site_overlaps_flanking(
-    site_chr: str,
-    site_pos: int,
-    flanking_regions: list[tuple[str, int, int]],
-    slop: int = CONSTRUCT_FLANK_SLOP,
-) -> tuple[bool, str]:
-    """Check if a detection site overlaps a construct-flanking host region."""
-    for chrom, lo, hi in flanking_regions:
-        if chrom == site_chr and lo - slop <= site_pos <= hi + slop:
-            return True, f"{chrom}:{lo:,}-{hi:,}"
-    return False, ""
+# Filter B helpers (_find_construct_flanking_regions, _site_overlaps_flanking)
+# moved to scripts/s05/filter_b_flank.py (Issue #4 Session 1) and re-imported
+# at the top of this module for backward compatibility with existing callers.
 
 
 def _check_chimeric_assembly(

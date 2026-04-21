@@ -19,5 +19,13 @@ from .primitives import (  # noqa: F401
     LegacyJunction,
     TierResult,
 )
+from .filter_b_flank import (  # noqa: F401
+    CONSTRUCT_FLANK_PIDENT,
+    CONSTRUCT_FLANK_MIN_LEN,
+    CONSTRUCT_FLANK_SLOP,
+    _find_construct_flanking_regions,
+    _site_overlaps_flanking,
+    filter_b_flanking_hit,
+)
 from .verdict import compute_verdict, FilterEvidence, VerdictRules  # noqa: F401
 from .config_loader import load_verdict_rules  # noqa: F401
