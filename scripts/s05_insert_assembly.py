@@ -66,6 +66,11 @@ try:
         _find_construct_flanking_regions,
         _site_overlaps_flanking,
     )
+    from s05.filter_c_chimeric import (
+        CHIMERIC_MIN_PIDENT,
+        CHIMERIC_MIN_OFFTARGET_BP,
+        _check_chimeric_assembly,
+    )
 except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from s05.verdict import VerdictRules, FilterEvidence, compute_verdict
@@ -88,6 +93,11 @@ except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_i
         CONSTRUCT_FLANK_SLOP,
         _find_construct_flanking_regions,
         _site_overlaps_flanking,
+    )
+    from s05.filter_c_chimeric import (
+        CHIMERIC_MIN_PIDENT,
+        CHIMERIC_MIN_OFFTARGET_BP,
+        _check_chimeric_assembly,
     )
 
 # ---------------------------------------------------------------------------
@@ -125,13 +135,10 @@ INSERT_HOST_MIN_PIDENT = 90.0   # min identity for host alignment to count
 # moved to scripts/s05/filter_b_flank.py (Issue #4 Session 1) and re-imported
 # at the top of this module for backward compatibility.
 
-# Multi-locus chimeric filter: if an assembled insert's host-aligned portions
-# map to ≥2 different chromosomes (besides the site's own), the assembly
-# merged reads from unrelated loci sharing element homology.
-# Uses strict identity (≥98%) to distinguish actual chimeric DNA pieces from
-# low-level element homologies (e.g., 35S promoter paralogs at 80-90%).
-CHIMERIC_MIN_PIDENT = 98.0      # strict identity for chimeric detection
-CHIMERIC_MIN_OFFTARGET_BP = 150 # min bp on off-target chromosome to count
+# Multi-locus chimeric filter constants (CHIMERIC_MIN_PIDENT,
+# CHIMERIC_MIN_OFFTARGET_BP) moved to scripts/s05/filter_c_chimeric.py
+# (Issue #4 Session 1) and re-imported at the top of this module for
+# backward compatibility.
 
 # Filter D: Construct-host coverage — if the assembled insert is fully
 # explained by construct + host sequences (high combined coverage) AND the
@@ -3077,55 +3084,9 @@ def annotate_insert(
 # at the top of this module for backward compatibility with existing callers.
 
 
-def _check_chimeric_assembly(
-    insert_fasta: Path,
-    host_ref: Path,
-    site_chr: str,
-    workdir: Path,
-    threads: int = 4,
-) -> tuple[bool, list[tuple[str, int]]]:
-    """Check if assembled insert contains DNA from multiple host chromosomes.
-
-    Returns (is_chimeric, off_target_hits) where off_target_hits is a list of
-    (chromosome, aligned_bp) for chromosomes other than site_chr.
-    """
-    blast_out = workdir / f"_{insert_fasta.stem}_vs_host_chrom.tsv"
-    # Reuse existing BLAST output if available (from _blast_insert_vs_host)
-    if not blast_out.exists():
-        result = subprocess.run(
-            ["blastn", "-task", "megablast",
-             "-query", str(insert_fasta), "-db", str(host_ref),
-             "-outfmt", "6 qseqid qstart qend sseqid pident length",
-             "-evalue", "1e-10", "-max_target_seqs", "10",
-             "-num_threads", str(threads),
-             "-out", str(blast_out)],
-            stderr=subprocess.DEVNULL,
-        )
-        if result.returncode != 0 or not blast_out.exists():
-            return False, []
-
-    # Accumulate aligned bp per chromosome (strict identity to avoid
-    # counting element-level homologies as chimeric evidence)
-    chr_bp: dict[str, int] = defaultdict(int)
-    with open(blast_out) as fh:
-        for line in fh:
-            cols = line.strip().split("\t")
-            if len(cols) < 6:
-                continue
-            s_chr = cols[3]
-            pident = float(cols[4])
-            aln_len = int(cols[5])
-            if pident >= CHIMERIC_MIN_PIDENT:
-                chr_bp[s_chr] += aln_len
-
-    # Find off-target chromosomes with significant coverage
-    off_target: list[tuple[str, int]] = []
-    for chrom, bp in sorted(chr_bp.items(), key=lambda x: -x[1]):
-        if chrom != site_chr and bp >= CHIMERIC_MIN_OFFTARGET_BP:
-            off_target.append((chrom, bp))
-
-    is_chimeric = len(off_target) >= 2
-    return is_chimeric, off_target
+# _check_chimeric_assembly moved to scripts/s05/filter_c_chimeric.py
+# (Issue #4 Session 1) and re-imported at the top of this module for
+# backward compatibility with existing callers.
 
 
 def _check_construct_host_coverage(
