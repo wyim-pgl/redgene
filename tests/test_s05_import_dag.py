@@ -60,7 +60,7 @@ STAGE: dict[str, int] = {
     "site_discovery": 1,
     "classify": 1,
     "read_extraction": 2,
-    "per_site": 2,           # legacy shim; same stage as read_extraction (renames in Session 5)
+    "per_site": 3,           # Session 4: now sources assemble_insert from .assembly (stage 3)
     "assembly": 3,
     "annotation": 4,
     "annotate_report": 4,    # legacy shim; same stage as annotation (retired in Session 7)

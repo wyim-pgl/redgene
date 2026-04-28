@@ -11,6 +11,10 @@ filter modules.
 Session 3 (2026-04-28) added ``annotation`` (Phase 4 BLAST-driven
 element annotation), retiring the ``annotate_report.py`` shim's
 re-export of ``annotate_insert``.
+Session 4 (2026-04-28) added ``assembly`` (Phase 3 k-mer extension +
+Pilon gap fill + minimap2/SSAKE refinement), the highest-risk extraction
+in the s05 split. ``per_site.py`` shim updated to source
+``assemble_insert`` / ``refine_with_foreign_reads`` from ``.assembly``.
 """
 from .primitives import (  # noqa: F401
     STEP,
@@ -63,3 +67,12 @@ from .verdict import (  # noqa: F401
     REPORT_INTERESTING_VERDICTS,
 )
 from .config_loader import load_verdict_rules  # noqa: F401
+from .assembly import (  # noqa: F401
+    StrandAwareSeedExtender,
+    assemble_insert,
+    check_host_termination,
+    extract_foreign_reads,
+    pilon_fill,
+    recruit_by_kmer,
+    refine_with_foreign_reads,
+)
