@@ -75,6 +75,12 @@ try:
         INSERT_HOST_MIN_PIDENT,
         _blast_insert_vs_host,
     )
+    from s05.filter_d_altlocus import (
+        CONSTRUCT_HOST_MIN_COMBINED,
+        CONSTRUCT_MIN_FRACTION,
+        CONSTRUCT_HOST_MIN_PIDENT,
+        _check_construct_host_coverage,
+    )
 except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from s05.verdict import VerdictRules, FilterEvidence, compute_verdict, _apply_canonical_override
@@ -106,6 +112,12 @@ except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_i
     from s05.filter_a_host import (
         INSERT_HOST_MIN_PIDENT,
         _blast_insert_vs_host,
+    )
+    from s05.filter_d_altlocus import (
+        CONSTRUCT_HOST_MIN_COMBINED,
+        CONSTRUCT_MIN_FRACTION,
+        CONSTRUCT_HOST_MIN_PIDENT,
+        _check_construct_host_coverage,
     )
 
 # ---------------------------------------------------------------------------
@@ -149,16 +161,9 @@ INSERT_MIN_FOREIGN_GAP = 500    # non-host gap must be ≥ this to be real T-DNA
 # (Issue #4 Session 1) and re-imported at the top of this module for
 # backward compatibility.
 
-# Filter D: Construct-host coverage — if the assembled insert is fully
-# explained by construct + host sequences (high combined coverage) AND the
-# construct portion is large (≥30%), the insert is host genomic DNA with
-# construct-element homology, not a real T-DNA insertion.
-# Real T-DNA inserts have low construct coverage (~10%) because only border
-# regions match; FPs have high construct coverage (~50%) because the insert
-# IS the construct fragment.
-CONSTRUCT_HOST_MIN_COMBINED = 0.85  # min combined coverage (construct + host)
-CONSTRUCT_MIN_FRACTION = 0.25       # min construct coverage to suspect FP
-CONSTRUCT_HOST_MIN_PIDENT = 80.0    # identity threshold for construct BLAST
+# (Filter D constants CONSTRUCT_HOST_MIN_COMBINED, CONSTRUCT_MIN_FRACTION,
+# CONSTRUCT_HOST_MIN_PIDENT moved to scripts/s05/filter_d_altlocus.py,
+# Issue #4 Session 2, and re-imported at the top of this module.)
 
 # UNKNOWN → FALSE_POSITIVE auto-reclassification: if insert has no element
 # annotations but is mostly host DNA with negligible construct match,
@@ -3071,70 +3076,9 @@ def annotate_insert(
 # backward compatibility with existing callers.
 
 
-def _check_construct_host_coverage(
-    insert_fasta: Path,
-    element_db: Path,
-    host_fraction: float,
-    host_bp: int,
-    insert_len: int,
-    n_count: int,
-    workdir: Path,
-    threads: int = 4,
-) -> tuple[bool, float, float, float]:
-    """Check if insert is fully explained by construct + host coverage.
-
-    Real T-DNA inserts have low construct coverage (~10%, only border regions).
-    False positives from construct-element homology have high construct
-    coverage (~50%, the insert IS the construct fragment).
-
-    Returns (is_fp, construct_frac, host_frac, combined_frac).
-    """
-    eff_len = insert_len - n_count
-    if eff_len <= 0:
-        return False, 0.0, 0.0, 0.0
-
-    # BLAST insert vs construct/element_db
-    blast_out = workdir / f"_{insert_fasta.stem}_vs_construct.tsv"
-    result = subprocess.run(
-        ["blastn", "-task", "megablast",
-         "-query", str(insert_fasta), "-subject", str(element_db),
-         "-outfmt", "6 qstart qend pident",
-         "-evalue", "1e-5"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-    )
-    if result.returncode != 0:
-        return False, 0.0, 0.0, 0.0
-
-    # Merge overlapping intervals at >= threshold identity
-    intervals: list[tuple[int, int]] = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        cols = line.split("\t")
-        qs, qe, pid = int(cols[0]), int(cols[1]), float(cols[2])
-        if pid >= CONSTRUCT_HOST_MIN_PIDENT:
-            intervals.append((min(qs, qe), max(qs, qe)))
-
-    if not intervals:
-        return False, 0.0, host_fraction, host_fraction
-
-    intervals.sort()
-    merged: list[tuple[int, int]] = []
-    for s, e in intervals:
-        if merged and s <= merged[-1][1] + 1:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
-        else:
-            merged.append((s, e))
-
-    construct_bp = sum(e - s + 1 for s, e in merged)
-    construct_frac = construct_bp / eff_len
-    combined_frac = min(1.0, (construct_bp + host_bp) / eff_len)
-
-    is_fp = (construct_frac >= CONSTRUCT_MIN_FRACTION
-             and combined_frac >= CONSTRUCT_HOST_MIN_COMBINED)
-
-    return is_fp, construct_frac, host_fraction, combined_frac
-
+# _check_construct_host_coverage moved to scripts/s05/filter_d_altlocus.py
+# (Issue #4 Session 2) and re-imported at the top of this module for
+# backward compatibility with existing callers.
 
 # _blast_insert_vs_host moved to scripts/s05/filter_a_host.py
 # (Issue #4 Session 2) and re-imported at the top of this module for
