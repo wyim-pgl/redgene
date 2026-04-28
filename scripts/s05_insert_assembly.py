@@ -53,6 +53,7 @@ try:
         revcomp,
         read_fasta,
         write_fasta,
+        _parse_src_tag,
         _read_fq_seqs,
         JunctionCluster,
         InsertionSite,
@@ -98,6 +99,7 @@ except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_i
         revcomp,
         read_fasta,
         write_fasta,
+        _parse_src_tag,
         _read_fq_seqs,
         JunctionCluster,
         InsertionSite,
@@ -924,20 +926,9 @@ _TIER2_SRCS = frozenset(k for k, v in _SRC_TIER.items() if v >= 2)
 _UNKNOWN_SRC_WARNED: set[str] = set()
 
 
-def _parse_src_tag(sseqid: str, default: str) -> tuple[str, str]:
-    """Split a BLAST sseqid of the form 'accession|src=tag' into (accession, tag).
-
-    v2 DB headers carry a '|src=<tag>' suffix to encode one of the 4-way source
-    tags (element_db / payload / sample_contig / univec). Legacy headers lack
-    the suffix - in that case the caller-supplied `default` is used.
-
-    Returns (accession, src_tag). If no '|src=' separator is present,
-    (sseqid, default) is returned unchanged.
-    """
-    accession, sep, src_tag = sseqid.partition("|src=")
-    if not sep:
-        return sseqid, default
-    return accession, src_tag
+# _parse_src_tag moved to scripts/s05/primitives.py
+# (Issue #4 Session 3) and re-imported at the top of this module for
+# backward compatibility with existing callers.
 
 
 def _should_replace(existing: dict | None, new_src: str, new_bit: float) -> bool:
