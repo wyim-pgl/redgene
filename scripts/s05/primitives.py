@@ -160,3 +160,19 @@ def _read_fq_seqs(path: Path) -> list[str]:
             if i % 4 == 1:
                 seqs.append(line.strip().upper())
     return seqs
+
+
+def _parse_src_tag(sseqid: str, default: str) -> tuple[str, str]:
+    """Split a BLAST sseqid of the form 'accession|src=tag' into (accession, tag).
+
+    v2 DB headers carry a '|src=<tag>' suffix to encode one of the 4-way source
+    tags (element_db / payload / sample_contig / univec). Legacy headers lack
+    the suffix - in that case the caller-supplied `default` is used.
+
+    Returns (accession, src_tag). If no '|src=' separator is present,
+    (sseqid, default) is returned unchanged.
+    """
+    accession, sep, src_tag = sseqid.partition("|src=")
+    if not sep:
+        return sseqid, default
+    return accession, src_tag

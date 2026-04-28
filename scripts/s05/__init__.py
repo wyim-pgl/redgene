@@ -8,6 +8,9 @@ read_extraction, assembly, annotation, report, fanout_orchestrator) is
 tracked in ``docs/superpowers/specs/2026-04-19-s05-module-split-design.md``.
 Session 2 (2026-04-28) added ``filter_a_host`` and ``filter_d_altlocus``
 filter modules.
+Session 3 (2026-04-28) added ``annotation`` (Phase 4 BLAST-driven
+element annotation), retiring the ``annotate_report.py`` shim's
+re-export of ``annotate_insert``.
 """
 from .primitives import (  # noqa: F401
     STEP,
@@ -16,6 +19,7 @@ from .primitives import (  # noqa: F401
     read_fasta,
     write_fasta,
     _read_fq_seqs,
+    _parse_src_tag,
     JunctionCluster,
     InsertionSite,
     LegacyJunction,
@@ -43,6 +47,13 @@ from .filter_d_altlocus import (  # noqa: F401
     CONSTRUCT_MIN_FRACTION,
     CONSTRUCT_HOST_MIN_PIDENT,
     _check_construct_host_coverage,
+)
+from .annotation import (  # noqa: F401
+    _parse_blast6,
+    _run_local_blast,
+    _run_remote_blast,
+    _merge_annotations,
+    annotate_insert,
 )
 from .verdict import (  # noqa: F401
     compute_verdict,
