@@ -91,3 +91,7 @@ from .site_discovery import (  # noqa: F401
     _extract_seeds_at_positions,
     legacy_junctions_to_sites,
 )
+from .read_extraction import (  # noqa: F401
+    extract_candidate_reads,
+    extract_unmapped_paired,
+)

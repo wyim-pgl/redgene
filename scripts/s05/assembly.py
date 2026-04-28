@@ -56,6 +56,7 @@ from .primitives import (
     _read_fq_seqs,
     InsertionSite,
 )
+from .read_extraction import extract_unmapped_paired  # noqa: F401 (Session 5: cycle gone)
 
 
 # ---------------------------------------------------------------------------
@@ -908,22 +909,9 @@ def assemble_insert(
     Returns (fasta_path, n_rounds, status).
     Status: 'complete', 'partial', 'no_seeds', 'no_assembly'.
     """
-    # Lazy import to avoid circular import: extract_unmapped_paired is still
-    # defined in the monolith (Phase 2 territory, Session 5). A module-top
-    # import would fail during initialization because the monolith imports
-    # assembly.py before extract_unmapped_paired is defined in its own body.
-    # This local import is safe: by call time, the monolith is fully loaded.
-    # Pattern mirrors conftest.py (repo root → sys.path) and per_site.py shim.
-    try:
-        from scripts.s05_insert_assembly import extract_unmapped_paired
-    except ImportError:
-        import sys as _sys
-        from pathlib import Path as _Path
-        _repo = _Path(__file__).resolve().parents[2]
-        if str(_repo) not in _sys.path:
-            _sys.path.insert(0, str(_repo))
-        from scripts.s05_insert_assembly import extract_unmapped_paired
-
+    # extract_unmapped_paired is now imported at module top from .read_extraction
+    # (Session 5: lazy import removed; read_extraction stage 2 < assembly stage 3,
+    # so no cycle risk).
     workdir.mkdir(parents=True, exist_ok=True)
 
     seed_5p = site.seed_5p
