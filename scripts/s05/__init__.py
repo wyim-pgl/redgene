@@ -15,6 +15,11 @@ Session 4 (2026-04-28) added ``assembly`` (Phase 3 k-mer extension +
 Pilon gap fill + minimap2/SSAKE refinement), the highest-risk extraction
 in the s05 split. ``per_site.py`` shim updated to source
 ``assemble_insert`` / ``refine_with_foreign_reads`` from ``.assembly``.
+Session 5 (2026-04-28) promoted ``site_discovery`` from shim to native
+module (Phase 1: soft-clip junction detection pipeline), and added
+``read_extraction`` (Phase 2: candidate read extraction). ``per_site.py``
+shim now sources all 4 symbols from native modules. ``assembly.py`` lazy
+import replaced by direct ``.read_extraction`` import.
 """
 from .primitives import (  # noqa: F401
     STEP,
@@ -75,4 +80,14 @@ from .assembly import (  # noqa: F401
     pilon_fill,
     recruit_by_kmer,
     refine_with_foreign_reads,
+)
+from .site_discovery import (  # noqa: F401
+    _build_consensus,
+    _batch_check_maps_to_host,
+    find_softclip_junctions,
+    _apply_mask_bed,
+    MASKED_SOURCE_TAG,
+    parse_legacy_junctions,
+    _extract_seeds_at_positions,
+    legacy_junctions_to_sites,
 )
