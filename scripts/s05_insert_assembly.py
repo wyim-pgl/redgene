@@ -71,6 +71,10 @@ try:
         CHIMERIC_MIN_OFFTARGET_BP,
         _check_chimeric_assembly,
     )
+    from s05.filter_a_host import (
+        INSERT_HOST_MIN_PIDENT,
+        _blast_insert_vs_host,
+    )
 except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_insert_assembly.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from s05.verdict import VerdictRules, FilterEvidence, compute_verdict, _apply_canonical_override
@@ -98,6 +102,10 @@ except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_i
         CHIMERIC_MIN_PIDENT,
         CHIMERIC_MIN_OFFTARGET_BP,
         _check_chimeric_assembly,
+    )
+    from s05.filter_a_host import (
+        INSERT_HOST_MIN_PIDENT,
+        _blast_insert_vs_host,
     )
 
 # ---------------------------------------------------------------------------
@@ -129,7 +137,8 @@ CLIP_HOST_MIN_LEN = 30        # Per-clip host check: min alignment length
 #          insertion_32461 = 87% host, 2800bp gap → true CANDIDATE.
 INSERT_HOST_FRACTION = 0.80     # host coverage threshold
 INSERT_MIN_FOREIGN_GAP = 500    # non-host gap must be ≥ this to be real T-DNA
-INSERT_HOST_MIN_PIDENT = 90.0   # min identity for host alignment to count
+# INSERT_HOST_MIN_PIDENT moved to scripts/s05/filter_a_host.py (Issue #4
+# Session 2) and re-imported at the top of this module for backward compat.
 
 # Construct-flanking filter constants (CONSTRUCT_FLANK_PIDENT, _MIN_LEN, _SLOP)
 # moved to scripts/s05/filter_b_flank.py (Issue #4 Session 1) and re-imported
@@ -3127,86 +3136,9 @@ def _check_construct_host_coverage(
     return is_fp, construct_frac, host_fraction, combined_frac
 
 
-def _blast_insert_vs_host(
-    insert_fasta: Path,
-    host_ref: Path,
-    workdir: Path,
-    threads: int = 4,
-) -> tuple[float, int, int, int]:
-    """BLAST assembled insert against host genome to measure host-fraction.
-
-    Returns (host_fraction, host_covered_bp, insert_length, largest_foreign_gap).
-    host_fraction = fraction of insert positions covered by host alignments.
-    largest_foreign_gap = longest contiguous stretch NOT covered by host.
-    """
-    seqs = read_fasta(insert_fasta)
-    if not seqs:
-        return 0.0, 0, 0, 0
-    insert_seq = list(seqs.values())[0]
-    insert_len = len(insert_seq)
-    if insert_len == 0:
-        return 0.0, 0, 0, 0
-
-    # Use _chrom variant filename so _check_chimeric_assembly can reuse it
-    blast_out = workdir / f"_{insert_fasta.stem}_vs_host_chrom.tsv"
-    if not blast_out.exists():
-        result = subprocess.run(
-            ["blastn", "-task", "megablast",
-             "-query", str(insert_fasta), "-db", str(host_ref),
-             "-outfmt", "6 qseqid qstart qend sseqid pident length",
-             "-evalue", "1e-10", "-max_target_seqs", "10",
-             "-num_threads", str(threads),
-             "-out", str(blast_out)],
-            stderr=subprocess.DEVNULL,
-        )
-    if not blast_out.exists():
-        return 0.0, 0, insert_len, insert_len
-
-    # Merge overlapping host-aligned intervals to compute non-redundant coverage
-    intervals: list[tuple[int, int]] = []
-    with open(blast_out) as fh:
-        for line in fh:
-            cols = line.strip().split("\t")
-            if len(cols) < 6:
-                continue
-            pident = float(cols[4])
-            if pident < INSERT_HOST_MIN_PIDENT:
-                continue
-            q_start = int(cols[1])
-            q_end = int(cols[2])
-            lo, hi = min(q_start, q_end), max(q_start, q_end)
-            intervals.append((lo, hi))
-
-    if not intervals:
-        return 0.0, 0, insert_len, insert_len
-
-    # Merge overlapping intervals
-    intervals.sort()
-    merged: list[tuple[int, int]] = [intervals[0]]
-    for lo, hi in intervals[1:]:
-        if lo <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
-        else:
-            merged.append((lo, hi))
-
-    host_bp = sum(hi - lo + 1 for lo, hi in merged)
-
-    # Compute largest gap between host-aligned regions (= foreign/T-DNA region)
-    # Include gaps at start and end of insert
-    gaps: list[int] = []
-    gaps.append(merged[0][0] - 1)                    # gap before first host hit
-    for i in range(1, len(merged)):
-        gaps.append(merged[i][0] - merged[i - 1][1] - 1)
-    gaps.append(insert_len - merged[-1][1])           # gap after last host hit
-    largest_gap = max(gaps) if gaps else 0
-
-    # Exclude N-runs from denominator (Ns are gap-fill placeholders, not real sequence)
-    n_count = insert_seq.upper().count("N")
-    effective_len = insert_len - n_count
-    if effective_len <= 0:
-        return 0.0, host_bp, insert_len, largest_gap
-
-    return host_bp / effective_len, host_bp, insert_len, largest_gap
+# _blast_insert_vs_host moved to scripts/s05/filter_a_host.py
+# (Issue #4 Session 2) and re-imported at the top of this module for
+# backward compatibility with existing callers.
 
 
 def generate_report(

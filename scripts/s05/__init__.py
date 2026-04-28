@@ -6,6 +6,8 @@ Session 1 (2026-04-19) added ``primitives``, ``filter_b_flank``, and
 ``config_loader``. Remaining decomposition (site_discovery, classify,
 read_extraction, assembly, annotation, report, fanout_orchestrator) is
 tracked in ``docs/superpowers/specs/2026-04-19-s05-module-split-design.md``.
+Session 2 (2026-04-28) added ``filter_a_host`` and ``filter_d_altlocus``
+filter modules.
 """
 from .primitives import (  # noqa: F401
     STEP,
@@ -31,6 +33,10 @@ from .filter_c_chimeric import (  # noqa: F401
     CHIMERIC_MIN_PIDENT,
     CHIMERIC_MIN_OFFTARGET_BP,
     _check_chimeric_assembly,
+)
+from .filter_a_host import (  # noqa: F401
+    INSERT_HOST_MIN_PIDENT,
+    _blast_insert_vs_host,
 )
 from .verdict import (  # noqa: F401
     compute_verdict,
