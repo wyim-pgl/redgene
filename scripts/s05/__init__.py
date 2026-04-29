@@ -20,6 +20,10 @@ module (Phase 1: soft-clip junction detection pipeline), and added
 ``read_extraction`` (Phase 2: candidate read extraction). ``per_site.py``
 shim now sources all 4 symbols from native modules. ``assembly.py`` lazy
 import replaced by direct ``.read_extraction`` import.
+Session 6 (2026-04-29) added ``report`` (Phase 5: per-site report
+generation + sample-level stats TSV). ``annotate_report.py`` shim now
+sources ``generate_report``/``write_stats`` from ``.report``. Added
+``fanout_orchestrator`` (Phase 6: main() CLI dispatch + phase helpers).
 """
 from .primitives import (  # noqa: F401
     STEP,
@@ -94,4 +98,8 @@ from .site_discovery import (  # noqa: F401
 from .read_extraction import (  # noqa: F401
     extract_candidate_reads,
     extract_unmapped_paired,
+)
+from .report import (  # noqa: F401
+    generate_report,
+    write_stats,
 )

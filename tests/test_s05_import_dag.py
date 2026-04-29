@@ -63,7 +63,9 @@ STAGE: dict[str, int] = {
     "per_site": 3,           # Session 4: now sources assemble_insert from .assembly (stage 3)
     "assembly": 3,
     "annotation": 4,
-    "annotate_report": 4,    # legacy shim; same stage as annotation (retired in Session 7)
+    "annotate_report": 8,    # legacy shim; elevated to stage 8 (Session 6) because it
+                             # now sources generate_report/write_stats from .report;
+                             # shim will be retired in Session 7
     "filter_a_host": 5,
     "filter_b_flank": 5,
     "filter_c_chimeric": 5,
