@@ -1,8 +1,10 @@
-"""DAG no-cycle guard for the ``scripts/s05/`` package (Issue #4, Session 1).
+"""DAG no-cycle guard for the ``scripts/s05/`` package (Issue #4, complete).
 
-The multi-session refactor documented in
-``docs/superpowers/specs/2026-04-19-s05-module-split-design.md`` §2.2 fixes a
-strict layering order:
+Final architecture (Session 7, 2026-04-29) — all 11 native modules present,
+no shims remaining. Authoritative layout documented in
+``docs/architecture/s05-modules.md``.
+
+Strict layering order enforced by this test:
 
     primitives  ->  {site_discovery, classify}  ->  read_extraction
                                                           |
@@ -29,15 +31,7 @@ strict layering order:
 A later-stage module may import from an earlier (or same) stage; the reverse
 is forbidden. This test walks the AST of every ``scripts/s05/*.py`` file and
 flags any ``ImportFrom`` whose target module belongs to a strictly later
-stage, which would imply a cycle once both sides are fully extracted.
-
-Session 1 lands only a subset of the above modules (``primitives``,
-``filter_b_flank``, ``filter_c_chimeric``, plus the already-extracted
-``verdict``/``config_loader``). The four remaining shim files
-(``annotate_report``, ``classify``, ``per_site``, ``site_discovery``) only
-import back from the monolith ``scripts.s05_insert_assembly`` and are placed
-at their final stage so later sessions can promote them in-place without
-changing this test.
+stage, which would imply a cycle.
 """
 from __future__ import annotations
 
@@ -60,12 +54,8 @@ STAGE: dict[str, int] = {
     "site_discovery": 1,
     "classify": 1,
     "read_extraction": 2,
-    "per_site": 3,           # Session 4: now sources assemble_insert from .assembly (stage 3)
     "assembly": 3,
     "annotation": 4,
-    "annotate_report": 8,    # legacy shim; elevated to stage 8 (Session 6) because it
-                             # now sources generate_report/write_stats from .report;
-                             # shim will be retired in Session 7
     "filter_a_host": 5,
     "filter_b_flank": 5,
     "filter_c_chimeric": 5,

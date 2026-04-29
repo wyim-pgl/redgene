@@ -24,6 +24,9 @@ Session 6 (2026-04-29) added ``report`` (Phase 5: per-site report
 generation + sample-level stats TSV). ``annotate_report.py`` shim now
 sources ``generate_report``/``write_stats`` from ``.report``. Added
 ``fanout_orchestrator`` (Phase 6: main() CLI dispatch + phase helpers).
+Session 7 (2026-04-29) retired the two remaining shims (``annotate_report``
+and ``per_site``), migrated test imports off the monolith, and thinned
+the monolith re-export block. Issue #4 is now complete.
 """
 from .primitives import (  # noqa: F401
     STEP,

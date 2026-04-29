@@ -1,4 +1,4 @@
-"""Tests for _apply_canonical_override helper in scripts.s05_insert_assembly.
+"""Tests for _apply_canonical_override helper in scripts.s05.verdict.
 
 Issue #3 v1.0 wire-in (scoped): canonical_triplet override after existing
 verdict pipeline. Promotes FALSE_POSITIVE/UNKNOWN -> CANDIDATE when a canonical
@@ -8,13 +8,18 @@ host_fraction is below the CAND threshold.
 import sys
 from pathlib import Path
 
-# scripts/s05_insert_assembly.py imports at module-scope (pysam, etc.) but
-# canonical override helper is pure. Add scripts/ to sys.path and import the
-# symbol without triggering BLAST/pysam code paths (only the helper is used).
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+# Add scripts/ to sys.path so that ``import s05`` resolves to the real
+# scripts/s05 package. This seeds sys.modules["s05"] as the real package,
+# which is a precondition for test_extra_element_db.py and
+# test_source_tag_priority.py -- those tests load the monolith via
+# importlib.util.spec_from_file_location("s05", ...) and rely on the real
+# package being registered in sys.modules before exec_module runs.
+_SCRIPTS_DIR = str(Path(__file__).resolve().parents[1] / "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+import s05  # noqa: F401, E402 -- seeds sys.modules["s05"] as the real package
 
-from s05.verdict import VerdictRules  # noqa: E402
-from s05_insert_assembly import _apply_canonical_override  # noqa: E402
+from scripts.s05.verdict import VerdictRules, _apply_canonical_override  # noqa: E402
 
 
 _RULES = VerdictRules(
@@ -85,7 +90,7 @@ def test_override_skips_when_unique_elems_empty():
 
 
 def test_override_matches_rice_g281_triplet():
-    # hLF1 + P-Gt1 + T-nos — different from default
+    # hLF1 + P-Gt1 + T-nos -- different from default
     verdict, reason = _apply_canonical_override(
         verdict="FALSE_POSITIVE",
         reason="filter B",
@@ -98,7 +103,7 @@ def test_override_matches_rice_g281_triplet():
 
 
 def test_override_passthrough_candidate():
-    # Already CANDIDATE, triplet also matches — keep CANDIDATE but re-annotate
+    # Already CANDIDATE, triplet also matches -- keep CANDIDATE but re-annotate
     verdict, reason = _apply_canonical_override(
         verdict="CANDIDATE",
         reason="elements annotated",

@@ -1,8 +1,7 @@
 """Test _apply_mask_bed tags sites in host endogenous regions."""
 from __future__ import annotations
 
-from scripts.s05.site_discovery import _apply_mask_bed  # new in T10
-from scripts.s05_insert_assembly import MASKED_SOURCE_TAG
+from scripts.s05.site_discovery import _apply_mask_bed, MASKED_SOURCE_TAG  # new in T10
 
 
 def test_site_in_mask_gets_tagged(tmp_path):
