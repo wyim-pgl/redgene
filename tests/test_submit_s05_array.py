@@ -154,3 +154,39 @@ def test_m6_mapfile_has_explanatory_comment():
     assert re.search(r"#.*mapfile|#.*-t\b|#.*newline-separated", window, re.IGNORECASE), (
         "M-6: mapfile line missing explanatory comment block above it"
     )
+
+
+# ---- Session 6 line-budget guards -----------------------------------------
+
+def test_session6_monolith_line_budget():
+    """After Session 6, monolith must be a thin entrypoint shim (< 300 lines).
+
+    The target is ~262 lines (shebang + docstring + re-export block + constants
+    + thin main). This guard prevents silent bloat back toward the pre-split size.
+    """
+    monolith = REPO_ROOT / "scripts" / "s05_insert_assembly.py"
+    lines = monolith.read_text().splitlines()
+    assert len(lines) < 300, (
+        f"monolith should be a thin entrypoint after Session 6; "
+        f"got {len(lines)} lines (limit 300)"
+    )
+
+
+def test_session6_fanout_main_line_budget():
+    """fanout_orchestrator.main() must stay under 250 lines (Session 6 spec).
+
+    The split into _run_phase_* helpers keeps main() focused on argparse +
+    dispatch; this guard verifies the split was not accidentally collapsed.
+    """
+    import ast
+    fanout = REPO_ROOT / "scripts" / "s05" / "fanout_orchestrator.py"
+    tree = ast.parse(fanout.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "main":
+            n_lines = node.end_lineno - node.lineno
+            assert n_lines < 250, (
+                f"fanout_orchestrator.main() is {n_lines} lines (limit 250); "
+                "consider splitting further or reverting a helper merge"
+            )
+            return
+    raise AssertionError("main() not found in fanout_orchestrator.py")
