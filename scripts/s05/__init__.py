@@ -103,3 +103,4 @@ from .report import (  # noqa: F401
     generate_report,
     write_stats,
 )
+from .fanout_orchestrator import main  # noqa: F401
