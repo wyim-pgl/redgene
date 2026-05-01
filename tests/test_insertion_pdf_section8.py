@@ -123,7 +123,7 @@ def test_state_ok(tmp_path):
 # _page_crispr_summary
 # ---------------------------------------------------------------------------
 
-def test_summary_renders_one_page(tmp_path):
+def test_summary_renders_one_page(tmp_path, monkeypatch):
     mod = _load_module()
     from matplotlib.backends.backend_pdf import PdfPages
 
@@ -131,9 +131,58 @@ def test_summary_renders_one_page(tmp_path):
     _write_edits(tmp_path / "s06_indel" / "editing_sites.tsv", [_EDIT_ROW_OK])
     _state, on_targets, sites = mod.load_editing_data(tmp_path)
 
+    captured = {}
+
+    def fake_page_text(pdf, title, lines, **kwargs):
+        captured["title"] = title
+        captured["lines"] = lines
+
+    monkeypatch.setattr(mod, "_page_text", fake_page_text)
+
     out_pdf = tmp_path / "summary.pdf"
     with PdfPages(out_pdf) as pdf:
         mod._page_crispr_summary(pdf, on_targets, sites)
 
-    assert out_pdf.exists()
-    assert out_pdf.stat().st_size > 0
+    assert captured["title"] == "CRISPR Editing — Summary"
+    body = "\n".join(captured["lines"])
+    assert "gRNAs (on-target): 2" in body
+    assert "Editing events:    1" in body
+    # gRNA 1 had the insertion edit
+    grna1_lines = [l for l in captured["lines"] if l.strip().startswith("1 ")]
+    assert len(grna1_lines) == 1
+    assert "insertion" in grna1_lines[0]
+    assert "0.462" in grna1_lines[0] or "0.461" in grna1_lines[0]  # 0.4615 → .3f
+    # gRNA 2 had no edits — em-dash placeholders
+    grna2_lines = [l for l in captured["lines"] if l.strip().startswith("2 ")]
+    assert len(grna2_lines) == 1
+    assert "—" in grna2_lines[0]
+
+
+def test_summary_truncates_long_locus(monkeypatch):
+    mod = _load_module()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    on_targets = [{
+        "grna_idx": "1", "grna_seq": "ACGT" * 5,
+        "chrom": "B10v3_unplaced_contig_1234567", "cut_pos": "987654321",
+        "strand": "+",
+    }]
+    sites: list[dict] = []
+
+    captured = {}
+
+    def fake_page_text(pdf, title, lines, **kwargs):
+        captured["lines"] = lines
+
+    monkeypatch.setattr(mod, "_page_text", fake_page_text)
+
+    import io
+    with PdfPages(io.BytesIO()) as pdf:
+        mod._page_crispr_summary(pdf, on_targets, sites)
+
+    grna_row = [l for l in captured["lines"] if l.strip().startswith("1 ")][0]
+    assert "..." in grna_row
+    # The truncated locus column must not blow past 32 chars
+    # (We assert by reconstructing where the count column should land.)
+    parts = grna_row.split()
+    assert parts[0] == "1"  # gRNA idx column

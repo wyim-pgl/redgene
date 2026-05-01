@@ -572,6 +572,8 @@ def _page_crispr_summary(
         cut = t.get("cut_pos", "?")
         strand = t.get("strand", "?")
         locus = f"{chrom}:{cut} ({strand})"
+        if len(locus) > 32:
+            locus = locus[:29] + "..."
         edits = [s for s in sites if s.get("grna_idx") == idx]
         if edits:
             top = max(edits, key=lambda r: float(r.get("freq", "0") or 0))
