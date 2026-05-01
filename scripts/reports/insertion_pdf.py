@@ -551,6 +551,44 @@ def _page_placeholder(pdf: PdfPages, title: str, note: str) -> None:
     _page_text(pdf, title, [note, "", "(scaffold — to be wired in v1.1)"])
 
 
+def _page_crispr_summary(
+    pdf: PdfPages,
+    on_targets: list[dict[str, Any]],
+    sites: list[dict[str, Any]],
+) -> None:
+    """Section 8 summary page: gRNA inventory + per-gRNA edit highlights."""
+    n_grna = len(on_targets)
+    n_edits = len(sites)
+    lines = [
+        f"gRNAs (on-target): {n_grna}",
+        f"Editing events:    {n_edits}",
+        "",
+        f"  {'gRNA':<5} {'Locus':<32} {'Edits':>6} {'Top freq':>10} {'Top type':<12}",
+        f"  {'-'*5} {'-'*32} {'-'*6} {'-'*10} {'-'*12}",
+    ]
+    for t in on_targets:
+        idx = t.get("grna_idx", "?")
+        chrom = t.get("chrom", "?")
+        cut = t.get("cut_pos", "?")
+        strand = t.get("strand", "?")
+        locus = f"{chrom}:{cut} ({strand})"
+        edits = [s for s in sites if s.get("grna_idx") == idx]
+        if edits:
+            top = max(edits, key=lambda r: float(r.get("freq", "0") or 0))
+            try:
+                freq_str = f"{float(top.get('freq', '0') or 0):.3f}"
+            except ValueError:
+                freq_str = "—"
+            top_type = top.get("type", "—")
+        else:
+            freq_str = "—"
+            top_type = "—"
+        lines.append(
+            f"  {str(idx):<5} {locus:<32} {len(edits):>6d} {freq_str:>10} {top_type:<12}"
+        )
+    _page_text(pdf, "CRISPR Editing — Summary", lines)
+
+
 def _page_appendix_audit(pdf: PdfPages, audit: dict[str, Any]) -> None:
     lines = [
         f"Pipeline commit: {audit.get('pipeline_commit', '—')}",

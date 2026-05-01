@@ -1,15 +1,14 @@
 """Tests for Issue #6 Section 8 — CRISPR Editing panel.
 
-Validates load_editing_data() state machine and the four new page renderers
-(_page_crispr_editing dispatcher, _page_crispr_summary, _page_crispr_profile).
+Validates load_editing_data() state machine (5 state tests) and the
+_page_crispr_summary text-page renderer. Tasks 3-4 will add tests for
+the remaining page renderers.
 """
 from __future__ import annotations
 
 import importlib.util
 import sys
 from pathlib import Path
-
-import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -118,3 +117,23 @@ def test_state_ok(tmp_path):
     assert len(sites) == 1
     assert sites[0]["grna_idx"] == "1"
     assert sites[0]["type"] == "insertion"
+
+
+# ---------------------------------------------------------------------------
+# _page_crispr_summary
+# ---------------------------------------------------------------------------
+
+def test_summary_renders_one_page(tmp_path):
+    mod = _load_module()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    _write_grna(tmp_path / "s06_indel" / "grna_targets.tsv", _ON_TARGET_ROWS)
+    _write_edits(tmp_path / "s06_indel" / "editing_sites.tsv", [_EDIT_ROW_OK])
+    _state, on_targets, sites = mod.load_editing_data(tmp_path)
+
+    out_pdf = tmp_path / "summary.pdf"
+    with PdfPages(out_pdf) as pdf:
+        mod._page_crispr_summary(pdf, on_targets, sites)
+
+    assert out_pdf.exists()
+    assert out_pdf.stat().st_size > 0
