@@ -219,6 +219,47 @@ def load_coc_log(sample_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
+def load_editing_data(
+    sample_dir: Path,
+) -> tuple[str, list[dict[str, Any]] | None, list[dict[str, Any]] | None]:
+    """Load step-6 CRISPR outputs and return a 3-state tuple.
+
+    State machine:
+      "missing"  → s06_indel/ absent, grna_targets.tsv absent, no on-target rows,
+                   or any TSV parse failure (treat as not-applicable)
+      "no_edits" → on-target gRNAs present, editing_sites.tsv missing or empty
+      "ok"       → on-target gRNAs present and at least one edit row
+    """
+    s06 = Path(sample_dir) / "s06_indel"
+    targets_path = s06 / "grna_targets.tsv"
+    sites_path = s06 / "editing_sites.tsv"
+
+    if not targets_path.exists():
+        return ("missing", None, None)
+
+    try:
+        with open(targets_path, newline="") as fh:
+            targets = list(csv.DictReader(fh, delimiter="\t"))
+    except (OSError, csv.Error):
+        return ("missing", None, None)
+
+    on_targets = [t for t in targets if t.get("site_type") == "on-target"]
+    if not on_targets:
+        return ("missing", None, None)
+
+    sites: list[dict[str, Any]] = []
+    if sites_path.exists():
+        try:
+            with open(sites_path, newline="") as fh:
+                sites = list(csv.DictReader(fh, delimiter="\t"))
+        except (OSError, csv.Error):
+            sites = []
+
+    if not sites:
+        return ("no_edits", on_targets, [])
+    return ("ok", on_targets, sites)
+
+
 def build_sample_info(
     sample_dir: Path,
     *,
