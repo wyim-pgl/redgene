@@ -639,6 +639,37 @@ def _page_crispr_profile(
     plt.close(fig)
 
 
+def _page_crispr_editing(pdf: PdfPages, sample_dir: Path) -> int:
+    """Section 8 dispatcher. Returns the number of pages written (>=1)."""
+    state, on_targets, sites = load_editing_data(sample_dir)
+
+    if state == "missing":
+        _page_text(pdf, "CRISPR Editing", [
+            "(s06_indel CRISPR analysis was not run for this sample,",
+            " or no on-target gRNA was defined.)",
+        ])
+        return 1
+
+    if state == "no_edits":
+        n = len(on_targets) if on_targets else 0
+        _page_text(pdf, "CRISPR Editing", [
+            f"On-target gRNAs analyzed: {n}",
+            "Editing events detected:  0",
+            "",
+            "(no editing events passed step-6 thresholds)",
+        ])
+        return 1
+
+    # state == "ok"
+    pages = 0
+    _page_crispr_summary(pdf, on_targets or [], sites or [])
+    pages += 1
+    for target in on_targets or []:
+        _page_crispr_profile(pdf, sample_dir, target)
+        pages += 1
+    return pages
+
+
 def _page_appendix_audit(pdf: PdfPages, audit: dict[str, Any]) -> None:
     lines = [
         f"Pipeline commit: {audit.get('pipeline_commit', '—')}",
@@ -725,8 +756,7 @@ def generate_pdf(
         pages += _page_sites_table(pdf, rows)                           # (5)
         _page_junction_diagram(pdf, rows); pages += 1                   # (6)
         _page_copy_number(pdf, sample_dir); pages += 1                  # (7)
-        _page_placeholder(pdf, "CRISPR Editing",
-                          "editing panel pending v1.1"); pages += 1     # (8)
+        pages += _page_crispr_editing(pdf, sample_dir)                  # (8)
         _page_appendix_audit(pdf, audit); pages += 1                    # (9)
         pages += _page_appendix_coc(pdf, coc_entries)                   # (10, opt)
     return pages

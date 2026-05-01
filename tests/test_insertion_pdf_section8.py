@@ -284,3 +284,51 @@ def test_profile_corrupt_png_falls_back(tmp_path, monkeypatch):
     assert title == "CRISPR Editing — gRNA 1"
     body = "\n".join(lines)
     assert "unreadable" in body or "corrupt" in body
+
+
+# ---------------------------------------------------------------------------
+# _page_crispr_editing dispatcher
+# ---------------------------------------------------------------------------
+
+def test_dispatcher_missing_returns_one_page(tmp_path):
+    mod = _load_module()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    out_pdf = tmp_path / "missing.pdf"
+    with PdfPages(out_pdf) as pdf:
+        n = mod._page_crispr_editing(pdf, tmp_path)
+
+    assert n == 1
+    assert out_pdf.stat().st_size > 0
+
+
+def test_dispatcher_no_edits_returns_one_page(tmp_path):
+    mod = _load_module()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    _write_grna(tmp_path / "s06_indel" / "grna_targets.tsv", _ON_TARGET_ROWS)
+    _write_edits(tmp_path / "s06_indel" / "editing_sites.tsv", [])
+
+    out_pdf = tmp_path / "no_edits.pdf"
+    with PdfPages(out_pdf) as pdf:
+        n = mod._page_crispr_editing(pdf, tmp_path)
+
+    assert n == 1
+
+
+def test_dispatcher_ok_returns_summary_plus_n_profiles(tmp_path):
+    mod = _load_module()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    _write_grna(tmp_path / "s06_indel" / "grna_targets.tsv",
+                _ON_TARGET_ROWS + [_OFF_TARGET_ROW])
+    _write_edits(tmp_path / "s06_indel" / "editing_sites.tsv", [_EDIT_ROW_OK])
+    _make_real_png(tmp_path / "s06_indel" / "editing_profile_gRNA1.png")
+    _make_real_png(tmp_path / "s06_indel" / "editing_profile_gRNA2.png")
+
+    out_pdf = tmp_path / "ok.pdf"
+    with PdfPages(out_pdf) as pdf:
+        n = mod._page_crispr_editing(pdf, tmp_path)
+
+    # 1 summary + 2 on-target gRNA profile pages (off-target row excluded)
+    assert n == 3
