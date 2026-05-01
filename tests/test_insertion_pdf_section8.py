@@ -199,7 +199,7 @@ def _make_real_png(path: Path) -> None:
     plt.close(fig)
 
 
-def test_profile_renders_with_valid_png(tmp_path):
+def test_profile_renders_with_valid_png(tmp_path, monkeypatch):
     mod = _load_module()
     from matplotlib.backends.backend_pdf import PdfPages
 
@@ -211,14 +211,23 @@ def test_profile_renders_with_valid_png(tmp_path):
         "chrom": "SLM_r2.0ch04", "cut_pos": "2635445", "strand": "+",
     }
 
+    fallback_calls: list[tuple] = []
+
+    def fake_page_text(pdf, title, lines, **kwargs):
+        fallback_calls.append((title, lines))
+
+    monkeypatch.setattr(mod, "_page_text", fake_page_text)
+
     out_pdf = tmp_path / "profile.pdf"
     with PdfPages(out_pdf) as pdf:
         mod._page_crispr_profile(pdf, tmp_path, target)
 
+    # Success path must render a real figure (not call _page_text fallback)
+    assert fallback_calls == []
     assert out_pdf.stat().st_size > 0
 
 
-def test_profile_png_missing_falls_back_to_text(tmp_path):
+def test_profile_png_missing_falls_back_to_text(tmp_path, monkeypatch):
     mod = _load_module()
     from matplotlib.backends.backend_pdf import PdfPages
 
@@ -228,14 +237,26 @@ def test_profile_png_missing_falls_back_to_text(tmp_path):
         "chrom": "SLM_r2.0ch08", "cut_pos": "53314229", "strand": "-",
     }
 
+    captured: list[tuple] = []
+
+    def fake_page_text(pdf, title, lines, **kwargs):
+        captured.append((title, lines))
+
+    monkeypatch.setattr(mod, "_page_text", fake_page_text)
+
     out_pdf = tmp_path / "profile_fallback.pdf"
     with PdfPages(out_pdf) as pdf:
         mod._page_crispr_profile(pdf, tmp_path, target)
 
-    assert out_pdf.stat().st_size > 0  # no exception, page still written
+    assert len(captured) == 1
+    title, lines = captured[0]
+    assert title == "CRISPR Editing — gRNA 2"
+    body = "\n".join(lines)
+    assert "missing" in body
+    assert "plot_editing_profile.py" in body
 
 
-def test_profile_corrupt_png_falls_back(tmp_path):
+def test_profile_corrupt_png_falls_back(tmp_path, monkeypatch):
     mod = _load_module()
     from matplotlib.backends.backend_pdf import PdfPages
 
@@ -247,8 +268,19 @@ def test_profile_corrupt_png_falls_back(tmp_path):
         "chrom": "SLM_r2.0ch04", "cut_pos": "2635445", "strand": "+",
     }
 
+    captured: list[tuple] = []
+
+    def fake_page_text(pdf, title, lines, **kwargs):
+        captured.append((title, lines))
+
+    monkeypatch.setattr(mod, "_page_text", fake_page_text)
+
     out_pdf = tmp_path / "profile_corrupt.pdf"
     with PdfPages(out_pdf) as pdf:
         mod._page_crispr_profile(pdf, tmp_path, target)
 
-    assert out_pdf.stat().st_size > 0
+    assert len(captured) == 1
+    title, lines = captured[0]
+    assert title == "CRISPR Editing — gRNA 1"
+    body = "\n".join(lines)
+    assert "unreadable" in body or "corrupt" in body

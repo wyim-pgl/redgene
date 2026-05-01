@@ -601,10 +601,10 @@ def _page_crispr_profile(
 
     Falls back to a text page if the PNG is missing or unreadable.
     """
-    idx = str(target.get("grna_idx", "?"))
-    seq = target.get("grna_seq", "?")
-    chrom = target.get("chrom", "?")
-    cut = target.get("cut_pos", "?")
+    idx = str(target["grna_idx"])
+    seq = target["grna_seq"]
+    chrom = target["chrom"]
+    cut = target["cut_pos"]
     title = f"CRISPR Editing — gRNA {idx}"
     header = f"gRNA {idx} — {chrom}:{cut} ({seq})"
 
