@@ -290,30 +290,54 @@ def test_profile_corrupt_png_falls_back(tmp_path, monkeypatch):
 # _page_crispr_editing dispatcher
 # ---------------------------------------------------------------------------
 
-def test_dispatcher_missing_returns_one_page(tmp_path):
+def test_dispatcher_missing_returns_one_page(tmp_path, monkeypatch):
     mod = _load_module()
     from matplotlib.backends.backend_pdf import PdfPages
+
+    captured: list[tuple] = []
+
+    def fake_page_text(pdf, title, lines, **kwargs):
+        captured.append((title, lines))
+
+    monkeypatch.setattr(mod, "_page_text", fake_page_text)
 
     out_pdf = tmp_path / "missing.pdf"
     with PdfPages(out_pdf) as pdf:
         n = mod._page_crispr_editing(pdf, tmp_path)
 
     assert n == 1
-    assert out_pdf.stat().st_size > 0
+    assert len(captured) == 1
+    title, lines = captured[0]
+    assert title == "CRISPR Editing"
+    body = "\n".join(lines)
+    assert "not run" in body or "not applicable" in body or "no on-target" in body
 
 
-def test_dispatcher_no_edits_returns_one_page(tmp_path):
+def test_dispatcher_no_edits_returns_one_page(tmp_path, monkeypatch):
     mod = _load_module()
     from matplotlib.backends.backend_pdf import PdfPages
 
     _write_grna(tmp_path / "s06_indel" / "grna_targets.tsv", _ON_TARGET_ROWS)
     _write_edits(tmp_path / "s06_indel" / "editing_sites.tsv", [])
 
+    captured: list[tuple] = []
+
+    def fake_page_text(pdf, title, lines, **kwargs):
+        captured.append((title, lines))
+
+    monkeypatch.setattr(mod, "_page_text", fake_page_text)
+
     out_pdf = tmp_path / "no_edits.pdf"
     with PdfPages(out_pdf) as pdf:
         n = mod._page_crispr_editing(pdf, tmp_path)
 
     assert n == 1
+    assert len(captured) == 1
+    title, lines = captured[0]
+    assert title == "CRISPR Editing"
+    body = "\n".join(lines)
+    assert "On-target gRNAs analyzed: 2" in body
+    assert "Editing events detected:  0" in body
 
 
 def test_dispatcher_ok_returns_summary_plus_n_profiles(tmp_path):
