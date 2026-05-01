@@ -53,6 +53,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 from matplotlib.backends.backend_pdf import PdfPages
 
 # Import the canonical "interesting" verdict set from the verdict module so the
@@ -589,6 +590,53 @@ def _page_crispr_summary(
             f"  {str(idx):<5} {locus:<32} {len(edits):>6d} {freq_str:>10} {top_type:<12}"
         )
     _page_text(pdf, "CRISPR Editing — Summary", lines)
+
+
+def _page_crispr_profile(
+    pdf: PdfPages,
+    sample_dir: Path,
+    target: dict[str, Any],
+) -> None:
+    """Render one PDF page embedding editing_profile_gRNA{idx}.png.
+
+    Falls back to a text page if the PNG is missing or unreadable.
+    """
+    idx = str(target.get("grna_idx", "?"))
+    seq = target.get("grna_seq", "?")
+    chrom = target.get("chrom", "?")
+    cut = target.get("cut_pos", "?")
+    title = f"CRISPR Editing — gRNA {idx}"
+    header = f"gRNA {idx} — {chrom}:{cut} ({seq})"
+
+    png_path = Path(sample_dir) / "s06_indel" / f"editing_profile_gRNA{idx}.png"
+    if not png_path.exists():
+        _page_text(pdf, title, [
+            header, "",
+            f"(editing_profile_gRNA{idx}.png missing — "
+            "scripts/viz/plot_editing_profile.py needs to run first)",
+        ])
+        return
+
+    try:
+        img = mpimg.imread(str(png_path))
+    except (OSError, ValueError, SyntaxError):
+        _page_text(pdf, title, [
+            header, "",
+            f"(editing_profile_gRNA{idx}.png unreadable — file may be corrupt)",
+        ])
+        return
+
+    fig, ax = plt.subplots(figsize=(8.5, 11))
+    ax.axis("off")
+    ax.text(0.05, 0.96, title, fontsize=18, fontweight="bold",
+            transform=ax.transAxes, verticalalignment="top")
+    ax.text(0.05, 0.92, header, fontsize=10, family="monospace",
+            transform=ax.transAxes, verticalalignment="top")
+    img_ax = fig.add_axes((0.05, 0.05, 0.90, 0.83))
+    img_ax.imshow(img)
+    img_ax.axis("off")
+    pdf.savefig(fig)
+    plt.close(fig)
 
 
 def _page_appendix_audit(pdf: PdfPages, audit: dict[str, Any]) -> None:

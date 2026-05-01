@@ -186,3 +186,69 @@ def test_summary_truncates_long_locus(monkeypatch):
     # (We assert by reconstructing where the count column should land.)
     parts = grna_row.split()
     assert parts[0] == "1"  # gRNA idx column
+
+# ---------------------------------------------------------------------------
+# _page_crispr_profile (PNG embed + fallback)
+# ---------------------------------------------------------------------------
+
+def _make_real_png(path: Path) -> None:
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(4, 2))
+    ax.plot([0, 1, 2], [0, 1, 0])
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def test_profile_renders_with_valid_png(tmp_path):
+    mod = _load_module()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    s06 = tmp_path / "s06_indel"
+    s06.mkdir()
+    _make_real_png(s06 / "editing_profile_gRNA1.png")
+    target = {
+        "grna_idx": "1", "grna_seq": "CATTAGCCTATGGTGAGCCA",
+        "chrom": "SLM_r2.0ch04", "cut_pos": "2635445", "strand": "+",
+    }
+
+    out_pdf = tmp_path / "profile.pdf"
+    with PdfPages(out_pdf) as pdf:
+        mod._page_crispr_profile(pdf, tmp_path, target)
+
+    assert out_pdf.stat().st_size > 0
+
+
+def test_profile_png_missing_falls_back_to_text(tmp_path):
+    mod = _load_module()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    (tmp_path / "s06_indel").mkdir()
+    target = {
+        "grna_idx": "2", "grna_seq": "GGTGTGCTATAAGTACTGAA",
+        "chrom": "SLM_r2.0ch08", "cut_pos": "53314229", "strand": "-",
+    }
+
+    out_pdf = tmp_path / "profile_fallback.pdf"
+    with PdfPages(out_pdf) as pdf:
+        mod._page_crispr_profile(pdf, tmp_path, target)
+
+    assert out_pdf.stat().st_size > 0  # no exception, page still written
+
+
+def test_profile_corrupt_png_falls_back(tmp_path):
+    mod = _load_module()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    s06 = tmp_path / "s06_indel"
+    s06.mkdir()
+    (s06 / "editing_profile_gRNA1.png").write_bytes(b"not-a-png")
+    target = {
+        "grna_idx": "1", "grna_seq": "CATTAGCCTATGGTGAGCCA",
+        "chrom": "SLM_r2.0ch04", "cut_pos": "2635445", "strand": "+",
+    }
+
+    out_pdf = tmp_path / "profile_corrupt.pdf"
+    with PdfPages(out_pdf) as pdf:
+        mod._page_crispr_profile(pdf, tmp_path, target)
+
+    assert out_pdf.stat().st_size > 0
