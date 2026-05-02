@@ -27,10 +27,32 @@ python run_pipeline.py --sample rice_G281 --steps 5 --threads 16 --no-remote-bla
 # Dry run (preview commands)
 python run_pipeline.py --sample rice_G281 --steps 1-5 --dry-run
 
+# PDF insertion report (Issue #6, opt-in; reads existing results/ without re-running)
+python run_pipeline.py --sample rice_G281 --steps 8
+
 # Run individual step scripts directly
 python scripts/s01_qc.py --r1 reads_R1.fq.gz --r2 reads_R2.fq.gz \
   --outdir results --sample-name my_sample --threads 16
 ```
+
+### Testing
+
+```bash
+# Full pytest suite (baseline: 255 PASS + 1 skipped, ~20s)
+pytest tests/ -q
+
+# Single file / single test
+pytest tests/test_verdict_snapshots.py -v
+pytest tests/test_compute_verdict.py::test_rule_1_canonical_triplet_promotes -v
+
+# DAG no-cycle guard for scripts/s05/ (Issue #4 invariant — 15 modules registered)
+pytest tests/test_s05_import_dag.py -v
+
+# Line-budget guards added in Session 6 (monolith < 300, fanout::main < 250)
+pytest tests/test_submit_s05_array.py -v
+```
+
+Snapshot fixtures live in `tests/fixtures/verdict_snapshots/` (rice_G281, cucumber_line225). Never edit these without a deliberate behavior change — snapshot drift is the primary regression signal for `compute_verdict`.
 
 ### SLURM batch run
 ```bash
@@ -57,17 +79,20 @@ python scripts/viz/plot_editing_effects.py \
 
 ## Architecture
 
-`run_pipeline.py` orchestrates 7 core + 1 optional (4b) analysis steps by calling standalone scripts in `scripts/` via subprocess. Config is loaded from `config.yaml` (YAML with per-sample settings). Each step script accepts `--outdir`, `--sample-name`, and step-specific arguments. Inter-step dependencies are wired in `build_step_cmd()` in run_pipeline.py.
+`run_pipeline.py` orchestrates 7 core + 2 optional (4b, 8) analysis steps by calling standalone scripts in `scripts/` via subprocess. Config is loaded from `config.yaml` (YAML with per-sample settings). Each step script accepts `--outdir`, `--sample-name`, and step-specific arguments. Inter-step dependencies are wired in `build_step_cmd()` in run_pipeline.py.
+
+`STEP_ORDER` in run_pipeline.py is the single source of truth for step sequencing: `["1", "2", "3", "4", "4b", "5", "6", "7", "8"]`. Step 8 (PDF report) is opt-in and never part of default `--steps 1-5`.
 
 ### Pipeline flow and step dependencies
 ```
 [1] fastp QC → [2] bwa → construct+UniVec BAM → [3] extract reads + mates
   → [3b] WT homology filter (optional)
   → [4] bwa → host BAM (bottleneck: ~5-7h)
-  → [4b] SPAdes → sample-specific construct contigs  ★ NEW
+  → [4b] SPAdes → sample-specific construct contigs
   → [5] Targeted insert assembly + FP filtering (uses 4b contigs + common_payload)
   → [6] CRISPR indel detection (optional, needs WT)
   → [7] copy number (depth ratio)
+  → [8] PDF insertion report (opt-in; reads existing s05/s07 output)
 ```
 
 Steps 1-3 are fast (<30 min each). Step 4 is the bottleneck (~5-7h per sample). Step 4b is optional but recommended: it de novo assembles the construct-hitting reads from s03 with SPAdes to produce a per-sample FASTA that s05 consumes via `--extra-element-db`, ensuring sample-specific payload sequences (e.g., AtYUCCA6, bar marker) get annotated rather than reported as UNKNOWN. Step 5 is the core: finds insertion sites from host BAM soft-clips, assembles inserts, annotates elements, and applies 4 post-assembly false positive filters (host-fraction, construct-flanking, chimeric, alternative-locus). Steps 6 and 7 are optional downstream analyses.
@@ -78,12 +103,52 @@ Steps 1-3 are fast (<30 min each). Step 4 is the bottleneck (~5-7h per sample). 
 | `scripts/s03_extract_reads.py` | Extracts construct-hitting reads + mates |
 | `scripts/s03b_homology_filter.py` | WT-based filtering of host-derived false positives |
 | `scripts/s04b_construct_assembly.py` | De novo SPAdes assembly of construct-hitting reads for per-sample element DB |
-| `scripts/s05_insert_assembly.py` | **CORE** — targeted assembly + 4 FP filters (host-fraction, construct-flanking, chimeric, alt-locus) |
+| `scripts/s05_insert_assembly.py` | **Thin entrypoint** (102 lines, post-Issue #4). Re-exports backward-compat symbols from `scripts/s05/` package; orchestration lives in `scripts/s05/fanout_orchestrator.py::main`. Step 5 is the core: targeted assembly + 4 FP filters (host-fraction, construct-flanking, chimeric, alt-locus). |
 | `scripts/s06_indel.py` | CRISPR editing detection (pileup-based, NOT bcftools) |
 | `scripts/s07_copynumber.py` | Depth-ratio copy number estimation |
+| `scripts/reports/insertion_pdf.py` | Step 8 PDF report (matplotlib/PdfPages; no reportlab dep) |
 | `scripts/viz/plot_editing_profile.py` | CRISPResso2-style nucleotide quilt |
 | `scripts/viz/plot_editing_effects.py` | Variant effect annotation (frameshift/synonymous/etc.) |
 | `scripts/viz/plot_sample_summary.py` | 6-panel publication summary figure |
+| `tools/verify_coc.py` | Chain-of-custody log integrity checker (monotone ts, pre/post pairing, hash chain) |
+
+### scripts/s05/ package (Issue #4 — 7-session refactor, COMPLETED 2026-04-29)
+
+The 4003-line `s05_insert_assembly.py` monolith was split into 11 single-responsibility modules. The monolith remains the CLI entrypoint (run_pipeline.py and SLURM arrays still invoke `python scripts/s05_insert_assembly.py`), but its `main()` is a thin shim that delegates to `scripts/s05/fanout_orchestrator.py::main`. All function bodies were extracted byte-identical (verbatim policy); the ONE non-verbatim change was Session 6's split of `main()` into 4 phase helpers.
+
+**Authoritative reference:** `docs/architecture/s05-modules.md`. Original design spec: `docs/superpowers/specs/2026-04-19-s05-module-split-design.md`.
+
+DAG stage ordering enforced by `tests/test_s05_import_dag.py`; later-stage modules may import from earlier stages, never the reverse.
+
+| Module | Stage | Role |
+|--------|-------|------|
+| `primitives.py` | 0 | `log`, `revcomp`, FASTA/FASTQ I/O, dataclasses (`JunctionCluster`, `InsertionSite`, `LegacyJunction`, `TierResult`), `_parse_src_tag` |
+| `site_discovery.py` | 1 | Phase 1: `find_softclip_junctions` + `_build_consensus` + `_apply_mask_bed` + `MASKED_SOURCE_TAG` + `parse_legacy_junctions` + `_extract_seeds_at_positions` |
+| `classify.py` | 1 | Phase 1.5: `classify_site_tiers` + `_filter_host_endogenous` + `_should_replace` + `_SRC_TIER`/`_TIER2_SRCS`/`_UNKNOWN_SRC_WARNED` state |
+| `read_extraction.py` | 2 | Phase 2: `extract_candidate_reads` + `extract_unmapped_paired` |
+| `assembly.py` | 3 | Phase 3: `StrandAwareSeedExtender` + `recruit_by_kmer` + `pilon_fill` + `assemble_insert` (1178 lines, the core pipeline function) |
+| `annotation.py` | 4 | Phase 4: `_run_local_blast` + `_run_remote_blast` + `_merge_annotations` + `annotate_insert` |
+| `filter_a_host.py` | 5 | `_blast_insert_vs_host` (host-fraction + foreign-gap measurement) |
+| `filter_b_flank.py` | 5 | Construct-flanking FP check (BLAST construct vs host, slop-overlap test) |
+| `filter_c_chimeric.py` | 5 | Multi-locus chimeric FP check (strict-identity off-target chrom aggregation) |
+| `filter_d_altlocus.py` | 5 | Alt-locus FP check (construct + host combined coverage) |
+| `verdict.py` | 6 | Pure `compute_verdict` + `FilterEvidence` + `VerdictRules` + `_apply_canonical_override` |
+| `config_loader.py` | 7 | `load_verdict_rules` (YAML → `VerdictRules`) |
+| `report.py` | 8 | Phase 5: `generate_report` + `write_stats` |
+| `fanout_orchestrator.py` | 9 | `main()` + `_run_phase_1_1_5` + `_run_phase_2_3` + `_run_phase_4` (CLI dispatch) |
+
+When adding a new `scripts/s05/*.py`, add its stage to the `STAGE` dict in `tests/test_s05_import_dag.py`. The 2 v1.0 shims (`annotate_report.py`, `per_site.py`) were retired in Session 7.
+
+### Verdict priority order
+
+Canonical priority (documented in `docs/measurements/verdict_priority.md`, implemented in `scripts/s05/verdict.py:compute_verdict`):
+
+```
+canonical_triplet > host_endogenous > Filter B > Filter C > Filter D > Filter A
+  > elements_present → CAND > UNK_FP > UNK
+```
+
+Changes to this ordering require a snapshot regeneration pass.
 
 ## Critical Design Decisions
 
@@ -143,3 +208,13 @@ micromamba create -n redgene -c conda-forge -c bioconda \
   python=3.11 bwa minimap2 samtools fastp spades bcftools \
   sra-tools pysam matplotlib biopython seqkit pigz
 ```
+
+### Env path gotcha
+
+Despite the create command above, `micromamba activate redgene` on this machine resolves to `/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/`, not `~/micromamba/envs/redgene/` (the user's `.bashrc` chains miniconda3 + micromamba such that shared pgl envs take precedence). For non-interactive shells / subprocesses where `micromamba` is not on PATH, prepend the env bin directly:
+
+```bash
+export PATH="/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/bin:$PATH"
+```
+
+`gh` CLI is NOT in the redgene env; it lives at `~/micromamba/bin/gh`.

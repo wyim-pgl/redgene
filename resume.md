@@ -1,194 +1,117 @@
-# Resume — RedGene Pipeline v1.0 MVP + v1.1 follow-up
+# Resume — RedGene Pipeline + Issue #4 (s05 module split CLOSED)
 
-**Date:** 2026-04-18 (late afternoon session)
-**Branch:** `feature/v1.0-mvp-2026-04-16` @ `87e769c` (pushed)
+**Date:** 2026-04-29 (single-session marathon: Sessions 3-7 in one day)
+**Branch:** `main` @ `51fff0e` (all sessions committed directly to main per user instruction)
 **Working dir:** `/data/gpfs/assoc/pgl/develop/redgene`
-**PR:** [#16](https://github.com/wyim-pgl/redgene/pull/16) — description updated with v1.1 follow-up section
-**Previous session:** 2026-04-17 (weekend MVP hardening)
+**Previous resume:** 2026-04-18 (v1.0 MVP PR #16 complete, v1.1 backlog open)
 
 ---
 
-## This session (2026-04-18 afternoon) — parallel agent dispatch
+## Issue #4 — s05 module split COMPLETED 🎯
 
-3 issues wired in isolated worktrees, then integrated to feature branch:
+7-session refactor splitting `scripts/s05_insert_assembly.py` (4003-line monolith) into 11 focused modules under `scripts/s05/`. All sessions landed; Issue #4 closable.
 
-| Commit   | Issue | Summary | Tests |
-|----------|-------|---------|-------|
-| `ef5fa13` | #5 CLOSED | CRL amplicons into gmo_combined_db_v2.fa (180 seqs, 74 `\|src=crl`) | +3 |
-| `5ed4f66` | #8 CLOSED | CoC log wire-in (`run_step()` CocLogger context) + `tools/verify_coc.py` | +27 |
-| `352a59b` | #3 CLOSED | `compute_verdict` full wire-in + priority reconcile + Rule 6 bug fix | +37 |
-| `87e769c` | #2 partial | coverage sensitivity 10/12 partial matrix | — |
+### Final commit chain (Sessions 1-7)
 
-**pytest: 138 → 205 PASS + 1 skipped** (+67 across 3 agents).
-
-**Key fix** (`352a59b`): Rule 6 in `compute_verdict` had a spurious
-`host_fraction < cand_host_fraction_max` gate that would have misclassified
-rice_G281 Chr3:16,439,674 (87.4% host fraction, 1024 bp non-host gap). Removed.
-Snapshot fixtures committed for rice_G281 + cucumber_line225.
-
-Priority canonical order (documented in `docs/measurements/verdict_priority.md`):
-`canonical_triplet > host_endogenous > B > C > D > A > elements_present → CAND > UNK_FP > UNK`.
-**No sample classifications changed.**
-
----
-
-## Immediate next session — finish Issue #2 AC-7
-
-SLURM 5630185 status @ session end:
-- `_0` .. `_9` COMPLETED
-- `_10` cucumber_line225 15x COMPLETED (10h52m) — results newly available
-- `_11` cucumber_line225 20x still RUNNING (12h36m+) — **1-2h remaining**
-
-Pick up:
-```bash
-cd /data/gpfs/assoc/pgl/develop/redgene
-eval "$(micromamba shell hook --shell bash)" && micromamba activate redgene
-
-# 1) Confirm _11 finished
-squeue -u wyim -j 5630185  # expect empty
-sacct -j 5630185 --format=JobID,State,Elapsed,MaxRSS | grep _11
-
-# 2) Re-run analyzer with all 12 cells now populated
-python scripts/util/analyze_coverage_sensitivity.py \
-    --results-dir results \
-    --samples rice_G281 tomato_Cas9_A2_3 cucumber_line225 \
-    --coverages 5x 10x 15x 20x \
-    --out docs/measurements/coverage_sensitivity_matrix.tsv
-
-# 3) GT-anchor verification step — currently analyzer writes "pending" for
-#    gt_anchor_hit.  Either extend analyzer to match against
-#    ground_truth_baseline.tsv OR spot-check reports by hand (3 samples × 4 covs).
-#    Sample GT coords:
-#      rice_G281          Chr3:16,439,674
-#      tomato_Cas9_A2_3   SLM_r2.0ch01:91,002,744
-#      cucumber_line225   LKUO03001451:6,501
-
-# 4) Update docs/measurements/coverage_sensitivity.md — replace "partial"
-#    section with final 4x3 matrix + observations + close Issue #2.
-
-# 5) Remove the intermediate matrix_partial.tsv (or keep as audit history)
-git rm docs/measurements/coverage_sensitivity_matrix_partial.tsv
-
-# 6) Commit + push
-git add docs/measurements/coverage_sensitivity{.md,_matrix.tsv}
-git commit -m "Issue #2 [AC-7] closed: final coverage sensitivity matrix (12/12)"
-git push
-gh issue close 2 --repo wyim-pgl/redgene
+```
+51fff0e Issue #4 Session 7: retire shims, add architecture docs, close refactor
+96d16fd Issue #4 Session 6 [3/3]: thin entrypoint + line-budget guard
+90a4343 Issue #4 Session 6 [2/3]: extract fanout_orchestrator.py
+972e0d7 Issue #4 Session 6 [1/3]: extract report.py
+14889ad Issue #4 Session 5 [2/2]: extract read_extraction.py
+a11e6ea Issue #4 Session 5 [1/2]: expand site_discovery.py (shim → native)
+ac4265d Issue #4 Session 4 [2/2]: expand classify.py (shim → native)
+aeee876 Issue #4 Session 4 [1/2]: extract assembly.py (highest-risk, 1190 lines)
+bf0c929 Issue #4 Session 3 fix: remove duplicate _parse_src_tag from monolith
+6225d42 Issue #4 Session 3: extract annotation.py (cycle fix: _parse_src_tag → primitives)
+6658fb8 Issue #4 Session 2 [2/2]: extract filter_d_altlocus.py
+2c59f1e Issue #4 Session 2 [1/2]: extract filter_a_host.py
+65b1c6e Issue #4 Session 1 [4/4]: DAG no-cycle test (pre-existing)
+81f22fe Issue #4 Session 1 [3/4]: filter_c_chimeric.py (pre-existing)
+a9230d7 Issue #4 Session 1 [2/4]: filter_b_flank.py (pre-existing)
+39da513 Issue #4 Session 1 [1/4]: primitives.py (pre-existing)
+46aaf40 Issue #4 design spec (pre-existing)
 ```
 
-Then PR #16 is ready for review/merge (see "Merge decision" below).
+### Final state
+
+| Metric | Pre-Issue-#4 | Post-Issue-#4 |
+|--------|--------------|----------------|
+| `scripts/s05_insert_assembly.py` | 4003 lines | **102 lines** (thin entrypoint shim, −97%) |
+| `scripts/s05/` modules | 0 native (4 forward-looking shims) | **11 native modules** (5401 lines total) |
+| pytest baseline | 235 PASS + 1 skipped | **242 PASS + 1 skipped** (+7 net) |
+| DAG no-cycle test | 10 PASSED | **15 PASSED** |
+| Verdict snapshots | 26 PASSED | **26 PASSED, ZERO drift across all 7 sessions** |
+| Line budget tests | n/a | added in Session 6 (monolith < 200, fanout::main < 250) |
+
+### 11-module final layout (DAG stage order)
+
+```
+primitives          (0) — log/revcomp/FASTA/dataclasses + _parse_src_tag (Session 3 cycle-fix migration)
+verdict             (6) — compute_verdict + FilterEvidence + VerdictRules + canonical_override
+config_loader       (7) — load_verdict_rules YAML loader
+site_discovery      (1) — find_softclip_junctions + 7 helpers + _extract_seeds_at_positions (Session 5 deviation)
+classify            (1) — classify_site_tiers + _filter_host_endogenous + _SRC_TIER state
+read_extraction     (2) — extract_candidate_reads + extract_unmapped_paired
+assembly            (3) — StrandAwareSeedExtender + 11 helpers + assemble_insert (1178 lines)
+annotation          (4) — _parse_blast6 + _run_local_blast + _run_remote_blast + annotate_insert
+filter_a_host       (5) — _blast_insert_vs_host (host-fraction FP filter)
+filter_b_flank      (5) — construct-flanking FP filter (Session 1)
+filter_c_chimeric   (5) — multi-locus chimeric FP filter (Session 1)
+filter_d_altlocus   (5) — construct+host coverage FP filter
+report              (8) — generate_report + write_stats
+fanout_orchestrator (9) — main + 4 phase helpers (_run_phase_1_1_5/2_3/4)
+```
+
+### Architecture doc
+
+`docs/architecture/s05-modules.md` (created Session 7) — authoritative reference. Replaces the design spec at `docs/superpowers/specs/2026-04-19-s05-module-split-design.md`.
+
+### Architectural deviations (all justified, documented in commits)
+
+1. **Session 3**: `_parse_src_tag` moved to `primitives.py` (not stay in monolith) to break runtime circular import (annotation → classify shim → monolith partially-initialized).
+2. **Session 4**: `extract_unmapped_paired` lazy-imported inside `assemble_insert` body (cycle break, replaced by clean module-top import in Session 5 once `read_extraction.py` landed).
+3. **Session 5**: `_extract_seeds_at_positions` placed in `site_discovery.py` (not `read_extraction.py`) because its sole caller `legacy_junctions_to_sites` is Phase 1 — moving to Phase 2 would force stage 1 → stage 2 import (DAG violation).
+4. **Session 6**: `main()` split into 4 phase helpers (the ONE non-verbatim change in the entire refactor) to meet `< 250 line` spec budget. Variable names and control flow preserved verbatim within each split.
+
+### Verbatim policy
+
+Function bodies were extracted byte-identical across all sessions (verified by `diff` in spec compliance reviews). Snapshot fixtures (`tests/fixtures/verdict_snapshots/`) confirmed zero behavioral drift across all 11 commits.
 
 ---
 
----
+## Open work / next sessions
 
-## Session outcome (2026-04-17 → 2026-04-18)
+### Issue #4 close-out
 
-### v1.0 MVP PR 생성 (#16)
+```bash
+gh issue view 4 --repo wyim-pgl/redgene
+gh issue close 4 --repo wyim-pgl/redgene -c "Completed in 17 commits across 7 sessions. See docs/architecture/s05-modules.md for the final module layout."
+```
 
-- 19 commits on `64e6179..025c1ed`
-- **pytest 32 → 138 PASS + 1 skipped** (+106 tests)
-- **8 issues closed** (#1, #9, #10, #11, #12, #13, #14, #15)
-- **7 issues open** (all v1.1 scope or blocked)
-
-### AC Release Checklist (final)
-
-| AC | 목표 | 실측 | Status |
-|----|------|------|--------|
-| AC-1 Sensitivity (GT anchor ≥ 100%) | 6/6 | **6/6** (rice + A2_3 + A2_2 + cuc_212 + cuc_224 + cuc_225) | ✅ PASS |
-| AC-2 Specificity (≤ 5 verified FP/sample) | ≤5 | cuc_225 8 CAND → BLAST → **0 FP / 8 TRUE_INSERTION** | ✅ PASS (재해석) |
-| AC-4 Turnaround (UGT72E3 ≤ 48h) | ≤48h | **1h37m** (JOBID 5629371_7) | ✅ PASS |
-| AC-6 Audit trail (4/4 fields) | 4/4 | input SHA-256 + commit + DB md5 + software versions | ✅ PASS |
-| pytest ≥ 10 + compute_verdict 3 | 10+ | **138 PASS + 1 skip** | ✅ PASS |
-
-### Commits (신규 19개)
-
-| # | Commit | Task | 결과 |
-|---|--------|------|------|
-| 1 | `2d7c7e7` | bug.md close-out (OPEN-1, OPEN-5, +BUG-18) | — |
-| 2 | `e0821db` | T12-analyze: s04 minimap2 PoC 3/4 PASS | — |
-| 3 | `43fb3cf` | **Issue #11 I-3** host_endogenous → compute_verdict (TDD +4) | pytest 36 |
-| 4 | `257716e` | **Issue #3 scoped** canonical_triplet wire-in (TDD +7) | pytest 43 |
-| 5 | `323147a` | **Issue #14 closed** T12 C2 grep prefix fix (TDD +4) | pytest 47 |
-| 6 | `39bafd2` | **Issue #15 closed** cucumber 96G default (TDD +4) | pytest 51 |
-| 7 | `344ea3e` | **Issue #9 closed** T4 build_common_payload (TDD +4) | pytest 55 |
-| 8 | `2ae6b4c` | **Issue #13 closed** T10 pre-mask BED (TDD +5) | pytest 60 |
-| 9 | `f48f475` | **Issue #12 closed** T8 SLURM array hardening (TDD +8) | pytest 68 |
-| 10 | `cdcaad6` | **Issue #11 closed** T6 verdict hardening I-1/2 + M-1..5,7 (TDD +13) | pytest 81 |
-| 11 | `413f030` | **Issue #10 closed** T5 element DB hardening (TDD +9 +1 skip) | pytest 90 |
-| 12 | `1be052b` | Issue #5 scaffold crl_amplicons build script (TDD +7) | pytest 97 |
-| 13 | `6ac9775` | Issue #1 AC-2 FP helper scaffold (TDD +7) | pytest 104 |
-| 14 | `348a63f` | Issue #2 AC-7 coverage scaffold (TDD +10) | pytest 114 |
-| 15 | `9039c9c` | Issue #6 PDF report scaffold (TDD +8) | pytest 122 |
-| 16 | `c871a93` | Issue #8 CoC logger scaffold (TDD +10) | pytest 132 |
-| 17 | `0179a68` | Issue #2 AC-7 config.yaml +12 sample entries | — |
-| 18 | `a60595d` | Issue #2 AC-7 run_coverage_sensitivity.sh wire-in (+6) | pytest 138 |
-| 19 | `025c1ed` | **Issue #1 closed** cuc_225 BLAST classification (0 FP / 8 TRUE) | — |
-
----
-
-## SLURM 이번 세션
-
-### T11 W1 96G 재검증 (JOBID 5630044, Issue #15 fix 검증)
-| Array | Sample | State | Wall | MaxRSS | GT anchor | CAND/FP/UNK |
-|-------|--------|-------|------|--------|-----------|-------------|
-| _0 | cucumber_line212 | ✅ COMPLETED | 11h59m | 83.2G | **LKUO03001392:2,751,687 CAND ✅** | 1 / 4 / 26 |
-| _1 | cucumber_line224 | ✅ COMPLETED | 8h09m | 90.8G | **LKUO03001512:581,328 CAND ✅** | 1 / 2 / 15 |
-
-### Issue #1 remote BLAST (JOBID 5630183)
-- COMPLETED 1h39m, cuc_225 8 CAND vs NCBI nt
-- 결과: **8/8 TRUE_INSERTION** (pRNAi-GG, pBI121, pGV4945, pGA18, Klebsiella plasmid 100% identity)
-- AC-2 재해석 → PASS
-
-### Issue #2 AC-7 coverage sensitivity (JOBID 5630185)
-- submitted, array `[0-11]` = {rice_G281, tomato_Cas9_A2_3, cucumber_line225} × {5x, 10x, 15x, 20x}
-- 상태: PD (Priority queue) → RUNNING 예상
-- 예상 wall: 6-8h/task, 24-48h total
-
----
-
-## Open issues (v1.1 scope, 4개 남음)
+### Remaining v1.1 backlog (from previous resume)
 
 | # | Title | 상태 |
 |---|-------|------|
-| 2 | AC-7 coverage sensitivity batch | SLURM 5630185 11/12 완료, `_11` 20x 곧 완료 (1-2h), 최종 matrix 집계 대기 |
-| 4 | s05_insert_assembly.py 8-10 모듈 분할 | v1.1 multi-day refactor (verdict 분리는 `352a59b` 으로 선행됨) |
+| 4 | s05 module split | ✅ **CLOSED 2026-04-29** (this resume) |
 | 6 | PDF insertion report (R-5) | scaffold 완료, junction/CRISPR panel + step-8 wire 필요 |
 | 7 | KCGP nomenclature (R-6) | **blocked** on 사양서 |
 
-**이번 세션 CLOSED:** #3 (`352a59b`), #5 (`ef5fa13`), #8 (`5ed4f66`) — 3 병렬 agent dispatch.
+#### Session 7 cleanup opportunities (deferred)
 
----
+These were flagged by code-reviewer agents during Sessions 4-6 but not blocking for Issue #4 closure:
 
-## Next-session followups (우선순위 순)
+- **Constants duplication cleanup**: `HOST_ENDO_*` and `CLIP_HOST_*` exist in BOTH `classify.py` AND the (now-thin) monolith. The monolith copies have no readers. Remove or convert to `from s05.classify import` re-export.
+- **`__all__` definitions**: Add explicit `__all__` to `assembly.py` and other large modules to lock the public surface.
+- **`_run_border_blast` extraction**: T-DNA border motif scan inside `annotate_insert` (annotation.py lines 300-317) could be a private helper for testability.
+- **RB == LB consensus**: `annotate_insert` uses identical `TGGCAGGATATATTGTGGTGTAAAC` for both RB and LB consensus — verify against T-DNA biology (may be a latent bug; preserved verbatim).
+- **`__init__.py` re-export ordering**: Currently mixed; could align with DAG stage order for self-documentation.
 
-1. **Issue #2 finalize** — 위 "Immediate next session" 섹션 참고 (`_11` 완료 → analyzer 재실행 → matrix commit → `gh issue close 2`).
+### Next-session priorities
 
-2. **PR #16 review + merge → main**
-   ```bash
-   gh pr view 16 --repo wyim-pgl/redgene
-   gh pr merge 16 --repo wyim-pgl/redgene --squash  # or --merge
-   git tag -a v1.0 -m "RedGene v1.0 MVP — AC-1 6/6, AC-2/4/6 PASS + v1.1 follow-up"
-   git push origin v1.0
-   ```
-
-3. **v1.1 remaining backlog**
-   - **#4 s05 module split**: 4100-line monolithic → `scripts/s05/{assembly, annotation, filter_a-d, verdict, report, fanout_orchestrator}.py`. verdict/priority 분리는 이미 `352a59b` 로 완료 (`scripts/s05/verdict.py`).
-   - **#6 PDF report**: junction diagram + CRISPR panel 구현 → `run_pipeline.py --steps 8` wire. CoC log appendix 는 #8 closed 덕분에 가능해짐.
-   - **#7 KCGP 사양서 요청**: 팀 리드에게 공식 nomenclature 규격 요청, 도착 시 `scripts/util/kcgp_id.py` 구현 + 리포트 KCGP ID 컬럼 추가.
-
----
-
-## v1.0 MVP 핵심 성과 🎯
-
-1. **AC-4 완성**: soybean_UGT72E3 48h+ TIMEOUT → 1h37m (-96%) via T8 `--fanout` array.
-2. **AC-6 완성**: 모든 샘플 `audit_header.json` 자동 기록.
-3. **AC-1 6/6 완성**: cucumber 212/224 96G 재실행 (BUG-18 fix) 로 AC-1 6/6 달성.
-4. **AC-2 확정**: cuc_225 8 CAND → NCBI BLAST → 0 FP / 8 TRUE_INSERTION. AC-2 스펙 재해석 후 PASS.
-5. **pytest 32 → 138** (+106 tests, 회귀 0).
-6. **8 issues closed, 19 commits, 1 PR** — 주말 full-auto 세션으로 완성.
-7. **T12 s04 minimap2 PoC**: 3/4 PASS, CONDITIONAL-DEFER for v1.1.
-8. **T6 compute_verdict**: pure function + VerdictRules loader + 13 pytest scenarios + host_endogenous rule port.
+1. **Close Issue #4 on GitHub** — see commands above.
+2. **Issue #6 PDF report** — implement junction diagram + CRISPR panel inside `scripts/reports/insertion_pdf.py`, wire `run_pipeline.py --steps 8`. CoC log appendix is now possible (Issue #8 closed).
+3. **Issue #7 KCGP nomenclature** — request 사양서 from team lead, implement `scripts/util/kcgp_id.py` when received.
 
 ---
 
@@ -196,33 +119,45 @@ Then PR #16 is ready for review/merge (see "Merge decision" below).
 
 ```bash
 cd /data/gpfs/assoc/pgl/develop/redgene
-eval "$(micromamba shell hook --shell bash)" && micromamba activate redgene
+export PATH="/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/bin:$PATH"
 
-# 현 state 확인
+# Verify final state
 git log --oneline -20
-git branch  # feature/v1.0-mvp-2026-04-16 (pushed)
-pytest tests/ -q  # 138 PASS + 1 skipped 기대
+pytest tests/ -q                               # 242 PASS + 1 skipped
+pytest tests/test_s05_import_dag.py -v         # 15 PASSED
+pytest tests/test_verdict_snapshots.py -v      # 26 PASSED, 0 drift
+python scripts/s05_insert_assembly.py --help > /dev/null && echo OK
+wc -l scripts/s05_insert_assembly.py scripts/s05/*.py
 
-# PR 상태
-gh pr view 16 --repo wyim-pgl/redgene
-gh pr checks 16 --repo wyim-pgl/redgene
+# Architecture doc
+less docs/architecture/s05-modules.md
 
-# SLURM 5630185 (Issue #2 coverage) 상태
-sacct -j 5630185 --format=JobID,State,Elapsed,MaxRSS,ExitCode | head -20
-squeue -u wyim -j 5630185
+# Plan files (Sessions 3-7)
+ls docs/superpowers/plans/2026-04-2*-s05-session*
 
-# Open issues (v1.1 backlog)
+# Open issues
 gh issue list --repo wyim-pgl/redgene --state open
-
-# Classification TSV for AC-2
-cat element_db/cuc225_cand_classification.tsv
 ```
 
 주요 문서:
-- `docs/team-review/team-consensus.md` — T1-T12 권위 판정 (2026-04-16)
-- `docs/measurements/s04_minimap2_poc.md` — T12 4-criterion 결과 (3/4 PASS)
-- `docs/measurements/ac2_cuc225_fp_workflow.md` — Issue #1 분류 결과
-- `docs/measurements/coverage_sensitivity.md` — Issue #2 matrix (SLURM 대기 중)
-- `docs/host_masks/host_masked_rationale.tsv` — T9 BED audit trail
-- `element_db/cuc225_cand_classification.tsv` — 8 TRUE_INSERTION 증거
-- `bug.md` — OPEN 이슈 + 새 BUG-18 등재
+- **`docs/architecture/s05-modules.md`** — 최종 모듈 레이아웃 + DAG + 리팩터링 히스토리 (Session 7 산출물)
+- `docs/superpowers/specs/2026-04-19-s05-module-split-design.md` — 원래 설계 스펙
+- `docs/superpowers/plans/2026-04-28-s05-session{3,4,5}-*.md` + `2026-04-29-s05-session6-report-fanout.md` — 세션별 plan 파일
+- `tests/test_s05_import_dag.py` — DAG no-cycle invariant (15 entries)
+- `tests/test_verdict_snapshots.py` — primary regression signal (26 fixtures)
+- `tests/test_submit_s05_array.py` — line-budget guard (Session 6)
+
+---
+
+## v1.0 MVP 핵심 성과 (이전 세션, 2026-04-17 → 04-18)
+
+8 issues closed (#1, #3, #5, #8, #9, #10, #11, #12, #13, #14, #15), 19 commits, PR #16, pytest 32 → 138, AC-1/2/4/6 모두 PASS. 자세한 내용은 git log 참조.
+
+## Issue #4 핵심 성과 (이번 세션, 2026-04-28 → 04-29)
+
+- **17 commits** 단일 main branch에 직접
+- **subagent-driven-development** workflow: implementer → spec-reviewer → quality-reviewer 반복 (Anthropic API rate limit 한 번 도달, recover 후 직접 검증으로 진행)
+- **Verbatim policy**: 모든 함수 body byte-identical 이동 (단 1개 예외: Session 6의 main() 4-way split)
+- **Zero snapshot drift** 26 fixtures across 11 commits (regression-free)
+- **Architectural deviations 4건** 모두 cycle break / DAG 위반 회피로 정당화 + 커밋 메시지에 명시
+- **plan 파일 5개** (`docs/superpowers/plans/2026-04-2*-s05-session{3,4,5,6,7}*`) 세션별 단계 추적
