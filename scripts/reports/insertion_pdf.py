@@ -308,6 +308,10 @@ def _page_text(pdf: PdfPages, title: str, body_lines: list[str],
                 transform=ax.transAxes, verticalalignment="top")
         y -= step
         if y < 0.04:
+            print(
+                f"[insertion_pdf] WARN: page '{title}' truncated at line {body_lines.index(line) + 1}/{len(body_lines)}",
+                file=sys.stderr,
+            )
             break
     pdf.savefig(fig)
     plt.close(fig)
@@ -699,6 +703,7 @@ def _page_appendix_coc(pdf: PdfPages, entries: list[dict[str, Any]]) -> int:
     """
     if not entries:
         return 0
+    entries = sorted(entries, key=lambda e: e.get("ts", ""))
     body = ["event  step    ts                                  extra"]
     body.append("-" * 110)
     for e in entries:

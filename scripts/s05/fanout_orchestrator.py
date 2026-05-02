@@ -453,7 +453,8 @@ def main() -> None:
         description="Step 5: Targeted insert assembly "
                     "(soft-clip detection + k-mer extension + Pilon gap fill)")
     parser.add_argument("--junctions", default=None,
-                        help="junctions.tsv from step 6 (fallback if soft-clip "
+                        help="DIRECT-INVOCATION ESCAPE HATCH (run_pipeline.py never sets this). "
+                             "junctions.tsv from step 6 (fallback if soft-clip "
                              "detection finds nothing)")
     parser.add_argument("--host-bam", required=True,
                         help="Host-mapped BAM from step 7")

@@ -28,6 +28,7 @@ Session 7 (2026-04-29) retired the two remaining shims (``annotate_report``
 and ``per_site``), migrated test imports off the monolith, and thinned
 the monolith re-export block. Issue #4 is now complete.
 """
+# Underscored names below are re-exported for monolith backward compatibility (Issue #4).
 from .primitives import (  # noqa: F401
     STEP,
     log,
