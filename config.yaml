@@ -49,6 +49,7 @@ canonical_triplets:
 samples:
   rice_G281:
     name: "Rice G281 transgenic event"
+    event: G281
     host_reference: db/Osativa_323_v7.0.fa
     construct_reference: db/G281_construct.fa
     reads:
@@ -154,6 +155,7 @@ samples:
 
   tomato_Cas9_A2_3:
     name: "Micro-Tom Cas9 1-A2-3 (Cas9 present, heterozygous edit)"
+    event: A2_3
     host_reference: db/SLM_r2.0.pmol.fasta
     construct_reference: element_db/gmo_combined_db.fa
     wt_control: tomato_WT
@@ -273,6 +275,7 @@ samples:
 
   cucumber_line225:
     name: "Cucumber thaumatin line 225 (2 T-DNA copies + backbone, Chr2)"
+    event: line225
     host_reference: db/CucSat_B10v3.fa
     construct_reference: element_db/gmo_combined_db.fa
     reads:
