@@ -36,18 +36,23 @@ def build_kcgp_id(
     event: str,
     year: int,
     site_ord: int,
-    spec: str = "tentative_v0",
 ) -> str:
     """Return the KCGP placeholder ID for one site.
 
     Raises KeyError if the host_ref normalized name is not registered in
-    HOST_CODES. Raises ValueError if site_ord exceeds the 4-digit field.
+    HOST_CODES. Raises ValueError if event is not alphanumeric/underscore
+    or if site_ord exceeds the 4-digit field.
     """
     norm = _normalize_host_path(host_ref_path)
+    if not re.fullmatch(r"[A-Za-z0-9_]+", event):
+        raise ValueError(
+            f"event {event!r} must be non-empty alphanumeric/underscore (no hyphens)"
+        )
     if norm not in HOST_CODES:
+        known = {k: v for k, v in sorted(HOST_CODES.items())}
         raise KeyError(
             f"host '{norm}' (from {host_ref_path}) not in HOST_CODES; "
-            f"known: {sorted(HOST_CODES)}"
+            f"known: {known}"
         )
     if site_ord < 0 or site_ord > 9999:
         raise ValueError(f"site_ord {site_ord} out of 4-digit range (0-9999)")

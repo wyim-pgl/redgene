@@ -45,7 +45,8 @@ def test_build_unknown_host_raises():
     with pytest.raises(KeyError) as exc:
         mod.build_kcgp_id("db/unknown_host.fa", "G281", 2026, 1)
     msg = str(exc.value)
-    assert "unknown_host" in msg or "OSA" in msg
+    assert "unknown_host" in msg
+    assert "OSA" in msg  # known host list shown for debuggability
 
 
 def test_round_trip():
@@ -92,3 +93,16 @@ def test_site_overflow():
     mod.build_kcgp_id("db/Osativa_323_v7.0.fa", "X", 2026, 9999)
     with pytest.raises(ValueError):
         mod.build_kcgp_id("db/Osativa_323_v7.0.fa", "X", 2026, 10000)
+
+
+def test_build_rejects_event_with_hyphen():
+    mod = _load_module()
+    with pytest.raises(ValueError) as exc:
+        mod.build_kcgp_id("db/Osativa_323_v7.0.fa", "A2-3", 2026, 1)
+    assert "event" in str(exc.value).lower()
+
+
+def test_build_rejects_empty_event():
+    mod = _load_module()
+    with pytest.raises(ValueError):
+        mod.build_kcgp_id("db/Osativa_323_v7.0.fa", "", 2026, 1)
