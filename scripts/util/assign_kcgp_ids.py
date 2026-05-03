@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from kcgp_id import HOST_CODES, build_kcgp_id, _normalize_host_path  # noqa: E402
+from kcgp_id import HOST_CODES, SPEC_VERSION, build_kcgp_id, normalize_host_path  # noqa: E402
 
 REPORT_RE = re.compile(r"^insertion_(.+)_(\d+)_report\.txt$")
 VERDICT_PRIORITY = {
@@ -57,7 +57,7 @@ def parse_report(path: Path) -> tuple[str, int, str] | None:
                 break
         else:
             log(f"warn {path.name}: no Verdict line, treating as UNKNOWN")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         log(f"warn {path.name}: read failed ({exc}), treating as UNKNOWN")
     return host_chr, pos, verdict
 
@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         log(f"FATAL: sample {sample!r} has no 'host_reference:' field")
         return 1
 
-    norm = _normalize_host_path(host_ref)
+    norm = normalize_host_path(host_ref)
     if norm not in HOST_CODES:
         log(
             f"FATAL: host '{norm}' (from {host_ref}) not in HOST_CODES; "
@@ -141,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 kid = "-"
             internal = f"{sample}_{host_chr}_{pos}"
-            writer.writerow([kid, internal, verdict, host_chr, pos, "tentative_v0"])
+            writer.writerow([kid, internal, verdict, host_chr, pos, SPEC_VERSION])
 
     log(f"wrote {out_path} ({len(reports)} rows, {n_cand} CANDIDATE)")
     return 0

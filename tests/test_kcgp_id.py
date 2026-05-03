@@ -59,7 +59,7 @@ def test_round_trip():
     for host, event, year, site_ord in cases:
         kid = mod.build_kcgp_id(host, event, year, site_ord)
         parsed = mod.parse_kcgp_id(kid)
-        assert parsed["host_code"] == mod.HOST_CODES[mod._normalize_host_path(host)]
+        assert parsed["host_code"] == mod.HOST_CODES[mod.normalize_host_path(host)]
         assert parsed["event"] == event
         assert parsed["year_2digit"] == year % 100
         assert parsed["site_ord"] == site_ord
@@ -83,9 +83,9 @@ def test_event_with_underscore():
 
 def test_normalize_host_path():
     mod = _load_module()
-    assert mod._normalize_host_path("db/Osativa_323_v7.0.fa") == "Osativa_323_v7.0"
-    assert mod._normalize_host_path("db/SLM_r2.0.pmol.fasta") == "SLM_r2.0.pmol"
-    assert mod._normalize_host_path("Osativa_323_v7.0") == "Osativa_323_v7.0"
+    assert mod.normalize_host_path("db/Osativa_323_v7.0.fa") == "Osativa_323_v7.0"
+    assert mod.normalize_host_path("db/SLM_r2.0.pmol.fasta") == "SLM_r2.0.pmol"
+    assert mod.normalize_host_path("Osativa_323_v7.0") == "Osativa_323_v7.0"
 
 
 def test_site_overflow():

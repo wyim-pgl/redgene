@@ -19,10 +19,12 @@ HOST_CODES: dict[str, str] = {
     "Gmax_v4.0":          "GMA",   # soybean
 }
 
+SPEC_VERSION = "tentative_v0"
+
 _KCGP_RE = re.compile(r"^KCGP-([A-Z]{3})-([A-Za-z0-9_]+)-(\d{2})-(\d{4})$")
 
 
-def _normalize_host_path(host_ref_path: str) -> str:
+def normalize_host_path(host_ref_path: str) -> str:
     """Strip leading directory and a single trailing .fa/.fasta extension."""
     name = Path(host_ref_path).name
     for ext in (".fasta", ".fa"):
@@ -43,7 +45,7 @@ def build_kcgp_id(
     HOST_CODES. Raises ValueError if event is not alphanumeric/underscore
     or if site_ord exceeds the 4-digit field.
     """
-    norm = _normalize_host_path(host_ref_path)
+    norm = normalize_host_path(host_ref_path)
     if not re.fullmatch(r"[A-Za-z0-9_]+", event):
         raise ValueError(
             f"event {event!r} must be non-empty alphanumeric/underscore (no hyphens)"
