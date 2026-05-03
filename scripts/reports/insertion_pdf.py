@@ -261,6 +261,27 @@ def load_editing_data(
     return ("ok", on_targets, sites)
 
 
+def load_kcgp_mapping(sample_dir: Path) -> dict[str, Any] | None:
+    """Return {'kcgp_id', 'spec_version'} for the lowest-ordinal CANDIDATE row, or None.
+
+    Soft-fails on missing file, IO error, or malformed CSV — the PDF still renders.
+    """
+    path = Path(sample_dir) / "kcgp_mapping.tsv"
+    if not path.exists():
+        return None
+    try:
+        with open(path, newline="") as fh:
+            for row in csv.DictReader(fh, delimiter="\t"):
+                if row.get("verdict") == "CANDIDATE" and row.get("kcgp_id", "-") != "-":
+                    return {
+                        "kcgp_id": row["kcgp_id"],
+                        "spec_version": row.get("spec_version", "tentative_v0"),
+                    }
+    except (OSError, csv.Error):
+        return None
+    return None
+
+
 def build_sample_info(
     sample_dir: Path,
     *,
@@ -332,7 +353,12 @@ def _paginate(lines: list[str], *, page_lines: int = 38) -> list[list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def _page_cover(pdf: PdfPages, sample_name: str, audit: dict[str, Any]) -> None:
+def _page_cover(
+    pdf: PdfPages,
+    sample_name: str,
+    audit: dict[str, Any],
+    sample_dir: Path | None = None,
+) -> None:
     lines = [
         f"Sample:        {sample_name}",
         f"Generated:     {audit.get('generated_at', '—')}",
@@ -350,6 +376,16 @@ def _page_cover(pdf: PdfPages, sample_name: str, audit: dict[str, Any]) -> None:
         )
     if not audit:
         lines.append("  (audit_header.json not present — placeholder page)")
+
+    if sample_dir is not None:
+        kcgp = load_kcgp_mapping(sample_dir)
+        if kcgp:
+            lines = [
+                f"⚠ KCGP ID ({kcgp['spec_version']} — pending official spec):",
+                f"    {kcgp['kcgp_id']}",
+                "",
+            ] + lines
+
     _page_text(pdf, "RedGene Insertion Report", lines)
 
 
@@ -754,7 +790,7 @@ def generate_pdf(
 
     pages = 0
     with PdfPages(out_pdf) as pdf:
-        _page_cover(pdf, sample_name, audit); pages += 1                # (1)
+        _page_cover(pdf, sample_name, audit, sample_dir=sample_dir); pages += 1  # (1)
         _page_sample_info(pdf, sample_info); pages += 1                 # (2)
         _page_pipeline_version(pdf, pipeline_ver); pages += 1           # (3)
         _page_summary(pdf, summary); pages += 1                         # (4)
