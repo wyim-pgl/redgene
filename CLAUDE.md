@@ -81,7 +81,7 @@ python scripts/viz/plot_editing_effects.py \
 
 `run_pipeline.py` orchestrates 7 core + 2 optional (4b, 8) analysis steps by calling standalone scripts in `scripts/` via subprocess. Config is loaded from `config.yaml` (YAML with per-sample settings). Each step script accepts `--outdir`, `--sample-name`, and step-specific arguments. Inter-step dependencies are wired in `build_step_cmd()` in run_pipeline.py.
 
-`STEP_ORDER` in run_pipeline.py is the single source of truth for step sequencing: `["1", "2", "3", "4", "4b", "5", "6", "7", "8"]`. Step 8 (PDF report) is opt-in and never part of default `--steps 1-5`.
+`STEP_ORDER` in run_pipeline.py is the single source of truth for step sequencing: `["1", "2", "3", "4", "4b", "5", "5b", "6", "7", "8"]`. Steps 5b (construct assembly) and 8 (PDF report) sit after the `5` boundary and are opt-in — never part of default `--steps 1-5`.
 
 ### Pipeline flow and step dependencies
 ```
@@ -90,6 +90,7 @@ python scripts/viz/plot_editing_effects.py \
   → [4] bwa → host BAM (bottleneck: ~5-7h)
   → [4b] SPAdes → sample-specific construct contigs
   → [5] Targeted insert assembly + FP filtering (uses 4b contigs + common_payload)
+  → [5b] Construct assembly (opt-in: global construct inventory + per-site links)
   → [6] CRISPR indel detection (optional, needs WT)
   → [7] copy number (depth ratio)
   → [8] PDF insertion report (opt-in; reads existing s05/s07 output)
@@ -104,6 +105,7 @@ Steps 1-3 are fast (<30 min each). Step 4 is the bottleneck (~5-7h per sample). 
 | `scripts/s03b_homology_filter.py` | WT-based filtering of host-derived false positives |
 | `scripts/s04b_construct_assembly.py` | De novo SPAdes assembly of construct-hitting reads for per-sample element DB |
 | `scripts/s05_insert_assembly.py` | **Thin entrypoint** (102 lines, post-Issue #4). Re-exports backward-compat symbols from `scripts/s05/` package; orchestration lives in `scripts/s05/fanout_orchestrator.py::main`. Step 5 is the core: targeted assembly + 4 FP filters (host-fraction, construct-flanking, chimeric, alt-locus). |
+| `scripts/s05b_construct_assembly.py` | Step 5b (opt-in): reconstruct + characterize the inserted construct — global classified/annotated contig inventory (assemble-then-classify, reuses s04b `contigs_all.fasta`) + per-site links to s05 CANDIDATE sites. Self-contained; local-first BLAST with opt-in remote nt. |
 | `scripts/s06_indel.py` | CRISPR editing detection (pileup-based, NOT bcftools) |
 | `scripts/s07_copynumber.py` | Depth-ratio copy number estimation |
 | `scripts/reports/insertion_pdf.py` | Step 8 PDF report (matplotlib/PdfPages; no reportlab dep) |
