@@ -767,6 +767,67 @@ def _page_appendix_coc(pdf: PdfPages, entries: list[dict[str, Any]]) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _load_construct_inventory(s05b_dir: Path) -> dict[str, Any] | None:
+    """Parse s05b outputs into {summary: dict, links: list[dict]} or None.
+
+    Returns None when the step-5b output directory / summary is absent, so the
+    PDF stays valid for samples that never ran step 5b.
+    """
+    s05b_dir = Path(s05b_dir)
+    summary_p = s05b_dir / "construct_summary.txt"
+    links_p = s05b_dir / "site_construct_links.tsv"
+    if not summary_p.is_file():
+        return None
+    summary: dict[str, str] = {}
+    for line in summary_p.read_text().splitlines():
+        if line.startswith("#") or "\t" not in line:
+            continue
+        k, v = line.split("\t", 1)
+        summary[k] = v
+    links: list[dict[str, str]] = []
+    if links_p.is_file():
+        rows = links_p.read_text().splitlines()
+        if rows:
+            header = rows[0].split("\t")
+            for r in rows[1:]:
+                cells = r.split("\t")
+                if len(cells) == len(header):
+                    links.append(dict(zip(header, cells)))
+    return {"summary": summary, "links": links}
+
+
+def _page_construct_inventory(
+    pdf: PdfPages, inv: dict[str, Any], sample_name: str
+) -> None:
+    """Render the Construct Inventory section (step 5b) as a text page."""
+    summary = inv.get("summary", {})
+    links = inv.get("links", [])
+    body: list[str] = []
+    body.append("Reconstructed transgene construct (step 5b)")
+    body.append("")
+    body.append(f"  Total construct bp     : {summary.get('total_construct_bp', 'NA')}")
+    body.append(f"  Distinct elements      : {summary.get('distinct_elements', 'NA')}")
+    body.append(f"  Element inventory      : {summary.get('element_inventory', 'NA')}")
+    body.append(f"  Novel payload detected : {summary.get('novel_payload_detected', 'NA')}")
+    body.append("")
+    body.append("  Contigs by class:")
+    for cls in ("construct", "chimeric", "foreign_unknown", "host"):
+        body.append(f"    {cls:<16}: {summary.get(f'contigs_{cls}', '0')}")
+    body.append("")
+    body.append(f"  Sites linked to construct contigs: {summary.get('sites_linked', '0')}")
+    body.append("")
+    if links:
+        body.append(f"  {'site_id':<22} {'contig':<14} {'side':<11} {'conf':<7}")
+        for lk in links:
+            body.append(
+                f"  {lk.get('site_id', ''):<22} {lk.get('contig_id', ''):<14} "
+                f"{lk.get('junction_side', ''):<11} {lk.get('link_confidence', ''):<7}"
+            )
+    else:
+        body.append("  (no construct contigs linked to CANDIDATE sites)")
+    _page_text(pdf, f"Construct Inventory — {sample_name}", body)
+
+
 def generate_pdf(
     *,
     sample_dir: Path,
@@ -796,6 +857,10 @@ def generate_pdf(
         _page_summary(pdf, summary); pages += 1                         # (4)
         pages += _page_sites_table(pdf, rows)                           # (5)
         _page_junction_diagram(pdf, rows); pages += 1                   # (6)
+        construct_inv = _load_construct_inventory(
+            sample_dir / "s05b_construct_assembly")
+        if construct_inv is not None:
+            _page_construct_inventory(pdf, construct_inv, sample_name); pages += 1  # (6b)
         _page_copy_number(pdf, sample_dir); pages += 1                  # (7)
         pages += _page_crispr_editing(pdf, sample_dir)                  # (8)
         _page_appendix_audit(pdf, audit); pages += 1                    # (9)
