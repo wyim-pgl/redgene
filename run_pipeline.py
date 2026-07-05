@@ -43,6 +43,7 @@ STEP_SCRIPTS: dict[str, str] = {
     "4": "scripts/s04_host_map.py",
     "4b": "scripts/s04b_construct_assembly.py",
     "5": "scripts/s05_insert_assembly.py",
+    "5b": "scripts/s05b_construct_assembly.py",
     "6": "scripts/s06_indel.py",
     "7": "scripts/s07_copynumber.py",
     "8": "scripts/reports/insertion_pdf.py",
@@ -55,6 +56,7 @@ STEP_NAMES: dict[str, str] = {
     "4": "Map all reads to host (bwa mem)",
     "4b": "De novo construct assembly (SPAdes, per-sample DB)",
     "5": "Targeted insert assembly + FP filtering",
+    "5b": "Construct assembly (global inventory + per-site links)",
     "6": "CRISPR indel detection (treatment vs WT)",
     "7": "Copy number estimation",
     "8": "PDF insertion report (Issue #6 R-5)",
@@ -62,7 +64,7 @@ STEP_NAMES: dict[str, str] = {
 
 # Canonical execution order for steps. Used to expand ranges and to sort
 # parsed steps. `4b` slots between `4` and `5` so `--steps 1-5` includes it.
-STEP_ORDER: list[str] = ["1", "2", "3", "4", "4b", "5", "6", "7", "8"]
+STEP_ORDER: list[str] = ["1", "2", "3", "4", "4b", "5", "5b", "6", "7", "8"]
 STEP_INDEX: dict[str, int] = {s: i for i, s in enumerate(STEP_ORDER)}
 
 # ---------------------------------------------------------------------------
@@ -294,6 +296,25 @@ def build_step_cmd(
             bed_path = base_dir / "docs" / "host_masks" / bed_name
             if bed_path.exists():
                 cmd.extend(["--mask-bed", str(bed_path)])
+        return cmd
+    elif step == "5b":
+        # Construct assembly: reconstruct + characterize the inserted construct.
+        # Reuses s04b contigs_all.fasta; links classified contigs to s05 sites.
+        memory_gb = max(8, threads * 4 // 2)
+        cmd = [sys.executable, script,
+               "--contigs-all", str(s04b / "contigs_all.fasta"),
+               "--s03-r1", str(s03 / f"{sname}_construct_R1.fq.gz"),
+               "--s03-r2", str(s03 / f"{sname}_construct_R2.fq.gz"),
+               "--s05-dir", str(s05),
+               "--host-ref", host_ref,
+               "--element-db", rp("element_db/gmo_combined_db.fa"),
+               "--element-db", rp("element_db/common_payload.fa"),
+               "--outdir", str(outdir),
+               "--sample-name", sname,
+               "--threads", str(threads),
+               "--memory-gb", str(memory_gb)]
+        if not no_remote_blast:
+            cmd.append("--remote-blast")
         return cmd
     elif step == "6":
         # Step 6 needs a WT BAM for comparison
@@ -632,6 +653,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  python run_pipeline.py --sample rice_G281       # one sample\n"
             "  python run_pipeline.py --steps 1-5,7            # core + copy number\n"
             "  python run_pipeline.py --steps 5                # re-run insert assembly\n"
+            "  python run_pipeline.py --steps 5b               # construct assembly (opt-in; after s05)\n"
             "  python run_pipeline.py --steps 8                # PDF report only (reads existing s05 output)\n"
             "  python run_pipeline.py --dry-run                # preview commands\n"
         ),
@@ -647,10 +669,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--steps", type=str, default="1-5",
         help=(
-            "Steps to run (1, 2, 3, 4, 4b, 5, 6, 7, 8). "
+            "Steps to run (1, 2, 3, 4, 4b, 5, 5b, 6, 7, 8). "
             "Ranges expand across step 4b, so '1-5' includes 4b "
-            "(de novo construct assembly). Step 8 (PDF insertion report) is "
-            "opt-in and not part of the default range. (default: 1-5)"
+            "(de novo construct assembly). Steps 5b (construct assembly) and 8 "
+            "(PDF insertion report) sit after the '5' boundary and are opt-in, "
+            "not part of the default range. (default: 1-5)"
         ),
     )
     parser.add_argument(
