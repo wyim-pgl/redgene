@@ -1,27 +1,29 @@
-# RedGene - GMO/LMO Transgene Characterization Pipeline
+# RedGene — GMO/LMO Transgene Characterization Pipeline
 
 Assembly-based Illumina WGS pipeline for characterizing transgenic plant
 insertions. Designed for Korean quarantine GMO/LMO detection assays and
 CRISPR/Cas9 editing verification.
 
+**Repository**: [wyim-pgl/redgene](https://github.com/wyim-pgl/redgene)
+
 ## What It Does
 
 Given paired-end Illumina reads from a transgenic plant:
 
-1. **Finds transgene insertion sites** at base-pair resolution
+1. **Finds transgene insertion sites** at base-pair resolution (assembly-based junctions)
 2. **Estimates copy number** from read depth ratios
 3. **Determines zygosity** (homozygous vs heterozygous insertion)
 4. **Detects CRISPR editing** (treatment-specific indels vs WT)
-5. **Filters false positives** from construct-host sequence homology
-6. **Warns about structural anomalies** (translocations, large deletions)
+5. **Filters false positives** with four post-assembly filters and a rule-based verdict
+6. **Reports** each site with an interpretable verdict (CANDIDATE / FALSE_POSITIVE / UNKNOWN)
 
 ## Background
 
 Plant T-DNA constructs often contain host-derived promoters (e.g., rice Ubi1,
 maize Act1, tobacco TA29) that create false positive chimeric reads when mapped
-against construct databases. This pipeline implements multiple filtering
-strategies including WT-based filtering and MAPQ analysis to distinguish true
-transgene junctions from homologous sequence artifacts.
+against construct databases. This pipeline distinguishes true transgene
+junctions from homologous-sequence artifacts using WT-based homology filtering
+and four assembly-level false-positive filters (see below).
 
 The approach is based on the modified TranSeq method (Bae et al. 2022,
 Communications Biology) adapted for generic GMO element databases rather than
@@ -29,58 +31,94 @@ specific vector sequences.
 
 ## Pipeline Architecture
 
+`run_pipeline.py` orchestrates the steps below by invoking standalone scripts in
+`scripts/` via subprocess. `STEP_ORDER` is the single source of truth for
+sequencing: `["1", "2", "3", "4", "4b", "5", "6", "7", "8"]`.
+
 ```
                     Illumina PE150 Reads
-                           |
-                     [Step 1] fastp QC
-                           |
-                  [Step 2] bwa mem → construct BAM
-                           |
-              [Step 3] Extract construct-hitting reads + mates
-                           |
-          [Step 3b] WT-based homology filter (optional, recommended)
-                           |
-              [Step 4] SPAdes local assembly → contigs
-                           |
-     [Step 4b] SPAdes → sample-specific construct contigs  ★ NEW
-                           |
-      [Step 5] minimap2 contigs → host & construct PAF
-              (uses 4b contigs + common_payload)
-                           |
-      [Step 6] Chimeric contig detection → junction coordinates
-           |                              |
-  [Step 6b] Junction verify     [Step 6c] Zygosity estimation
-  (multi-evidence scoring)      (allele fraction analysis)
-                           |
-             [Step 7] bwa mem → host BAM (full genome)
-                    |                    |
-        [Step 8] CRISPR indel     [Step 10] Copy number
-        detection (vs WT)          (depth ratio)
+                            |
+                     [1] fastp QC + trim
+                            |
+             [2] bwa mem → construct + UniVec BAM
+                            |
+          [3] Extract construct-hitting reads + mates
+                            |
+       [3b] WT-based homology filter (optional, recommended)
+                            |
+        [4] bwa mem → host BAM (full genome)   ← bottleneck (~5-7h)
+                            |
+   [4b] SPAdes → per-sample construct contigs (element DB for s05)
+                            |
+        [5] Targeted insert assembly + 4 FP filters + verdict   ← core
+              (uses 4b contigs + common_payload DB)
+             |                    |                     |
+   [6] CRISPR indel      [7] Copy number       [8] PDF insertion report
+   detection (vs WT)      (depth ratio)         (opt-in; reads s05/s07)
 ```
 
-**Step 4b — sample-specific construct assembly**: Many transgenic samples carry payload sequences (e.g., AtYUCCA6, bar marker, custom RNAi hairpins) that are not present in the shared `element_db/gmo_combined_db.fa`. Without step 4b, s05 annotates those payload-containing inserts as UNKNOWN even when they carry genuine T-DNA. Step 4b runs SPAdes on the construct-hitting reads from s03 to build a per-sample FASTA, which s05 then loads via `--extra-element-db` so the payload sequences are identified and annotated correctly.
-
-When to skip: if the sample's construct is fully characterized and already covered by the shared element DB (e.g., rice_G281 with its dedicated `G281_construct.fa`), step 4b adds runtime without changing the verdict. The range parser includes 4b by default; use `--steps 1-4,5` to bypass it.
-
-Known limitation: when s04b contigs cover the same region as a UniVec sequence at equal or better bitscore, `classify_site_tiers`' strict bitscore-best merge retains the UniVec hit by iteration order. The element_db-required transgene-positive policy then excludes the site. Rice G281's Chr3:16,439,674 insertion surfaces this pattern. A follow-up will add an explicit priority policy (any element_db hit beats UniVec regardless of bitscore).
+Steps 1-3 are fast (<30 min each). Step 4 (host mapping) is the bottleneck.
+Steps 4b, 6, 7, 8 are optional. The core run is `--steps 1-5`; a full run is
+`--steps 1-7`; the PDF report (step 8) is opt-in and never part of `1-5`.
 
 ### Step Details
 
-| Step | Script | Input | Output | Description |
-|------|--------|-------|--------|-------------|
-| 1 | `s01_qc.py` | Raw FASTQ | Trimmed FASTQ | QC + adapter trimming (fastp) |
-| 2 | `s02_construct_map.py` | Trimmed FASTQ | BAM | Map reads to construct/element DB |
-| 3 | `s03_extract_reads.py` | Construct BAM | FASTQ pairs | Extract construct-hitting reads + mates |
-| 3b | `s03b_homology_filter.py` | Extracted FASTQ | Filtered FASTQ | Remove reads from homologous regions |
-| 4 | `s04_assembly.py` | Extracted FASTQ | Contigs FASTA | Local assembly with SPAdes |
-| 4b | `s04b_construct_assembly.py` | Extracted FASTQ (from s03) | Per-sample construct FASTA | De novo SPAdes assembly of construct-hitting reads for per-sample element DB |
-| 5 | `s05_contig_map.py` | Contigs | PAF files | Map contigs to host + construct (minimap2) |
-| 6 | `s06_junction.py` | PAF files | junctions.tsv | Detect chimeric contigs, extract junction coords |
-| 6b | `s06b_junction_verify.py` | junctions.tsv + host BAM | Verified junctions | Multi-evidence scoring |
-| 6c | `s06c_zygosity.py` | junctions.tsv + host BAM | Zygosity report | Allele fraction analysis |
-| 7 | `s07_host_map.py` | Trimmed FASTQ | Host BAM | Full genome mapping for depth analysis |
-| 8 | `s08_indel_detection.py` | Host BAMs (treatment + WT) | editing_sites.tsv | CRISPR editing detection |
-| 10 | `s10_copynumber.py` | Host BAM + construct BAM | Copy number | Depth ratio estimation |
+| Step | Script | Description |
+|------|--------|-------------|
+| 1 | `s01_qc.py` | QC + adapter trimming (fastp) |
+| 2 | `s02_construct_map.py` | Map reads to construct + UniVec (bwa mem) |
+| 3 | `s03_extract_reads.py` | Extract construct-hitting reads + mates |
+| 3b | `s03b_homology_filter.py` | WT-based filter of host-derived false positives (optional) |
+| 4 | `s04_host_map.py` | Map all reads to host genome (bwa mem) — **bottleneck** |
+| 4b | `s04b_construct_assembly.py` | De novo SPAdes assembly of construct-hitting reads → per-sample element DB |
+| 5 | `s05_insert_assembly.py` | **Core**: targeted insert assembly + 4 FP filters + verdict |
+| 6 | `s06_indel.py` | CRISPR indel detection (pileup-based, treatment vs WT) |
+| 7 | `s07_copynumber.py` | Copy number estimation (depth ratio) |
+| 8 | `reports/insertion_pdf.py` | PDF insertion report (opt-in; reads existing s05/s07 output) |
+
+**Step 4b — sample-specific construct assembly**: Many transgenic samples carry
+payload sequences (e.g., AtYUCCA6, bar marker, custom RNAi hairpins) not present
+in the shared `element_db/gmo_combined_db.fa`. Step 4b runs SPAdes on the
+construct-hitting reads from s03 to build a per-sample FASTA, which s05 loads via
+`--extra-element-db` so the payload sequences are annotated instead of reported
+as UNKNOWN. `--steps 1-5` includes 4b by default (it slots between 4 and 5);
+bypass with `--steps 1-4,5`.
+
+### Step 5 — the core: four false-positive filters + verdict
+
+Step 5 finds insertion sites from host-BAM soft-clips, assembles the insert, and
+applies four post-assembly false-positive filters, then computes a rule-based
+verdict:
+
+| Filter | Module | Catches |
+|--------|--------|---------|
+| A — host-fraction | `s05/filter_a_host.py` | inserts that are mostly host genomic DNA |
+| B — construct-flanking | `s05/filter_b_flank.py` | junctions inside construct-flanking host homology |
+| C — chimeric | `s05/filter_c_chimeric.py` | multi-locus chimeric mis-assemblies |
+| D — alternative-locus | `s05/filter_d_altlocus.py` | host DNA mis-assembled via construct-element homology (e.g. CaMV 35S copies) |
+
+**Verdict priority** (see `docs/measurements/verdict_priority.md`, implemented in
+`scripts/s05/verdict.py`):
+
+```
+canonical_triplet > host_endogenous > Filter B > Filter C > Filter D > Filter A
+  > elements_present → CANDIDATE > UNKNOWN_FP > UNKNOWN
+```
+
+Step 5 was refactored (Issue #4) from a 4003-line monolith into 11
+single-responsibility modules under `scripts/s05/`; the monolith
+`s05_insert_assembly.py` is now a thin CLI entrypoint. See
+`docs/architecture/s05-modules.md`.
+
+### Planned — Step 5b: construct assembly (spec written, not yet implemented)
+
+An opt-in sub-step that reconstructs and characterizes the *complete inserted
+construct*: a sample-level classified/annotated contig inventory plus per-site
+links to s05 CANDIDATE sites. It reuses s04b's pre-filter SPAdes contigs
+(assemble-then-classify), preserving unknown payload and junction-spanning
+(chimeric) contigs that s04b's marker filter discards. Design:
+`docs/superpowers/specs/2026-06-30-step5b-construct-assembly-design.md`;
+implementation plan: `docs/superpowers/plans/2026-06-30-step5b-construct-assembly.md`.
 
 ## Quick Start
 
@@ -89,188 +127,190 @@ Known limitation: when s04b contigs cover the same region as a UniVec sequence a
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate redgene
 
-# 2. Prepare references
-#    - Host genome: db/host.fa (+ BWA index: bwa index db/host.fa)
-#    - Element DB: element_db/gmo_combined_db.fa (included, 131 GMO elements)
+# 2. Configure the sample in config.yaml (host_reference, construct_reference,
+#    reads.r1/r2, optional wt_control, optional grna). See existing entries.
 
-# 3. Run pipeline (example: rice G281)
-SAMPLE=rice_G281
-HOST=db/Osativa_323_v7.0.fa
-CONSTRUCT=element_db/gmo_combined_db.fa
-R1=test_data/rice_G281_R1.fastq.gz
-R2=test_data/rice_G281_R2.fastq.gz
+# 3. Core pipeline (QC → construct map → extract → host map → insert assembly)
+python run_pipeline.py --sample rice_G281 --steps 1-5 --threads 16
 
-# Core pipeline: steps 1-6
-python scripts/s01_qc.py --r1 $R1 --r2 $R2 --outdir results --sample-name $SAMPLE
-python scripts/s02_construct_map.py \
-  --r1 results/$SAMPLE/s01_qc/${SAMPLE}_R1.fq.gz \
-  --r2 results/$SAMPLE/s01_qc/${SAMPLE}_R2.fq.gz \
-  --construct-ref $CONSTRUCT --outdir results --sample-name $SAMPLE
-python scripts/s03_extract_reads.py \
-  --bam results/$SAMPLE/s02_construct_map/${SAMPLE}_construct.bam \
-  --outdir results --sample-name $SAMPLE
-python scripts/s04_assembly.py \
-  --r1 results/$SAMPLE/s03_extract/${SAMPLE}_construct_R1.fq.gz \
-  --r2 results/$SAMPLE/s03_extract/${SAMPLE}_construct_R2.fq.gz \
-  --outdir results --sample-name $SAMPLE
-python scripts/s05_contig_map.py \
-  --contigs results/$SAMPLE/s04_assembly/contigs.fasta \
-  --host-ref $HOST --construct-ref $CONSTRUCT \
-  --outdir results --sample-name $SAMPLE
-python scripts/s06_junction.py \
-  --host-paf results/$SAMPLE/s05_contig_map/${SAMPLE}_contigs_to_host.paf \
-  --construct-paf results/$SAMPLE/s05_contig_map/${SAMPLE}_contigs_to_construct.paf \
-  --contigs results/$SAMPLE/s04_assembly/contigs.fasta \
-  --outdir results --sample-name $SAMPLE
+# Full pipeline (+ CRISPR indel + copy number)
+python run_pipeline.py --sample rice_G281 --steps 1-7 --threads 16
 
-# For CRISPR samples: add step 7 + step 8
-python scripts/s07_host_map.py \
-  --r1 results/$SAMPLE/s01_qc/${SAMPLE}_R1.fq.gz \
-  --r2 results/$SAMPLE/s01_qc/${SAMPLE}_R2.fq.gz \
-  --host-ref $HOST --outdir results --sample-name $SAMPLE
-python scripts/s08_indel_detection.py \
-  --treatment-bam results/$SAMPLE/s07_host_map/${SAMPLE}_host.bam \
-  --wt-bam results/WT/s07_host_map/WT_host.bam \
-  --host-ref $HOST --outdir results --sample-name $SAMPLE
+# Re-run insert assembly only, skipping slow remote NCBI BLAST
+python run_pipeline.py --sample rice_G281 --steps 5 --threads 16 --no-remote-blast
+
+# PDF insertion report (opt-in; reads existing results/ without re-running)
+python run_pipeline.py --sample rice_G281 --steps 8
+
+# Preview commands without running
+python run_pipeline.py --sample rice_G281 --steps 1-5 --dry-run
 ```
+
+Individual step scripts are standalone with their own argparse CLI, e.g.:
+
+```bash
+python scripts/s01_qc.py --r1 reads_R1.fq.gz --r2 reads_R2.fq.gz \
+  --outdir results --sample-name my_sample --threads 16
+```
+
+### SLURM
+
+```bash
+sbatch run_clean.sh   # rice + all tomato samples end-to-end incl. visualization
+```
+
+Partition/account `cpu-s1-pgl-0`; 16 CPUs, 64G RAM, 24h for a full run with step 4.
 
 ## Element Database
 
-The `element_db/gmo_combined_db.fa` contains 131 GMO-related sequences scraped
-from the EUginius database (https://euginius.eu/), including:
+`element_db/gmo_combined_db.fa` contains 131 GMO-related sequences scraped from
+the EUginius database (https://euginius.eu/), including:
 
 - **Promoters**: CaMV 35S, nos, Ubi1 (maize), Act1 (rice), TA29 (tobacco), etc.
 - **Terminators**: nos, OCS, CaMV 35S, pinII, etc.
 - **Selection markers**: nptII, bar, hpt, pat, etc.
 - **Construct-specific**: pCAMBIA vectors, event-specific amplicons
-- **Full-length sequences**: Reference constructs from NCBI
+- **Full-length**: reference constructs from NCBI
 
-To rebuild the database: `python element_db/gmo_db.py`
+When s05 uses an element DB, the alignment-identity floor is auto-relaxed from
+0.90 to 0.70 (element_db/combined_db matches are ~0.84 identity by minimap2);
+`run_pipeline.py` auto-detects this. See "Known Pitfalls" in `CLAUDE.md`.
 
 ### Common payload DB
 
-`element_db/common_payload.fa` provides 9 canonical bacterial/viral transgene markers (bar, nptII, hpt, gusA, gfp, egfp, P-CaMV35S, P-nos, T-ocs) that are wired as an always-on `--common-payload-db` argument in s05. This ensures the most frequently used selection and reporter genes are always annotated even when the per-sample or event-specific construct DB does not list them. Built by `element_db/build_common_payload.sh` via NCBI efetch.
+`element_db/common_payload.fa` provides 9 canonical bacterial/viral transgene
+markers (bar, nptII, hpt, gusA, gfp, egfp, P-CaMV35S, P-nos, T-ocs), wired as an
+always-on `--common-payload-db` argument in s05 so the most frequently used
+selection and reporter genes are annotated even when the per-sample or
+event-specific construct DB does not list them. Built by
+`element_db/build_common_payload.sh` via NCBI efetch.
 
 ## False Positive Filtering
 
-Plant genomes contain sequences homologous to common construct elements.
-This creates false positive junction calls that require filtering:
+Plant genomes contain sequences homologous to common construct elements, creating
+false positive junction calls that require filtering:
 
-### Problem
 | Source | Example | MAPQ | Solution |
 |--------|---------|------|----------|
-| Host-derived promoters | Rice Ubi1 in pCAMBIA | Low (0-10) | MAPQ filter |
-| Unique homologous regions | Chr2:8.4M in rice G281 | High (60) | WT filter |
-| Repetitive elements | Multiple chromosomes | Low (0-5) | MAPQ filter |
+| Host-derived promoters | Rice Ubi1 in pCAMBIA | Low (0-10) | element/WT filter |
+| Unique homologous regions | Chr2:8.4M in rice G281 | High (60) | WT filter (s03b) |
+| Repetitive elements | Multiple chromosomes | Low (0-5) | MAPQ / Filter C |
+| Element-homology mis-assembly | CaMV 35S copies in host | High | Filter D (alt-locus) |
 
-### Solution: Multi-layer filtering
-1. **MAPQ filter** (step 6, `--min-host-mapq 10`): Removes multi-mapping artifacts
-2. **WT-based filter** (step 3b): Removes reads mapping to construct-host homologous regions
-3. **Structural warnings** (step 6): Flags inter-chromosomal and distant junctions
-4. **Verification** (step 6b): Multi-evidence scoring with composite verdicts
+**Key insight — MAPQ alone is insufficient.** In rice G281 testing,
+Chr2:8,432,860 had MAPQ=60 (unique mapping) but was a false positive from pCAMBIA
+vector homology. WT-based filtering (s03b) is the only reliable method for these
+cases; the four assembly-level filters (A-D) then catch the rest at the insert
+level.
 
-### Key insight
-**MAPQ alone is insufficient.** In rice G281 testing, Chr2:8,432,860 had MAPQ=60
-(unique mapping) but was a false positive from pCAMBIA vector homology. WT-based
-filtering is the only reliable method for these cases.
-
-## CRISPR Editing Detection (Step 8)
+## CRISPR Editing Detection (Step 6)
 
 Two modes for detecting CRISPR editing-induced indels:
 
 ### Mode 1: gRNA-guided (recommended)
 1. **BLAST gRNA** to host genome to find on-target and off-target sites
 2. **Direct pileup parsing** at predicted cut sites (±50bp window)
-3. **Treatment vs WT subtraction**: Keep only treatment-specific indels
-4. **Allele frequency** from read counts (avoids bcftools decomposition issues)
+3. **Treatment vs WT subtraction**: keep only treatment-specific indels
+4. **Allele frequency** from read counts
 
-### Mode 2: De novo (no gRNA)
-1. **Genome-wide variant calling** in both treatment and WT (bcftools)
-2. **Subtraction**: Keep only treatment-specific indels (>= 2bp)
-3. **PAM motif check**: Look for NGG within 3-8bp of indel
-4. **NHEJ signature**: Deletions 1-20bp, insertions 1-5bp
+### Mode 2: de novo (no gRNA)
+1. **Genome-wide variant calling** in treatment and WT
+2. **Subtraction**: keep only treatment-specific indels (≥ 2bp)
+3. **PAM motif check**: NGG within 3-8bp of the indel
+4. **NHEJ signature**: deletions 1-20bp, insertions 1-5bp
 
 ### Key design choice
-gRNA-guided mode uses `samtools mpileup -Q 0` (no base quality filter)
-to avoid losing CRISPR indels where the anchor base has borderline quality.
-bcftools variant calling decomposes complex indels at low depth — the
-pileup parser preserves the original indel representation from reads.
+gRNA-guided mode parses `samtools mpileup -Q 0` directly (no base-quality
+filter) to avoid losing CRISPR indels whose anchor base has borderline quality.
+`bcftools call` decomposes complex indels at low depth (e.g. splitting a 9bp
+deletion into 1bp events) — direct pileup parsing preserves the original indel
+representation from reads.
 
 ## Environment
 
 ```bash
-# Create environment
 micromamba create -n redgene -c conda-forge -c bioconda \
   python=3.11 bwa minimap2 samtools fastp spades bcftools \
   sra-tools pysam matplotlib biopython seqkit pigz
 ```
+
+> Env-path gotcha: on Pronghorn, `micromamba activate redgene` resolves to
+> `/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/`. For non-interactive
+> subprocesses, prepend the env bin directly:
+> `export PATH="/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/bin:$PATH"`.
 
 ### Key tools
 | Tool | Version | Purpose |
 |------|---------|---------|
 | bwa | 0.7.18 | Read mapping to construct/host |
 | minimap2 | 2.28 | Contig mapping + homology detection |
-| samtools | 1.21 | BAM processing |
-| bcftools | 1.23 | Variant calling (indel detection) |
+| samtools | 1.21 | BAM processing + pileup |
+| bcftools | 1.23 | Variant calling (de novo indel mode) |
 | fastp | 0.23.4 | QC + adapter trimming |
-| SPAdes | 4.0.0 | Local assembly of extracted reads |
+| SPAdes | 4.0.0 | Assembly of extracted reads |
+| BLAST+ | 2.x | Element annotation (local + remote nt) |
 | sra-tools | 3.1.1 | SRA download (prefetch + fasterq-dump) |
 | pysam | 0.22.1 | BAM parsing (Python) |
-| matplotlib | 3.9 | Visualization |
+| matplotlib | 3.9 | Visualization + PDF report |
 | biopython | 1.84 | Sequence handling |
+
+## Testing
+
+```bash
+pytest tests/ -q                              # full suite
+pytest tests/test_verdict_snapshots.py -v     # verdict regression (snapshot fixtures)
+pytest tests/test_s05_import_dag.py -v         # scripts/s05 DAG no-cycle guard
+```
+
+Snapshot fixtures in `tests/fixtures/verdict_snapshots/` (rice_G281,
+cucumber_line225) are the primary regression signal for `compute_verdict` — never
+edit them without a deliberate behavior change.
 
 ## Test Results
 
-### Rice G281 (T-DNA insertion, ~29x coverage)
-- **True insertion**: Chr3:16,439,719 detected (45bp from known Chr3:16,439,674)
-- **False positives**: 3 detected, all from pCAMBIA vector-host homology
-- **Coverage minimum**: 15x for reliable detection
+### Rice G281 (2-copy head-to-head T-DNA, ~29x)
+- **True insertion**: Chr3:16,439,674 (lactoferrin RNAi, 36bp deletion) → CANDIDATE
+- **False positives**: pCAMBIA vector-host homology → FALSE_POSITIVE (Filters A-D)
+- **Coverage minimum**: ≥15x for reliable detection
 
 ### Tomato Micro-Tom Cas9 (CRISPR editing, PRJNA692070)
-- **T-DNA insertion**: SLM_r2.0ch08:65,107,378 detected (A2_3 sample, ~10x)
+- **T-DNA insertion**: SLM_r2.0ch08:65,107,378 detected (A2_3, ~10x)
 - **Cas9 construct**: CaMV 35S + nos + nptII + OCS identified in assembled contigs
-- **CRISPR editing**: 9bp deletion of GTGAGCCAT at SlPHD_MS1 (chr04) matches ground truth
-- **Coverage minimum**: 10x for junction detection with element_db
+- **CRISPR editing**: 9bp deletion at SlPHD_MS1 (chr04); 6bp deletion at SlAMS (chr08)
+- **Coverage minimum**: ≥10x for junction detection with element_db
 
-### Coverage Sensitivity
-
-| Coverage | Junction Detection | Notes |
+### Coverage sensitivity
+| Coverage | Junction detection | Notes |
 |----------|-------------------|-------|
-| >= 15x | Reliable, high confidence | Recommended |
-| 10-15x | Usually works | May need relaxed thresholds |
-| 5-10x | Construct presence confirmed | Junction assembly may fail |
-| < 5x | Unreliable | Insufficient for assembly approach |
+| ≥ 15x | Reliable, high confidence | Recommended (rice) |
+| 10-15x | Usually works | ≥10x for cucumber/tomato |
+| 5-10x | Construct presence confirmed | One junction side only |
+| < 5x | Unreliable | Insufficient for assembly |
 
-## Key Parameters
+## Config Format
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--min-identity` | 0.90 | Min alignment identity. Lower to 0.70 for element_db |
-| `--min-coverage-frac` | 0.50 | Min contig coverage. Lower to 0.40 for element_db |
-| `--min-host-mapq` | 10 | Min host MAPQ (uniqueness filter) |
-| `--min-host-aln-len` | 50 | Min host alignment length in bp |
-| `--min-construct-aln-len` | 50 | Min construct alignment length in bp |
-| `--min-indel-size` | 2 | Min indel size for CRISPR detection |
+`config.yaml` defines samples with `host_reference`, `construct_reference`,
+`reads.r1/r2`, optional `wt_control` (sample key for the WT BAM used by s03b/s06),
+and optional `grna` (path to a gRNA file for step 6). See existing entries.
 
 ## Output Structure
 
 ```
 results/<sample>/
-  s01_qc/              # Trimmed reads + fastp HTML/JSON reports
-  s02_construct_map/   # Construct BAM + flagstat + depth stats
-  s03_extract/         # Extracted read pairs (+ filtered if s03b)
-  s04_assembly/        # SPAdes contigs + assembly stats
-  s05_contig_map/      # PAF alignments (host + construct)
-  s06_junction/        # junctions.tsv + junction_contigs.fa
-  s07_host_map/        # Host BAM + flagstat + depth stats
-  s08_indel/           # editing_sites.tsv (CRISPR samples only)
-  s10_copynumber/      # Copy number estimates
+  s01_qc/                # Trimmed reads + fastp HTML/JSON
+  s02_construct_map/     # Construct + UniVec BAM + stats
+  s03_extract/           # Extracted read pairs (+ filtered if s03b)
+  s04_host_map/          # Host BAM + flagstat + depth
+  s04b_construct_asm/    # Per-sample SPAdes construct contigs
+  s05_insert_assembly/   # Per-site insert FASTA + report.txt (verdicts) + annotation TSVs
+  s06_indel/             # editing_sites.tsv (CRISPR samples)
+  s07_copynumber/        # Copy number estimates
 ```
 
 ## References
 
-- Bae S, Park YC, et al. (2022). Characterization of transgene insertions
-  by resequencing. *Communications Biology* 5:671.
+- Bae S, Park YC, et al. (2022). Characterization of transgene insertions by
+  resequencing. *Communications Biology* 5:671.
 - Bae S, et al. (2022). CRISPR/Cas9-mediated editing of SlFAD2.
   *Horticultural Science and Technology* 40:81-92.
 - EUginius GMO detection methods: https://euginius.eu/
