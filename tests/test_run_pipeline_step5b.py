@@ -49,3 +49,19 @@ def test_build_step_cmd_5b_remote_when_enabled(tmp_path):
         no_remote_blast=False,
     )
     assert "--remote-blast" in cmd
+
+
+def test_spades_memory_gb_from_slurm(monkeypatch):
+    monkeypatch.setenv("SLURM_MEM_PER_NODE", "98304")  # 96 GiB in MB
+    # 80% of 96 GiB = 76 GiB
+    assert run_pipeline._spades_memory_gb(16) == 76
+
+
+def test_spades_memory_gb_fallback_heuristic(monkeypatch):
+    monkeypatch.delenv("SLURM_MEM_PER_NODE", raising=False)
+    assert run_pipeline._spades_memory_gb(16) == 32  # 16*4//2
+
+
+def test_spades_memory_gb_bad_env_falls_back(monkeypatch):
+    monkeypatch.setenv("SLURM_MEM_PER_NODE", "not-a-number")
+    assert run_pipeline._spades_memory_gb(8) == 16  # 8*4//2

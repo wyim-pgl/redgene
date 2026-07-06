@@ -163,6 +163,27 @@ def validate_sample_inputs(cfg: dict[str, Any], sample_key: str, base_dir: Path)
         sys.exit(f"ERROR: Sample '{sample_key}' missing host_reference in config.")
 
 
+def _spades_memory_gb(threads: int) -> int:
+    """SPAdes ``-m`` budget in GiB for steps 4b/5b.
+
+    Prefer the actual SLURM node-memory grant (``SLURM_MEM_PER_NODE``, in MB) so
+    the cap scales with the allocation — a job given ``--mem=96G`` should let
+    SPAdes use most of it, not the fixed 32 GiB the old thread-only heuristic
+    produced. Use ~80% of the grant (leaving headroom for Python/BLAST), with a
+    floor of 8 GiB. Off-SLURM (login node, tests) fall back to the 2 GiB/thread
+    heuristic that mirrors the historical behaviour.
+    """
+    slurm_mem_mb = os.environ.get("SLURM_MEM_PER_NODE")
+    if slurm_mem_mb:
+        try:
+            gb = int(int(slurm_mem_mb) * 0.80 / 1024)
+        except ValueError:
+            gb = 0
+        if gb >= 8:
+            return gb
+    return max(8, threads * 4 // 2)
+
+
 def build_step_cmd(
     step: str,
     sample_key: str,
@@ -236,7 +257,7 @@ def build_step_cmd(
         # --extra-element-db. SPAdes gets ~2 GB/thread (half the SLURM
         # allocation of 4 GB/thread), leaving the rest as headroom for
         # SPAdes' graph-building memory overhead.
-        memory_gb = max(8, threads * 4 // 2)
+        memory_gb = _spades_memory_gb(threads)
         return [sys.executable, script,
                 "--r1", str(s03 / f"{sname}_construct_R1.fq.gz"),
                 "--r2", str(s03 / f"{sname}_construct_R2.fq.gz"),
@@ -300,7 +321,7 @@ def build_step_cmd(
     elif step == "5b":
         # Construct assembly: reconstruct + characterize the inserted construct.
         # Reuses s04b contigs_all.fasta; links classified contigs to s05 sites.
-        memory_gb = max(8, threads * 4 // 2)
+        memory_gb = _spades_memory_gb(threads)
         cmd = [sys.executable, script,
                "--contigs-all", str(s04b / "contigs_all.fasta"),
                "--s03-r1", str(s03 / f"{sname}_construct_R1.fq.gz"),
