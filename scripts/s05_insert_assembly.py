@@ -59,29 +59,11 @@ except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_i
         _TIER2_SRCS,
     )
 
-# ---------------------------------------------------------------------------
-# Module-level constants (kept here for backward compat; originals live in
-# scripts/s05/classify.py and scripts/s05/filter_*.py).
-# ---------------------------------------------------------------------------
-# Host-endogenous exclusion thresholds (used in classify_site_tiers).
-# Two tiers handle cultivar drift — P-Act1 hits Nipponbare at ~78%/39%
-# due to Xiushui vs Nipponbare divergence.
-HOST_ENDO_T1_PIDENT = 90.0   # Tier 1 (clean host): min % identity
-HOST_ENDO_T1_QCOVS = 50.0    # Tier 1: min query coverage %
-HOST_ENDO_T2_PIDENT = 75.0   # Tier 2 (divergent host): min % identity
-HOST_ENDO_T2_QCOVS = 30.0    # Tier 2: min query coverage %
-CLIP_HOST_PIDENT = 95.0       # Per-clip host check: min % identity
-CLIP_HOST_MIN_LEN = 30        # Per-clip host check: min alignment length
-# Post-assembly host-fraction filter thresholds.
-INSERT_HOST_FRACTION = 0.80     # host coverage threshold
-INSERT_MIN_FOREIGN_GAP = 500    # non-host gap must be ≥ this to be real T-DNA
-# UNKNOWN → FALSE_POSITIVE auto-reclassification thresholds.
-UNKNOWN_HOST_MIN_FRACTION = 0.85   # min host fraction to classify as host-only
-UNKNOWN_MAX_CONSTRUCT_FRAC = 0.05  # max construct fraction for host-only
-
-# Phase 1.5 (_TIER2_SRCS) is derived from _SRC_TIER to stay in sync with
-# gmo_combined_db_v2.fa cd-hit clustering; see scripts/s05/classify.py for
-# the full audit trail comment.
+# NOTE: the post-Issue-#4 authoritative thresholds live in scripts/s05/
+# (classify.py HOST_ENDO_*/CLIP_HOST_*, filter_a_host.py INSERT_HOST_*,
+# verdict.py / config_loader.py for the UNKNOWN-reclass values). A dead
+# duplicate block that used to live here — with zero readers — was removed
+# to keep a single source of truth.
 
 # T8 fan-out state files (positive_sites.json + positive_sites.pkl) are
 # written/read by fanout_orchestrator._run_phase_1_1_5.  The pickle is
