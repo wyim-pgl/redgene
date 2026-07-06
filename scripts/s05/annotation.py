@@ -89,24 +89,43 @@ def _run_local_blast(
     """
     suffix = tag if tag is not None else element_db.stem
     db_prefix = output_dir / f"_element_blastdb_{suffix}"
-    subprocess.run(
+
+    def _cleanup_db() -> None:
+        for ext in [".nhr", ".nin", ".nsq", ".ndb", ".not", ".ntf", ".nto", ".njs"]:
+            Path(f"{db_prefix}{ext}").unlink(missing_ok=True)
+
+    # Local BLAST is best-effort annotation: a failure (disk full, makeblastdb
+    # OOM, missing binary) must degrade to "no hits" rather than crash the whole
+    # step — a site can still get a verdict from element tiers. Mirrors the
+    # graceful handling in _run_remote_blast.
+    mk = subprocess.run(
         ["makeblastdb", "-in", str(element_db), "-dbtype", "nucl",
          "-out", str(db_prefix)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
+    if mk.returncode != 0:
+        log(f"  Local BLAST ({suffix}): makeblastdb failed "
+            f"(rc={mk.returncode}); skipping (0 hits)")
+        _cleanup_db()
+        return []
     blast_out = output_dir / f"_local_blast_{suffix}.tsv"
-    subprocess.run(
+    bl = subprocess.run(
         ["blastn", "-query", str(insert_fasta), "-db", str(db_prefix),
          "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send evalue bitscore",
          "-evalue", "1e-5", "-max_target_seqs", "50",
          "-out", str(blast_out)],
-        stderr=subprocess.DEVNULL, check=True,
+        stderr=subprocess.DEVNULL,
     )
+    if bl.returncode != 0:
+        log(f"  Local BLAST ({suffix}): blastn failed "
+            f"(rc={bl.returncode}); skipping (0 hits)")
+        blast_out.unlink(missing_ok=True)
+        _cleanup_db()
+        return []
     hits = _parse_blast6(blast_out)
     # Cleanup
     blast_out.unlink(missing_ok=True)
-    for ext in [".nhr", ".nin", ".nsq", ".ndb", ".not", ".ntf", ".nto", ".njs"]:
-        Path(f"{db_prefix}{ext}").unlink(missing_ok=True)
+    _cleanup_db()
     log(f"  Local BLAST ({suffix}): {len(hits)} hits")
     return hits
 

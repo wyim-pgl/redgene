@@ -28,7 +28,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from .primitives import read_fasta
+from .primitives import log, read_fasta
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +73,15 @@ def _blast_insert_vs_host(
              "-out", str(blast_out)],
             stderr=subprocess.DEVNULL,
         )
+        if result.returncode != 0:
+            # blastn failed — a partial/empty output file must NOT be trusted
+            # (it would bias host_fraction toward 0 and could flip a verdict).
+            # Fail open to "no host coverage measured" and drop the bad file so
+            # a rerun regenerates it.
+            log(f"  Filter A: host blastn failed (rc={result.returncode}); "
+                f"treating insert as unmeasured (no host coverage)")
+            blast_out.unlink(missing_ok=True)
+            return 0.0, 0, insert_len, insert_len
     if not blast_out.exists():
         return 0.0, 0, insert_len, insert_len
 
