@@ -64,6 +64,12 @@ except ImportError:  # pragma: no cover - allow standalone `python scripts/s05_i
 # verdict.py / config_loader.py for the UNKNOWN-reclass values). A dead
 # duplicate block that used to live here — with zero readers — was removed
 # to keep a single source of truth.
+#
+# Audit trail: Phase 1.5 tier classification (_TIER2_SRCS derived from
+# _SRC_TIER in scripts/s05/classify.py) is keyed to the cd-hit clustering of
+# element_db/gmo_combined_db_v2.fa, whose |src=<tag> headers drive the 4-way
+# source tiering. This reference links Phase 1.5 results back to that build
+# artefact (guarded by tests/test_element_db_build.py::test_m1_*).
 
 # T8 fan-out state files (positive_sites.json + positive_sites.pkl) are
 # written/read by fanout_orchestrator._run_phase_1_1_5.  The pickle is
