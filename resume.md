@@ -148,10 +148,18 @@ Shaw et al. 1984) — worth weighting RB junctions higher in confidence scoring.
    report claimed 10 borders it did not own), and rice has in fact **never** had
    a genuine T-DNA border detected — zero HSPs ≥ 20 bp across all 21 inserts even
    under permissive BLAST.
-3. **Curate the bogus `canonical_v1` RB/LB entries** out of the tracked element
-   DBs (see above). Do this only when no job is reading them.
+3. ~~Curate the bogus `canonical_v1` RB/LB entries~~ — **DONE.** They were
+   mis-sliced from AF485783.1 (pBI121): the records held bases 1–25 and
+   ~14,040–14,065 instead of the annotated `complement(2454..2478)` (RB) and
+   `complement(8621..8646)` (LB). Corrected in every DB plus the gitignored
+   build sources, all indices rebuilt, manifest md5 regenerated, guarded by
+   `tests/test_element_db_borders.py`. A clip spanning a real RB now hits
+   `RB-TDNA` 100%/25 bp in classify's tier check; before, no clip could ever
+   match. **Results on disk predate this — they need a re-run to benefit.**
 4. **Decide what to do about `db/G281_construct.fa`** being the empty
    pCAMBIA-1300 vector while `manuscript.md` calls it an exact construct.
+   Corroborated independently: the stale `.fai` still named that record
+   `vector|pCAMBIA-1300|T-DNA_backbone|AF234296.1|binary_vector|v1`.
 5. Deferred, highest detection ROI: **PE-discordancy in site discovery**.
    `find_softclip_junctions` uses soft clips only; discordant-pair primitives
    already exist in `s06b_junction_verify.py` but only to *count* support at
