@@ -38,10 +38,32 @@ the scan queries only one of them — twice. Consequences:
 into distinct border loci before writing `border_hits.tsv`. Extract the scan
 into `_run_border_blast` (also closes the deferred item in `resume.md`).
 
-**Not fixed (deliberately).** Which repeat is RB and which is LB cannot be
-established from anything in this repo — the `canonical_v1` RB/LB entries in
-`db/*.fa` (`TGAGCGTCGCAAAGGCGCTCGGTCT` / `GGCCTCGGCCTGAGAGCCAAAACAC`) appear in
-no construct and contradict the code. Labels stay sequence-derived and neutral.
+**RB/LB assignment — RESOLVED 2026-07-09 against primary deposits.** Labels are
+`TDNA_RB` / `TDNA_LB`:
+
+| repeat | assignment | source |
+|---|---|---|
+| `TGACAGGATATATTGGCGGGTAAAC` | **RB** | GenBank J01826, DEFINITION "T-DNA 3' (right) border"; COMMENT "right border at base 158" (the 25-mer sits at 158–182) |
+| `TGGCAGGATATATTGTGGTGTAAAC` | **LB** | GenBank J01825, DEFINITION "T-DNA 5' (left) border" |
+
+Both from Yadav, Vanderleyden, Bennett, Barnes & Chilton (1982) PNAS 79:6322,
+nopaline strain T37. Independently reproduced by pBIN19 (U09365) and
+pCAMBIA-1300 (AF234296), which annotate `left border repeat from C58 T-DNA` at
+6557..6582 and `right border T-DNA repeat` at 298..323. The octopine T-DNA
+(X00493) contains neither repeat.
+
+Two consequences fell out of establishing this:
+
+1. **`db/G281_construct.fa`'s first record is byte-identical to AF234296** —
+   the *empty* pCAMBIA-1300 vector, not the G281 construct. Its T-DNA (lacZα
+   MCS, CaMV35S → hptII → CaMV polyA) spans the numbering origin between
+   LB(6,557) and RB(298); the 6,303 bp between RB and LB in increasing
+   coordinates is the backbone (pVS1 STA/REP, pBR322 bom/ori, aadA) — which is
+   why a BLAST of that interval against the element DB returns zero hits.
+2. **The `canonical_v1` RB/LB entries in the element DBs are wrong**
+   (`TGAGCGTCGCAAAGGCGCTCGGTCT` / `GGCCTCGGCCTGAGAGCCAAAACAC`): no
+   `CAGGATATAT` core, present in no construct. Curating them out of the tracked
+   `element_db/gmo_combined_db_v2.fa` etc. is still open.
 
 ### A2 — Filter D swallows BLAST failure and fails toward CANDIDATE
 `scripts/s05/filter_d_altlocus.py:70-78`: `stderr=subprocess.DEVNULL` and a bare

@@ -182,14 +182,14 @@ def parse_annotation(path: Path) -> list[dict]:
 #: Colour + short label per border-repeat query name written by
 #: `scripts/s05/annotation.py::_run_border_blast`.  The legacy `RB_consensus` /
 #: `LB_consensus` names are still recognised so old `border_hits.tsv` files
-#: render, but note those labels were never meaningful — both records held the
-#: same 25-mer.  Nothing in this repo establishes which repeat is the right
-#: border, so the current labels are sequence-derived.
+#: render — but note those labels were never meaningful: both records held the
+#: same 25-mer, so every hit was emitted twice under both names.  A legacy file
+#: therefore double-counts, and its RB/LB labels carry no information.
 _BORDER_STYLES: dict[str, tuple[str, str]] = {
-    "TDNA_border_A": ("#E74C3C", "A"),
-    "TDNA_border_B": ("#2ECC71", "B"),
-    "RB_consensus": ("#E74C3C", "RB"),
-    "LB_consensus": ("#2ECC71", "LB"),
+    "TDNA_RB": ("#E74C3C", "RB"),
+    "TDNA_LB": ("#2ECC71", "LB"),
+    "RB_consensus": ("#7F8C8D", "border?"),
+    "LB_consensus": ("#7F8C8D", "border?"),
 }
 
 

@@ -55,6 +55,26 @@ def test_border_repeats_are_25mers():
         assert set(seq) <= set("ACGT"), f"{label} has non-ACGT bases"
 
 
+def test_labels_match_the_primary_genbank_deposits():
+    """RB/LB assignment is sourced, not guessed.
+
+    GenBank J01825 — "Ti plasmid (from A.tumefaciens, nopaline strain T37),
+    T-DNA 5' (left) border" — contains TGGCAGGATATATTGTGGTGTAAAC.
+    GenBank J01826 — "...T-DNA 3' (right) border", COMMENT "right border at
+    base 158" — contains TGACAGGATATATTGGCGGGTAAAC at bases 158-182.
+    Independently reproduced by pCAMBIA-1300 (AF234296) and pBIN19 (U09365).
+    """
+    by_label = dict(TDNA_BORDER_REPEATS)
+
+    assert by_label["TDNA_RB"] == "TGACAGGATATATTGGCGGGTAAAC"
+    assert by_label["TDNA_LB"] == "TGGCAGGATATATTGTGGTGTAAAC"
+
+
+def test_right_border_is_listed_first():
+    """T-DNA transfer runs RB -> LB; keep the table in that order."""
+    assert TDNA_BORDER_REPEATS[0][0] == "TDNA_RB"
+
+
 def test_border_query_fasta_has_one_record_per_repeat(tmp_path):
     query = tmp_path / "_borders.fa"
 
@@ -201,9 +221,15 @@ def test_short_partial_hits_are_not_borders(tmp_path):
 @pytest.mark.skipif(not Path("db/G281_construct.fa").exists(),
                     reason="db/G281_construct.fa not present")
 def test_real_rice_construct_reports_exactly_two_borders(tmp_path):
-    """The rice_G281 T-DNA carries one copy of each repeat, at 279 and 6,557.
+    """rice_G281's construct reference is byte-identical to pCAMBIA-1300 (AF234296).
 
-    Regression for both defects at once: the old scan reported 4 rows (2 loci x
+    AF234296 annotates `misc_feature 298..323 /note="right border T-DNA repeat"`
+    and `misc_feature 6557..6582 /note="left border repeat from C58 T-DNA"`.
+    The 25-mers themselves sit at 279 (RB) and 6,557 (LB) — the depositor's RB
+    feature is offset ~19 bp onto the 3' flank, and there is no other border
+    repeat in that region.
+
+    Regression for two defects at once: the old scan reported 4 rows (2 loci x
     2 identical queries), and a naive two-query fix reports 4 again (2 loci + 2
     short spurious HSPs at 4,321 and 7,747).
     """
@@ -224,9 +250,10 @@ def test_real_rice_construct_reports_exactly_two_borders(tmp_path):
     _run_border_blast(insert_fa, tmp_path, border_tsv)
 
     rows = [ln.split("\t") for ln in border_tsv.read_text().splitlines() if ln.strip()]
-    starts = sorted(min(int(r[6]), int(r[7])) for r in rows)
-    assert starts == [279, 6557], f"got {starts} from rows {rows}"
-    assert {r[0] for r in rows} == {"TDNA_border_A", "TDNA_border_B"}
+    at = {r[0]: min(int(r[6]), int(r[7])) for r in rows}
+
+    assert len(rows) == 2, f"expected 2 border loci, got {rows}"
+    assert at == {"TDNA_RB": 279, "TDNA_LB": 6557}, f"got {at}"
 
 
 @pytest.mark.skipif(shutil.which("blastn") is None, reason="blastn not on PATH")

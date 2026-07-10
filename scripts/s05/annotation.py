@@ -327,31 +327,41 @@ def annotate_insert(
 # T-DNA border motif scan
 # ---------------------------------------------------------------------------
 
-#: The 25-bp imperfect direct repeats that delimit the T-DNA.  Both of this
-#: project's constructs carry exactly these two, once each — measured by a
-#: record-scoped scan of the first FASTA record:
+#: The two 25-bp imperfect direct repeats that delimit the nopaline
+#: (pTiT37 / pTiC58) T-DNA.  Listed in transfer order: VirD2 nicks at the right
+#: border first, and the T-strand is transferred RB -> LB.
 #:
-#:     db/G281_construct.fa  >rice_G281    278 -> _B,  6,556 -> _A
-#:     db/Cas9_construct.fa  >tomato_A2_3    0 -> _A, 10,141 -> _B
+#: Assignment is sourced from the primary deposits, not inferred:
+#:   * GenBank J01825 — DEFINITION "Ti plasmid (from A.tumefaciens, nopaline
+#:     strain T37), T-DNA 5' (left) border" — contains the LB 25-mer.
+#:   * GenBank J01826 — DEFINITION "...T-DNA 3' (right) border", COMMENT
+#:     "right border at base 158" — the RB 25-mer sits at bases 158-182.
+#:   (Yadav, Vanderleyden, Bennett, Barnes & Chilton 1982, PNAS 79:6322.)
+#: Independently reproduced by two mainstream binary vectors that cite those
+#: records: pBIN19 (U09365) and pCAMBIA-1300 (AF234296).  AF234296 annotates
+#: `left border repeat from C58 T-DNA` at 6557..6582 and `right border T-DNA
+#: repeat` at 298..323 — and ``db/G281_construct.fa``'s first record is
+#: byte-identical to AF234296, with the RB 25-mer at 279 and the LB 25-mer at
+#: 6,557 exactly.  ``db/Cas9_construct.fa`` carries LB at 1 and RB at 10,142.
 #:
-#: Labels are deliberately sequence-derived rather than RB/LB: nothing in this
-#: repository establishes which repeat is the right border.  The `canonical_v1`
-#: RB/LB entries in ``db/*.fa`` (TGAGCGTCGCAAAGGCGCTCGGTCT /
-#: GGCCTCGGCCTGAGAGCCAAAACAC) appear in no construct and contradict the motif
-#: this scan has always used, so they are not trusted here.  Until the RB/LB
-#: assignment is settled against an external reference, a hit says "a T-DNA
-#: border repeat is present at this locus" and nothing more.
+#: The octopine T-DNA (pTi15955, X00493) contains neither repeat; its four
+#: border repeats are 24-mers with different variable arms.
+#:
+#: NOTE: the `canonical_v1` RB-TDNA / LB-TDNA entries in ``db/*.fa`` and
+#: ``element_db/gmo_combined_db_v2.fa`` (TGAGCGTCGCAAAGGCGCTCGGTCT /
+#: GGCCTCGGCCTGAGAGCCAAAACAC) are wrong: they lack the invariant CAGGATATAT
+#: border core and appear in no construct.  They are not used by this scan.
 TDNA_BORDER_REPEATS: tuple[tuple[str, str], ...] = (
-    ("TDNA_border_A", "TGGCAGGATATATTGTGGTGTAAAC"),
-    ("TDNA_border_B", "TGACAGGATATATTGGCGGGTAAAC"),
+    ("TDNA_RB", "TGACAGGATATATTGGCGGGTAAAC"),
+    ("TDNA_LB", "TGGCAGGATATATTGTGGTGTAAAC"),
 )
 
-#: Minimum aligned length (bp) for an HSP to count as a border repeat.  The
-#: repeats are 25 bp and differ from each other at 7 positions, so at
-#: ``-word_size 7`` blastn also emits ~9 bp scraps wherever a shared sub-motif
-#: occurs (e.g. rice_G281 positions 4,321 and 7,747).  Those are not borders.
-#: Genuine borders — including the imperfect, 84%-identity copy — align across
-#: the full 25 bp.
+#: Minimum aligned length (bp) for an HSP to count as a border repeat.  RB and
+#: LB share only the invariant ``CAGGATATAT`` core and a terminal ``TAAAC``, so
+#: at ``-word_size 7`` blastn also emits ~9 bp scraps wherever that core occurs
+#: (e.g. rice_G281 positions 4,321 and 7,747).  Those are not borders.  Genuine
+#: borders — including the cross-hit of one repeat onto the other's locus at
+#: ~84% identity — align across the full 25 bp.
 BORDER_MIN_ALIGN_LEN = 20
 
 
