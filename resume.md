@@ -1,163 +1,134 @@
-# Resume — RedGene Pipeline + Issue #4 (s05 module split CLOSED)
+# Resume — RedGene: algorithm hardening on `algo-improvements-2026-07`
 
-**Date:** 2026-04-29 (single-session marathon: Sessions 3-7 in one day)
-**Branch:** `main` @ `51fff0e` (all sessions committed directly to main per user instruction)
+**Date:** 2026-07-09
+**Branch:** `algo-improvements-2026-07` (6 commits, **not merged, not pushed**) — base `main` @ `f3cb0c0`
 **Working dir:** `/data/gpfs/assoc/pgl/develop/redgene`
-**Previous resume:** 2026-04-18 (v1.0 MVP PR #16 complete, v1.1 backlog open)
+**Previous resume:** 2026-04-29 (Issue #4 s05 module split CLOSED)
 
 ---
 
-## Issue #4 — s05 module split COMPLETED 🎯
+## What this session did
 
-7-session refactor splitting `scripts/s05_insert_assembly.py` (4003-line monolith) into 11 focused modules under `scripts/s05/`. All sessions landed; Issue #4 closable.
+Re-reviewed `work_implementation_plan.md` (2026-04-11) against the codebase, then
+fixed the correctness and algorithm defects that a second, adversarial pass over
+the Phase 1 / Phase 4 hot path turned up.
 
-### Final commit chain (Sessions 1-7)
+**`work_implementation_plan.md` is superseded as a code plan.** Its two code
+tasks already shipped:
 
-```
-51fff0e Issue #4 Session 7: retire shims, add architecture docs, close refactor
-96d16fd Issue #4 Session 6 [3/3]: thin entrypoint + line-budget guard
-90a4343 Issue #4 Session 6 [2/3]: extract fanout_orchestrator.py
-972e0d7 Issue #4 Session 6 [1/3]: extract report.py
-14889ad Issue #4 Session 5 [2/2]: extract read_extraction.py
-a11e6ea Issue #4 Session 5 [1/2]: expand site_discovery.py (shim → native)
-ac4265d Issue #4 Session 4 [2/2]: expand classify.py (shim → native)
-aeee876 Issue #4 Session 4 [1/2]: extract assembly.py (highest-risk, 1190 lines)
-bf0c929 Issue #4 Session 3 fix: remove duplicate _parse_src_tag from monolith
-6225d42 Issue #4 Session 3: extract annotation.py (cycle fix: _parse_src_tag → primitives)
-6658fb8 Issue #4 Session 2 [2/2]: extract filter_d_altlocus.py
-2c59f1e Issue #4 Session 2 [1/2]: extract filter_a_host.py
-65b1c6e Issue #4 Session 1 [4/4]: DAG no-cycle test (pre-existing)
-81f22fe Issue #4 Session 1 [3/4]: filter_c_chimeric.py (pre-existing)
-a9230d7 Issue #4 Session 1 [2/4]: filter_b_flank.py (pre-existing)
-39da513 Issue #4 Session 1 [1/4]: primitives.py (pre-existing)
-46aaf40 Issue #4 design spec (pre-existing)
-```
+| Plan task | Status | Where |
+|---|---|---|
+| Task 1 — Filter D v2 | DONE | `scripts/s05/filter_d_altlocus.py`, `verdict.py` Rule 4 |
+| Task 2 — UNKNOWN → FALSE_POSITIVE (host-only) | DONE (renamed constants) | `verdict.py` Rule 7, `unknown_to_fp_*` in `config.yaml` |
 
-### Final state
+What remains in that plan is **SLURM re-runs only** (Phases 1–5, ~3–4 days wall
+time). No code is blocking them. The rice reports on disk (dated 2026-04-16,
+3 CANDIDATE / 32 FALSE_POSITIVE / 33 UNKNOWN) predate the Rule 7 code and would
+collapse most of those 33 UNKNOWN on a re-run.
 
-| Metric | Pre-Issue-#4 | Post-Issue-#4 |
-|--------|--------------|----------------|
-| `scripts/s05_insert_assembly.py` | 4003 lines | **102 lines** (thin entrypoint shim, −97%) |
-| `scripts/s05/` modules | 0 native (4 forward-looking shims) | **11 native modules** (5401 lines total) |
-| pytest baseline | 235 PASS + 1 skipped | **242 PASS + 1 skipped** (+7 net) |
-| DAG no-cycle test | 10 PASSED | **15 PASSED** |
-| Verdict snapshots | 26 PASSED | **26 PASSED, ZERO drift across all 7 sessions** |
-| Line budget tests | n/a | added in Session 6 (monolith < 200, fanout::main < 250) |
-
-### 11-module final layout (DAG stage order)
-
-```
-primitives          (0) — log/revcomp/FASTA/dataclasses + _parse_src_tag (Session 3 cycle-fix migration)
-verdict             (6) — compute_verdict + FilterEvidence + VerdictRules + canonical_override
-config_loader       (7) — load_verdict_rules YAML loader
-site_discovery      (1) — find_softclip_junctions + 7 helpers + _extract_seeds_at_positions (Session 5 deviation)
-classify            (1) — classify_site_tiers + _filter_host_endogenous + _SRC_TIER state
-read_extraction     (2) — extract_candidate_reads + extract_unmapped_paired
-assembly            (3) — StrandAwareSeedExtender + 11 helpers + assemble_insert (1178 lines)
-annotation          (4) — _parse_blast6 + _run_local_blast + _run_remote_blast + annotate_insert
-filter_a_host       (5) — _blast_insert_vs_host (host-fraction FP filter)
-filter_b_flank      (5) — construct-flanking FP filter (Session 1)
-filter_c_chimeric   (5) — multi-locus chimeric FP filter (Session 1)
-filter_d_altlocus   (5) — construct+host coverage FP filter
-report              (8) — generate_report + write_stats
-fanout_orchestrator (9) — main + 4 phase helpers (_run_phase_1_1_5/2_3/4)
-```
-
-### Architecture doc
-
-`docs/architecture/s05-modules.md` (created Session 7) — authoritative reference. Replaces the design spec at `docs/superpowers/specs/2026-04-19-s05-module-split-design.md`.
-
-### Architectural deviations (all justified, documented in commits)
-
-1. **Session 3**: `_parse_src_tag` moved to `primitives.py` (not stay in monolith) to break runtime circular import (annotation → classify shim → monolith partially-initialized).
-2. **Session 4**: `extract_unmapped_paired` lazy-imported inside `assemble_insert` body (cycle break, replaced by clean module-top import in Session 5 once `read_extraction.py` landed).
-3. **Session 5**: `_extract_seeds_at_positions` placed in `site_discovery.py` (not `read_extraction.py`) because its sole caller `legacy_junctions_to_sites` is Phase 1 — moving to Phase 2 would force stage 1 → stage 2 import (DAG violation).
-4. **Session 6**: `main()` split into 4 phase helpers (the ONE non-verbatim change in the entire refactor) to meet `< 250 line` spec budget. Variable names and control flow preserved verbatim within each split.
-
-### Verbatim policy
-
-Function bodies were extracted byte-identical across all sessions (verified by `diff` in spec compliance reviews). Snapshot fixtures (`tests/fixtures/verdict_snapshots/`) confirmed zero behavioral drift across all 11 commits.
+Open GitHub issue: **#7 only** (KCGP nomenclature, blocked on a spec).
 
 ---
 
-## Open work / next sessions
+## Commits
 
-### Issue #4 close-out
-
-```bash
-gh issue view 4 --repo wyim-pgl/redgene
-gh issue close 4 --repo wyim-pgl/redgene -c "Completed in 17 commits across 7 sessions. See docs/architecture/s05-modules.md for the final module layout."
+```
+57245d4 Tests: end-to-end regression for find_softclip_junctions on a synthetic BAM
+67125aa Follow-up from code review: keep the clip when the junction base is ambiguous
+84ce853 Site discovery: N-free seeds, deterministic pairing, read-quality filter
+44ed5ad Border scan: query both T-DNA repeats, collapse HSPs into distinct loci
+2e183b7 Verdict: make canonical_triplet_min_identity actually gate Rule 1
+a76f97a Filter D: log BLAST failures instead of failing silently toward CANDIDATE
 ```
 
-### Remaining v1.1 backlog (from previous resume)
+Plan + measurements: `docs/superpowers/plans/2026-07-09-algorithm-hardening.md`.
 
-| # | Title | 상태 |
-|---|-------|------|
-| 4 | s05 module split | ✅ **CLOSED 2026-04-29** (this resume) |
-| 6 | PDF insertion report (R-5) | scaffold 완료, junction/CRISPR panel + step-8 wire 필요 |
-| 7 | KCGP nomenclature (R-6) | **blocked** on 사양서 |
-
-#### Session 7 cleanup opportunities (deferred)
-
-These were flagged by code-reviewer agents during Sessions 4-6 but not blocking for Issue #4 closure:
-
-- **Constants duplication cleanup**: `HOST_ENDO_*` and `CLIP_HOST_*` exist in BOTH `classify.py` AND the (now-thin) monolith. The monolith copies have no readers. Remove or convert to `from s05.classify import` re-export.
-- **`__all__` definitions**: Add explicit `__all__` to `assembly.py` and other large modules to lock the public surface.
-- **`_run_border_blast` extraction**: T-DNA border motif scan inside `annotate_insert` (annotation.py lines 300-317) could be a private helper for testability.
-- **RB == LB consensus**: `annotate_insert` uses identical `TGGCAGGATATATTGTGGTGTAAAC` for both RB and LB consensus — verify against T-DNA biology (may be a latent bug; preserved verbatim).
-- **`__init__.py` re-export ordering**: Currently mixed; could align with DAG stage order for self-documentation.
-
-### Next-session priorities
-
-1. **Close Issue #4 on GitHub** — see commands above.
-2. **Issue #6 PDF report** — implement junction diagram + CRISPR panel inside `scripts/reports/insertion_pdf.py`, wire `run_pipeline.py --steps 8`. CoC log appendix is now possible (Issue #8 closed).
-3. **Issue #7 KCGP nomenclature** — request 사양서 from team lead, implement `scripts/util/kcgp_id.py` when received.
+pytest **322 + 1 skipped → 387 + 1 skipped**. Verdict snapshots: 26, zero drift,
+fixtures untouched.
 
 ---
 
-## Reference — pick up from here
+## The four defects, with evidence
+
+1. **Border scan queried one 25-mer twice.** `RB_consensus` and `LB_consensus`
+   both held `TGGCAGGATATATTGTGGTGTAAAC`, so every border was counted twice and
+   the labels meant nothing. Both constructs actually carry **two distinct**
+   repeats (`db/G281_construct.fa` `>rice_G281` at 6,556 / 279;
+   `db/Cas9_construct.fa` `>tomato_A2_3` at 0 / 10,141). Measured: 4 rows → 2 loci
+   per construct.
+
+2. **`canonical_triplet_min_identity` was a dead knob.** Rule 1 outranks Filters
+   B/C/D and was fed *every* annotated element, at any identity — while
+   annotation runs at a 0.70 floor.
+
+3. **Filter D swallowed BLAST failures.** `stderr=DEVNULL` + a bare
+   `return False, …`. Note the verdict was already unaffected (Rule 4 gates on
+   `construct_frac`, which is 0.0 either way) — the fix is that the run log now
+   records the crash.
+
+4. **Left-clip consensus leaked internal `N` into assembly seeds.** 2,327 `N`
+   bases across rice Chr1+Chr2. `StrandAwareSeedExtender` skips `N`-containing
+   reads and `_extend_right` needs an exact overlap, so those seeds could not
+   extend in the direction they existed to extend.
+
+Plus: order-dependent greedy junction pairing → globally distance-sorted
+(bisect-windowed); no MAPQ/duplicate/QC-fail filter on clip anchors → added;
+`cluster_window` / cluster depths hard-coded → new `--min-mapq`,
+`--cluster-window`, `--min-cluster-depth`, `--min-single-depth`.
+
+---
+
+## RB vs LB — an OPEN question, deliberately not answered
+
+The two repeats are labelled `TDNA_border_A` / `TDNA_border_B` in
+`border_hits.tsv`, **not** RB / LB. Nothing in this repo establishes the
+assignment, and the `canonical_v1` `RB-TDNA` / `LB-TDNA` entries in `db/*.fa`
+(`TGAGCGTCGCAAAGGCGCTCGGTCT` / `GGCCTCGGCCTGAGAGCCAAAACAC`) appear in **no**
+construct and contradict the motif the scan has always used — they look wrong.
+
+**Next session:** settle this against an external reference (the Ti plasmid
+accession the constructs derive from), then either relabel or fix the DB entries.
+Do not infer T-DNA orientation from the current labels.
+
+---
+
+## Verification performed (no HPC runs)
+
+- `_run_border_blast` on both real constructs → 2 loci each, 100% identity.
+- Old vs new Phase 1 on `results/rice_G281/s04_host_map/rice_G281_host.bam`:
+  - Chr3 ground-truth region: **identical** — 25 sites, identical seeds,
+    `Chr3:16,439,674-16,439,709` recovered by both.
+  - Chr1+Chr2: sites 5,864 → 5,706; `N` in seeds 2,327 → **0**. Every dropped
+    site's old seed only cleared `min_clip=20` because `N`s padded it
+    (`Chr1:457,108`: 24 bp seed, 8 `N`, unambiguous run 0 bp).
+  - Defaults are byte-identical on real data: 0 clipped reads discarded
+    (BAMs are not duplicate-marked).
+
+---
+
+## Next steps
+
+1. **Merge decision** on `algo-improvements-2026-07` (branch, unpushed).
+2. **Re-run s05** for rice + all species — the reports on disk predate Rule 7
+   *and* every fix above. This is the plan's Phases 1–3.
+3. Settle the **RB/LB assignment** (see above).
+4. Deferred, highest detection ROI: **PE-discordancy in site discovery**.
+   `find_softclip_junctions` uses soft clips only; discordant-pair primitives
+   already exist in `s06b_junction_verify.py` but only to *count* support at
+   known junctions, never to *discover*. Needs real-BAM validation.
+5. Deferred: seed k-mer 15 → 21 for large plant genomes (gated on a sweep);
+   a unified `run_blastn` wrapper over the 12 scattered call sites with
+   inconsistent stderr handling.
+6. When one side of a paired cluster now yields a sub-`min_clip` consensus the
+   site is dropped (as before). Demoting it to a single-direction site would
+   recover sensitivity — needs a validation run.
 
 ```bash
 cd /data/gpfs/assoc/pgl/develop/redgene
 export PATH="/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/bin:$PATH"
-
-# Verify final state
-git log --oneline -20
-pytest tests/ -q                               # 242 PASS + 1 skipped
-pytest tests/test_s05_import_dag.py -v         # 15 PASSED
-pytest tests/test_verdict_snapshots.py -v      # 26 PASSED, 0 drift
-python scripts/s05_insert_assembly.py --help > /dev/null && echo OK
-wc -l scripts/s05_insert_assembly.py scripts/s05/*.py
-
-# Architecture doc
-less docs/architecture/s05-modules.md
-
-# Plan files (Sessions 3-7)
-ls docs/superpowers/plans/2026-04-2*-s05-session*
-
-# Open issues
-gh issue list --repo wyim-pgl/redgene --state open
+git log --oneline main..HEAD
+pytest tests/ -q                                  # 387 PASS + 1 skipped
+pytest tests/test_verdict_snapshots.py -q         # 26 PASS, 0 drift
+pytest tests/test_find_softclip_junctions.py -v   # Phase 1 e2e guard (needs minimap2)
+less docs/superpowers/plans/2026-07-09-algorithm-hardening.md
 ```
-
-주요 문서:
-- **`docs/architecture/s05-modules.md`** — 최종 모듈 레이아웃 + DAG + 리팩터링 히스토리 (Session 7 산출물)
-- `docs/superpowers/specs/2026-04-19-s05-module-split-design.md` — 원래 설계 스펙
-- `docs/superpowers/plans/2026-04-28-s05-session{3,4,5}-*.md` + `2026-04-29-s05-session6-report-fanout.md` — 세션별 plan 파일
-- `tests/test_s05_import_dag.py` — DAG no-cycle invariant (15 entries)
-- `tests/test_verdict_snapshots.py` — primary regression signal (26 fixtures)
-- `tests/test_submit_s05_array.py` — line-budget guard (Session 6)
-
----
-
-## v1.0 MVP 핵심 성과 (이전 세션, 2026-04-17 → 04-18)
-
-8 issues closed (#1, #3, #5, #8, #9, #10, #11, #12, #13, #14, #15), 19 commits, PR #16, pytest 32 → 138, AC-1/2/4/6 모두 PASS. 자세한 내용은 git log 참조.
-
-## Issue #4 핵심 성과 (이번 세션, 2026-04-28 → 04-29)
-
-- **17 commits** 단일 main branch에 직접
-- **subagent-driven-development** workflow: implementer → spec-reviewer → quality-reviewer 반복 (Anthropic API rate limit 한 번 도달, recover 후 직접 검증으로 진행)
-- **Verbatim policy**: 모든 함수 body byte-identical 이동 (단 1개 예외: Session 6의 main() 4-way split)
-- **Zero snapshot drift** 26 fixtures across 11 commits (regression-free)
-- **Architectural deviations 4건** 모두 cycle break / DAG 위반 회피로 정당화 + 커밋 메시지에 명시
-- **plan 파일 5개** (`docs/superpowers/plans/2026-04-2*-s05-session{3,4,5,6,7}*`) 세션별 단계 추적
