@@ -57,11 +57,131 @@ from .primitives import (
 # Phase 1: Soft-clip Junction Detection
 # ---------------------------------------------------------------------------
 
+def _read_donates_clip(read, min_mapq: int = 0) -> bool:
+    """True iff ``read``'s soft clips may be used as junction evidence.
+
+    Beyond the alignment-record filters (unmapped / secondary / supplementary)
+    this rejects PCR duplicates and vendor QC failures, and enforces a mapping
+    quality floor.  A clip is only meaningful if the *anchor* is trustworthy: a
+    duplicate inflates a cluster's apparent depth past ``min_cluster_depth``
+    without adding independent evidence, and a MAPQ-0 anchor means the aligner
+    could not decide which repeat copy the read came from.
+
+    ``min_mapq`` defaults to 0 — the pipeline's BAMs are not duplicate-marked
+    and no MAPQ floor was ever applied, so the default preserves existing
+    behaviour.  Raise it via ``--min-mapq`` on repeat-rich hosts (maize).
+    """
+    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+        return False
+    if read.is_duplicate or read.is_qcfail:
+        return False
+    if read.mapping_quality < min_mapq:
+        return False
+    return True
+
+
+def _cluster_positions(
+    clips: list[tuple[int, str]],
+    window: int,
+    min_depth: int,
+) -> list[tuple[int, list[str]]]:
+    """Bin clips into position clusters of at most ``window`` bp width.
+
+    Each cluster is anchored on its first position, so a cluster can never grow
+    wider than ``window`` by chaining.  Clusters shallower than ``min_depth``
+    are dropped as noise.  Returns ``[(median_position, clip_seqs), ...]``.
+
+    The input list is not mutated.
+    """
+    if not clips:
+        return []
+
+    ordered = sorted(clips, key=lambda x: x[0])
+    clusters: list[tuple[int, list[str]]] = []
+    current_seqs = [ordered[0][1]]
+    current_positions = [ordered[0][0]]
+
+    def _flush() -> None:
+        if len(current_seqs) >= min_depth:
+            median_pos = sorted(current_positions)[len(current_positions) // 2]
+            clusters.append((median_pos, list(current_seqs)))
+
+    for pos, seq in ordered[1:]:
+        if pos - current_positions[0] <= window:
+            current_seqs.append(seq)
+            current_positions.append(pos)
+        else:
+            _flush()
+            current_seqs = [seq]
+            current_positions = [pos]
+    _flush()
+
+    return clusters
+
+
+def _pair_clusters(
+    r_positions: list[int],
+    l_positions: list[int],
+    window: int,
+) -> list[tuple[int, int]]:
+    """Match right-clip clusters to left-clip clusters within ``window`` bp.
+
+    Every candidate pair is scored by distance and accepted in ascending
+    distance order, so a right cluster never claims a left cluster that sits
+    closer to some other right cluster.  The previous implementation walked the
+    right clusters in positional order and let each take the nearest *unused*
+    left cluster, which made the result depend on iteration order: with
+    ``r=[100, 110]`` and ``l=[108]`` it paired 100 <-> 108 (8 bp apart) and
+    stranded the 2 bp pair.
+
+    Ties break on ``(r_pos, l_pos)``, so the output is fully deterministic.
+    Returns ``[(r_index, l_index), ...]`` sorted by ``r_index``.
+
+    Candidates are enumerated through a bisect over the sorted left positions,
+    so the cost is ``O(R log L + C)`` for ``C`` in-window pairs rather than the
+    ``O(R * L)`` of a nested scan.  That matters on repeat-rich hosts: maize
+    yields ~2.25M extracted reads and correspondingly many clusters.
+    """
+    import bisect
+
+    l_sorted = sorted(range(len(l_positions)), key=lambda li: l_positions[li])
+    l_sorted_pos = [l_positions[li] for li in l_sorted]
+
+    candidates: list[tuple[int, int, int, int, int]] = []
+    for ri, r_pos in enumerate(r_positions):
+        lo = bisect.bisect_left(l_sorted_pos, r_pos - window)
+        hi = bisect.bisect_right(l_sorted_pos, r_pos + window)
+        for slot in range(lo, hi):
+            li = l_sorted[slot]
+            l_pos = l_positions[li]
+            candidates.append((abs(r_pos - l_pos), r_pos, l_pos, ri, li))
+    candidates.sort()
+
+    used_r: set[int] = set()
+    used_l: set[int] = set()
+    pairs: list[tuple[int, int]] = []
+    for _dist, _r_pos, _l_pos, ri, li in candidates:
+        if ri in used_r or li in used_l:
+            continue
+        used_r.add(ri)
+        used_l.add(li)
+        pairs.append((ri, li))
+
+    return sorted(pairs)
+
+
 def _build_consensus(seqs: list[str], direction: str) -> str:
     """Build majority-vote consensus from a list of clipped sequences.
 
     For 'right' clips: sequences are aligned from their left (start of insert).
     For 'left' clips: sequences are aligned from their right (end of insert).
+
+    Either way the result is the longest unambiguous run adjacent to the host
+    junction, and never contains ``N``.  That matters because the consensus
+    becomes an assembly seed, and ``StrandAwareSeedExtender`` skips any sequence
+    containing ``N`` while ``_extend_right`` requires an exact overlap — an
+    embedded ``N`` blocks extension in precisely the direction the seed exists
+    to extend.
     """
     if not seqs:
         return ""
@@ -104,9 +224,11 @@ def _build_consensus(seqs: list[str], direction: str) -> str:
                 consensus.append(best)
             else:
                 consensus.append("N")
-        # Trim leading/trailing N
-        result = "".join(consensus).strip("N")
-        return result
+        # Keep the longest N-free suffix: left clips abut the host on their
+        # RIGHT end, so the junction-adjacent run is what the assembler needs.
+        # Everything at or before the last ambiguous column is discarded (the
+        # 'right' branch above achieves the same by breaking at the first one).
+        return "".join(consensus).rsplit("N", 1)[-1]
 
 
 def _batch_check_maps_to_host(seqs: dict[str, str], host_ref: Path, workdir: Path,
@@ -164,6 +286,9 @@ def find_softclip_junctions(
     min_clip: int = 20,
     cluster_window: int = 50,
     extra_dbs: list[Path] | None = None,
+    min_mapq: int = 0,
+    min_cluster_depth: int = 3,
+    min_single_depth: int = 5,
 ) -> list[InsertionSite]:
     """Scan host BAM for insertion sites using bidirectional soft-clip analysis.
 
@@ -171,6 +296,11 @@ def find_softclip_junctions(
     1. Bidirectional soft-clips at the same genomic position
     2. The two clip sequences are DIFFERENT (insert, not SV)
     3. Neither clip maps to host genome (foreign sequence)
+
+    ``min_cluster_depth`` gates a paired cluster and ``min_single_depth`` a
+    lone one-sided cluster; both were hard-coded (3 and 5) before.  Lowering
+    them trades specificity for sensitivity below ~15x coverage, where
+    ``docs/measurements/coverage_sensitivity.md`` records detection failing.
     """
     from .classify import _batch_check_element_hits
 
@@ -184,15 +314,22 @@ def find_softclip_junctions(
     bam = pysam.AlignmentFile(str(host_bam), "rb")
     n_right = 0
     n_left = 0
+    n_rejected = 0
 
     for read in bam.fetch():
-        if read.is_unmapped or read.is_secondary or read.is_supplementary:
-            continue
         cigar = read.cigartuples
         if cigar is None:
             continue
         seq = read.query_sequence
         if seq is None:
+            continue
+
+        if not _read_donates_clip(read, min_mapq):
+            # Only count reads that carried a clip we would otherwise have used,
+            # so the log line means "evidence discarded", not "reads skipped".
+            if ((cigar[-1][0] == 4 and cigar[-1][1] >= min_clip)
+                    or (cigar[0][0] == 4 and cigar[0][1] >= min_clip)):
+                n_rejected += 1
             continue
 
         chrom = read.reference_name
@@ -214,59 +351,33 @@ def find_softclip_junctions(
             n_left += 1
 
     bam.close()
-    log(f"  Collected {n_right:,} right-clips, {n_left:,} left-clips")
-
-    # Step 2: Cluster by position (min_depth=3 to filter noise)
-    MIN_CLUSTER_DEPTH = 3
-
-    def _cluster(clips: list[tuple[int, str]], window: int) -> list[tuple[int, list[str]]]:
-        if not clips:
-            return []
-        clips.sort(key=lambda x: x[0])
-        clusters = []
-        current_seqs = [clips[0][1]]
-        current_positions = [clips[0][0]]
-
-        for pos, seq in clips[1:]:
-            if pos - current_positions[0] <= window:
-                current_seqs.append(seq)
-                current_positions.append(pos)
-            else:
-                if len(current_seqs) >= MIN_CLUSTER_DEPTH:
-                    median_pos = sorted(current_positions)[len(current_positions) // 2]
-                    clusters.append((median_pos, current_seqs))
-                current_seqs = [seq]
-                current_positions = [pos]
-        if len(current_seqs) >= MIN_CLUSTER_DEPTH:
-            median_pos = sorted(current_positions)[len(current_positions) // 2]
-            clusters.append((median_pos, current_seqs))
-
-        return clusters
+    log(f"  Collected {n_right:,} right-clips, {n_left:,} left-clips "
+        f"({n_rejected:,} clipped reads discarded: duplicate / QC-fail / "
+        f"secondary / supplementary / MAPQ<{min_mapq})")
 
     # Step 3: Pair forward/reverse clusters at same position
     sites: list[InsertionSite] = []
     used_ids: set[str] = set()
 
-    for chrom in set(list(right_clips.keys()) + list(left_clips.keys())):
-        r_clusters = _cluster(right_clips.get(chrom, []), cluster_window)
-        l_clusters = _cluster(left_clips.get(chrom, []), cluster_window)
+    for chrom in sorted(set(list(right_clips.keys()) + list(left_clips.keys()))):
+        # Step 2: Cluster by position, dropping clusters below min_cluster_depth
+        r_clusters = _cluster_positions(
+            right_clips.get(chrom, []), cluster_window, min_cluster_depth)
+        l_clusters = _cluster_positions(
+            left_clips.get(chrom, []), cluster_window, min_cluster_depth)
 
-        # Try to pair right and left clusters within window
-        used_l = set()
-        for r_pos, r_seqs in r_clusters:
-            best_l = None
-            best_dist = cluster_window + 1
-            for li, (l_pos, l_seqs) in enumerate(l_clusters):
-                if li in used_l:
-                    continue
-                dist = abs(r_pos - l_pos)
-                if dist <= cluster_window and dist < best_dist:
-                    best_l = li
-                    best_dist = dist
+        pairs = _pair_clusters(
+            [pos for pos, _ in r_clusters],
+            [pos for pos, _ in l_clusters],
+            cluster_window,
+        )
+        paired_l = {li for _, li in pairs}
+        paired_r = {ri for ri, _ in pairs}
+        l_for_r = dict(pairs)
 
-            if best_l is not None:
-                l_pos, l_seqs = l_clusters[best_l]
-                used_l.add(best_l)
+        for ri, (r_pos, r_seqs) in enumerate(r_clusters):
+            if ri in paired_r:
+                l_pos, l_seqs = l_clusters[l_for_r[ri]]
 
                 r_consensus = _build_consensus(r_seqs, "right")
                 l_consensus = _build_consensus(l_seqs, "left")
@@ -307,8 +418,8 @@ def find_softclip_junctions(
                 )
                 sites.append(site)
             else:
-                # Single-direction cluster: only keep high-depth (≥5 reads)
-                if len(r_seqs) >= 5:
+                # Single-direction cluster: only keep high-depth
+                if len(r_seqs) >= min_single_depth:
                     r_consensus = _build_consensus(r_seqs, "right")
                     if len(r_consensus) >= min_clip:
                         sid = f"insertion_{chrom}_{r_pos}"
@@ -336,9 +447,9 @@ def find_softclip_junctions(
 
         # Unpaired left clusters (only high-depth)
         for li, (l_pos, l_seqs) in enumerate(l_clusters):
-            if li in used_l:
+            if li in paired_l:
                 continue
-            if len(l_seqs) < 5:
+            if len(l_seqs) < min_single_depth:
                 continue
             l_consensus = _build_consensus(l_seqs, "left")
             if len(l_consensus) >= min_clip:
@@ -657,6 +768,7 @@ def _extract_seeds_at_positions(
     chrom: str,
     min_clip: int,
     window: int,
+    min_mapq: int = 0,
 ) -> None:
     """Extract soft-clip seeds at known junction positions."""
     bam = pysam.AlignmentFile(str(host_bam), "rb")
@@ -666,7 +778,7 @@ def _extract_seeds_at_positions(
         left_clips: list[str] = []
 
         for read in bam.fetch(chrom, max(0, jpos - 200), jpos + 200):
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            if not _read_donates_clip(read, min_mapq):
                 continue
             cigar = read.cigartuples
             if cigar is None:
