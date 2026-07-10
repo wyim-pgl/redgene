@@ -6,7 +6,7 @@
   "description": "element_db/gmo_combined_db_v2.fa",
   "number-of-letters": 159203,
   "number-of-sequences": 180,
-  "last-updated": "2026-07-09T23:27:00",
+  "last-updated": "2026-07-09T23:31:00",
   "number-of-volumes": 1,
   "bytes-total": 111922,
   "bytes-to-cache": 43334,
