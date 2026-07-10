@@ -38,7 +38,7 @@ python scripts/s01_qc.py --r1 reads_R1.fq.gz --r2 reads_R2.fq.gz \
 ### Testing
 
 ```bash
-# Full pytest suite (baseline: 255 PASS + 1 skipped, ~20s)
+# Full pytest suite (baseline: 371 PASS + 1 skipped, ~20s)
 pytest tests/ -q
 
 # Single file / single test
@@ -50,6 +50,12 @@ pytest tests/test_s05_import_dag.py -v
 
 # Line-budget guards added in Session 6 (monolith < 300, fanout::main < 250)
 pytest tests/test_submit_s05_array.py -v
+
+# Phase 1 site discovery: consensus, clustering, cluster pairing, read filters
+pytest tests/test_site_discovery.py -v
+
+# T-DNA border scan (includes a real-blastn check against db/G281_construct.fa)
+pytest tests/test_border_scan.py -v
 ```
 
 Snapshot fixtures live in `tests/fixtures/verdict_snapshots/` (rice_G281, cucumber_line225). Never edit these without a deliberate behavior change — snapshot drift is the primary regression signal for `compute_verdict`.
@@ -125,16 +131,16 @@ DAG stage ordering enforced by `tests/test_s05_import_dag.py`; later-stage modul
 | Module | Stage | Role |
 |--------|-------|------|
 | `primitives.py` | 0 | `log`, `revcomp`, FASTA/FASTQ I/O, dataclasses (`JunctionCluster`, `InsertionSite`, `LegacyJunction`, `TierResult`), `_parse_src_tag` |
-| `site_discovery.py` | 1 | Phase 1: `find_softclip_junctions` + `_build_consensus` + `_apply_mask_bed` + `MASKED_SOURCE_TAG` + `parse_legacy_junctions` + `_extract_seeds_at_positions` |
+| `site_discovery.py` | 1 | Phase 1: `find_softclip_junctions` + `_read_donates_clip` + `_cluster_positions` + `_pair_clusters` + `_build_consensus` + `_apply_mask_bed` + `MASKED_SOURCE_TAG` + `parse_legacy_junctions` + `_extract_seeds_at_positions` |
 | `classify.py` | 1 | Phase 1.5: `classify_site_tiers` + `_filter_host_endogenous` + `_should_replace` + `_SRC_TIER`/`_TIER2_SRCS`/`_UNKNOWN_SRC_WARNED` state |
 | `read_extraction.py` | 2 | Phase 2: `extract_candidate_reads` + `extract_unmapped_paired` |
 | `assembly.py` | 3 | Phase 3: `StrandAwareSeedExtender` + `recruit_by_kmer` + `pilon_fill` + `assemble_insert` (1178 lines, the core pipeline function) |
-| `annotation.py` | 4 | Phase 4: `_run_local_blast` + `_run_remote_blast` + `_merge_annotations` + `annotate_insert` |
+| `annotation.py` | 4 | Phase 4: `_run_local_blast` + `_run_remote_blast` + `_merge_annotations` + `annotate_insert` + `_run_border_blast` / `TDNA_BORDER_REPEATS` |
 | `filter_a_host.py` | 5 | `_blast_insert_vs_host` (host-fraction + foreign-gap measurement) |
 | `filter_b_flank.py` | 5 | Construct-flanking FP check (BLAST construct vs host, slop-overlap test) |
 | `filter_c_chimeric.py` | 5 | Multi-locus chimeric FP check (strict-identity off-target chrom aggregation) |
 | `filter_d_altlocus.py` | 5 | Alt-locus FP check (construct + host combined coverage) |
-| `verdict.py` | 6 | Pure `compute_verdict` + `FilterEvidence` + `VerdictRules` + `_apply_canonical_override` |
+| `verdict.py` | 6 | Pure `compute_verdict` + `select_canonical_elements` + `FilterEvidence` + `VerdictRules` + `_apply_canonical_override` |
 | `config_loader.py` | 7 | `load_verdict_rules` (YAML → `VerdictRules`) |
 | `report.py` | 8 | Phase 5: `generate_report` + `write_stats` |
 | `fanout_orchestrator.py` | 9 | `main()` + `_run_phase_1_1_5` + `_run_phase_2_3` + `_run_phase_4` (CLI dispatch) |
@@ -196,6 +202,10 @@ Changes to this ordering require a snapshot regeneration pass.
 - **Identity threshold for element_db**: Default `--min-identity 0.90` silently filters genuine junctions when using element_db (minimap2 alignment identity ~0.84). `run_pipeline.py` auto-detects element_db/combined_db and uses 0.70.
 - **Maize-specific false positives**: When host IS maize, endogenous genes (Ubi1, zSSIIb, wx012) match construct elements. Border sequences contain ~100bp native flanking → 2.25M extracted reads vs 6K for rice.
 - **BWA threading**: Earlier versions used `-t 2` due to futex deadlock on Pronghorn GPFS. Now uses `-t 16` successfully.
+- **T-DNA border repeats — RB/LB assignment is NOT established in this repo.** Both constructs carry two distinct 25-bp repeats: `TGGCAGGATATATTGTGGTGTAAAC` (`TDNA_border_A`) and `TGACAGGATATATTGGCGGGTAAAC` (`TDNA_border_B`) — rice_G281 at 6,557/279, tomato_A2_3 at 1/10,142. The `canonical_v1` `RB-TDNA`/`LB-TDNA` entries in `db/*.fa` appear in *no* construct and contradict both. Until an external reference settles it, `border_hits.tsv` labels are sequence-derived, and code must not infer strand or T-DNA orientation from them.
+- **`min_clip` counts consensus bases, not `N`.** `_build_consensus` returns the longest unambiguous run (ties resolve toward the junction). A seed padded with `N` used to clear `min_clip` and then silently fail k-mer extension (`add_seqs` skips `N`-containing reads; `_extend_right` requires an exact overlap).
+- **Junction discovery now rejects `is_duplicate` / `is_qcfail` reads even at `--min-mapq 0`.** This is a no-op on today's BAMs — `bwa mem | samtools sort` never marks duplicates and sets no QC-fail flag. If a `samtools markdup` step is ever added upstream, those reads will start being dropped from clip clusters. That is intended (a duplicate inflates cluster depth without adding independent evidence), but it is a silent change in cluster depth, so re-baseline `--min-cluster-depth` if you add markdup.
+- **Canonical triplet promotion is identity-gated.** Rule 1 outranks Filters B/C/D, so an element only joins `matched_canonical` when its best BLAST hit clears `canonical_triplet_min_identity` (default 0.90). Annotation itself runs at a 0.70 floor.
 
 ## SLURM Settings
 

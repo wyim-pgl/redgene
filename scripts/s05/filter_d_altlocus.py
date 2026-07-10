@@ -66,10 +66,18 @@ def _check_construct_host_coverage(
     Failure mode
     ------------
     ``is_fp=False`` means "this site is NOT a construct+host false positive", so
-    a crashed blastn that returned ``False`` silently promoted the site toward
-    CANDIDATE.  A failure is now logged with its stderr, and the host evidence
-    already measured by Filter A is passed through untouched instead of being
-    zeroed — the site is reported as *unmeasured by Filter D*, not as *clean*.
+    a crashed blastn drops the site's strongest FP check while looking exactly
+    like a clean result.  stderr used to go to ``DEVNULL``, so nothing recorded
+    that it had happened.  The failure is now logged with its stderr tail.
+
+    The *verdict* is unchanged by a failure, before and after: ``construct_frac``
+    is 0.0 either way, and ``compute_verdict`` Rule 4 needs
+    ``construct_frac >= fp_construct_frac_min`` to fire, so ``combined_frac``
+    is never read.  A Filter D crash therefore still lets an element-present
+    construct+host FP reach Rule 6 → CANDIDATE, exactly as it did before — the
+    difference is that the run log now says so.  Returning ``host_fraction``
+    rather than 0.0 for the two coverage fields simply keeps the failure return
+    consistent with the "blastn ran, no construct hits" return below.
     """
     eff_len = insert_len - n_count
     if eff_len <= 0:

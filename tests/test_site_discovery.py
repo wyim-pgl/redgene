@@ -42,6 +42,35 @@ def test_left_consensus_drops_internal_n():
     assert consensus == "AAA"
 
 
+def test_left_consensus_survives_an_ambiguous_junction_base():
+    """The junction-adjacent column is the deepest — but it can still tie.
+
+    Dropping the whole seed because its last base is ambiguous would lose the
+    clip entirely.  The junction *position* comes from the BAM, not the seed, so
+    the usable run to its left is what the assembler needs.
+    """
+    consensus = _build_consensus(["AAAAC", "AAAAG"], "left")
+
+    assert consensus == "AAAA"
+
+
+def test_left_consensus_keeps_the_longest_unambiguous_run():
+    """With an ambiguity mid-clip, keep the longer flank, not just the suffix."""
+    consensus = _build_consensus(["AAAAACAA", "AAAAAGAA"], "left")
+
+    assert consensus == "AAAAA"
+
+
+def test_left_consensus_breaks_run_ties_toward_the_junction():
+    consensus = _build_consensus(["TTTCGGG", "TTTAGGG"], "left")
+
+    assert consensus == "GGG"
+
+
+def test_left_consensus_of_all_ambiguous_columns_is_empty():
+    assert _build_consensus(["AC", "GT"], "left") == ""
+
+
 def test_left_consensus_keeps_full_agreement():
     consensus = _build_consensus(["ACGTACG", "ACGTACG", "ACGTACG"], "left")
 

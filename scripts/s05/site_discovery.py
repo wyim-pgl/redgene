@@ -224,11 +224,16 @@ def _build_consensus(seqs: list[str], direction: str) -> str:
                 consensus.append(best)
             else:
                 consensus.append("N")
-        # Keep the longest N-free suffix: left clips abut the host on their
-        # RIGHT end, so the junction-adjacent run is what the assembler needs.
-        # Everything at or before the last ambiguous column is discarded (the
-        # 'right' branch above achieves the same by breaking at the first one).
-        return "".join(consensus).rsplit("N", 1)[-1]
+        # Keep the longest unambiguous run.  Ties resolve toward the RIGHT,
+        # which for a left clip is the host-junction end.  Returning the whole
+        # string with embedded Ns (the old `.strip("N")`) handed the assembler a
+        # seed it cannot use; returning only the suffix would throw the clip away
+        # whenever the deepest, junction-adjacent column happens to tie.
+        best = ""
+        for run in "".join(consensus).split("N"):
+            if len(run) >= len(best):
+                best = run
+        return best
 
 
 def _batch_check_maps_to_host(seqs: dict[str, str], host_ref: Path, workdir: Path,
