@@ -256,6 +256,72 @@ def test_real_rice_construct_reports_exactly_two_borders(tmp_path):
     assert at == {"TDNA_RB": 279, "TDNA_LB": 6557}, f"got {at}"
 
 
+def test_report_counts_only_the_borders_on_this_insert(tmp_path):
+    """`border_hits.tsv` is written once for ALL inserts, keyed by subject.
+
+    `generate_report` used to count every line in the file, so each site's report
+    claimed the borders found on every other site.  Observed on the real rice run:
+    `insertion_Chr3_16439674_report.txt` said "T-DNA borders found: 10" while all
+    10 hits belonged to Chr11_27416138, Chr11_28363144 and Chr3_29074002.
+    """
+    from scripts.s05.primitives import InsertionSite
+    from scripts.s05.report import generate_report
+
+    insert_fa = tmp_path / "insert.fa"
+    insert_fa.write_text(">insertion_Chr3_16439674_assembled_insert\n" + "ACGT" * 200 + "\n")
+
+    annotation = tmp_path / "element_annotation.tsv"
+    annotation.write_text(
+        "query\telement\tidentity\tlength\tq_start\tq_end\ts_start\ts_end\tevalue\tsource\n"
+    )
+
+    border = tmp_path / "border_hits.tsv"
+    border.write_text(
+        # two hits owned by OTHER inserts...
+        "TDNA_RB\tinsertion_Chr11_28363144_assembled_insert\t100.0\t25\t1\t25\t100\t124\n"
+        "TDNA_LB\tinsertion_Chr3_29074002_assembled_insert\t100.0\t25\t1\t25\t300\t324\n"
+        # ...and one that is genuinely ours
+        "TDNA_RB\tinsertion_Chr3_16439674_assembled_insert\t100.0\t25\t1\t25\t500\t524\n"
+    )
+
+    site = InsertionSite(site_id="insertion_Chr3_16439674", host_chr="Chr3", pos_5p=16439674)
+    generate_report(
+        insert_fa, annotation, border, site,
+        n_rounds=1, status="complete", output_dir=tmp_path,
+        host_ref=None, element_db=None, construct_flanking=None,
+    )
+    report = (tmp_path / "insertion_Chr3_16439674_report.txt").read_text()
+
+    assert "T-DNA borders found: 1" in report
+    assert "T-DNA borders found: 3" not in report
+
+
+def test_report_omits_the_border_line_when_none_are_ours(tmp_path):
+    from scripts.s05.primitives import InsertionSite
+    from scripts.s05.report import generate_report
+
+    insert_fa = tmp_path / "insert.fa"
+    insert_fa.write_text(">insertion_Chr3_16439674_assembled_insert\n" + "ACGT" * 200 + "\n")
+    annotation = tmp_path / "element_annotation.tsv"
+    annotation.write_text(
+        "query\telement\tidentity\tlength\tq_start\tq_end\ts_start\ts_end\tevalue\tsource\n"
+    )
+    border = tmp_path / "border_hits.tsv"
+    border.write_text(
+        "TDNA_RB\tinsertion_Chr11_28363144_assembled_insert\t100.0\t25\t1\t25\t100\t124\n"
+    )
+
+    site = InsertionSite(site_id="insertion_Chr3_16439674", host_chr="Chr3", pos_5p=16439674)
+    generate_report(
+        insert_fa, annotation, border, site,
+        n_rounds=1, status="complete", output_dir=tmp_path,
+        host_ref=None, element_db=None, construct_flanking=None,
+    )
+    report = (tmp_path / "insertion_Chr3_16439674_report.txt").read_text()
+
+    assert "T-DNA borders found" not in report
+
+
 @pytest.mark.skipif(shutil.which("blastn") is None, reason="blastn not on PATH")
 def test_scan_on_borderless_insert_writes_empty_file(tmp_path):
     insert_fa = tmp_path / "insert.fa"

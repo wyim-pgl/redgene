@@ -279,11 +279,19 @@ def generate_report(
         if elem_counts.most_common(1)[0][1] >= 2:
             structure = f"multi-copy (≥{elem_counts.most_common(1)[0][1]} copies)"
 
-    # Read border hits
+    # Read border hits.
+    # `border_hits.tsv` is written once per s05 run, for ALL assembled inserts —
+    # its subject column (2) names the insert each hit belongs to. Counting every
+    # line made each site's report claim the borders found on every other site
+    # (rice_G281 Chr3:16,439,674 reported "T-DNA borders found: 10" while all ten
+    # hits belonged to three other inserts).
     n_borders = 0
     if border_tsv.exists():
         with open(border_tsv) as fh:
-            n_borders = sum(1 for line in fh if line.strip())
+            for line in fh:
+                cols = line.rstrip("\n").split("\t")
+                if len(cols) >= 2 and cols[1] == insert_name:
+                    n_borders += 1
 
     # Determine deletion size
     deletion_size = abs(site.pos_3p - site.pos_5p) if site.pos_3p > 0 else 0
