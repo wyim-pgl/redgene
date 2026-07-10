@@ -215,7 +215,9 @@ Changes to this ordering require a snapshot regeneration pass.
 
 - Partition: `cpu-s1-pgl-0`, Account: `cpu-s1-pgl-0`
 - Resources: 16 CPUs, 64G RAM, 24h (for full pipeline with step 4 host mapping)
+- Allocate 4 GB RAM per thread.
 - See `run_clean.sh` for sbatch configuration
+- **`unset SBATCH_PARTITION SBATCH_ACCOUNT SBATCH_TIMELIMIT` at the top of every batch script.** The login shell exports them, and SLURM precedence is CLI > env > script — so `SBATCH_TIMELIMIT=13-23:00:00` silently overrides your `#SBATCH --time=16:00:00` (observed on job 5799803). Verify with `sacct -j <id> --format=Timelimit,ReqCPUS,ReqMem`. Full write-up: lab wiki `guide/pronghorn.md`.
 
 ## Environment
 
