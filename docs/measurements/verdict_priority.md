@@ -86,3 +86,28 @@ raw construct-flanking coordinates by `CONSTRUCT_FLANK_SLOP = 500 bp` before
 storing them in `FilterEvidence.flanking_hit`.  This keeps verdict.py
 side-effect-free (no constants import) while preserving the ±500 bp slop
 matching semantics.
+
+---
+
+## `matched_canonical` is identity-gated (2026-07-09)
+
+Rule 1 outranks every FP filter, so the elements that feed it must be
+*confidently* present.  `generate_report` used to pass **every** annotated
+element as `matched_canonical`, which made `canonical_triplet_min_identity`
+(`config.yaml`, default `0.90`) a knob that parsed and then did nothing.
+Element annotation runs at a permissive floor — `run_pipeline.py` drops
+`--min-identity` to 0.70 whenever an element DB is in use — so three weak
+homology hits could complete a triplet and force CANDIDATE past Filters B/C/D.
+
+`generate_report` now tracks each element's best BLAST `pident` and filters the
+set through `verdict.select_canonical_elements()` before building
+`FilterEvidence`.  Elements excluded by the gate are logged individually.  The
+threshold is read on either scale (`0.90` and `90.0` both mean 90%) because the
+config states a fraction while BLAST reports a percentage.
+
+Rule 6 is unaffected: an element that fails the canonical gate still counts as
+an annotated element, so a genuine insert whose elements happen to align weakly
+is judged by the FP filters rather than promoted outright.
+
+`compute_verdict` itself is unchanged — the gate lives entirely in the evidence
+that the caller assembles, so the pure rule table above still holds.
