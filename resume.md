@@ -82,17 +82,38 @@ Plus: order-dependent greedy junction pairing → globally distance-sorted
 
 ---
 
-## RB vs LB — an OPEN question, deliberately not answered
+## RB vs LB — RESOLVED (2026-07-09)
 
-The two repeats are labelled `TDNA_border_A` / `TDNA_border_B` in
-`border_hits.tsv`, **not** RB / LB. Nothing in this repo establishes the
-assignment, and the `canonical_v1` `RB-TDNA` / `LB-TDNA` entries in `db/*.fa`
-(`TGAGCGTCGCAAAGGCGCTCGGTCT` / `GGCCTCGGCCTGAGAGCCAAAACAC`) appear in **no**
-construct and contradict the motif the scan has always used — they look wrong.
+| repeat | assignment | primary source |
+|---|---|---|
+| `TGACAGGATATATTGGCGGGTAAAC` | **RB** (`TDNA_RB`) | GenBank **J01826**, DEFINITION "T-DNA 3' (right) border"; COMMENT "right border at base 158" |
+| `TGGCAGGATATATTGTGGTGTAAAC` | **LB** (`TDNA_LB`) | GenBank **J01825**, DEFINITION "T-DNA 5' (left) border" |
 
-**Next session:** settle this against an external reference (the Ti plasmid
-accession the constructs derive from), then either relabel or fix the DB entries.
-Do not infer T-DNA orientation from the current labels.
+Yadav et al. 1982 PNAS 79:6322 (nopaline strain T37). Reproduced independently by
+pBIN19 (U09365) and pCAMBIA-1300 (AF234296). Octopine pTi15955 (X00493) carries
+neither. The scan now reports rice_G281 as RB@279 + LB@6557 and tomato_A2_3 as
+LB@1 + RB@10,142, matching AF234296's feature table coordinate for coordinate.
+
+Integration is **precise at RB, imprecise at LB** (J01825/J01826 COMMENT;
+Shaw et al. 1984) — worth weighting RB junctions higher in confidence scoring.
+
+### Two findings that fell out of this
+
+1. **`db/G281_construct.fa`'s first record is byte-identical to AF234296** (md5
+   match) — the **empty** pCAMBIA-1300 vector, not the G281 construct. Its T-DNA
+   (lacZα MCS, CaMV35S → hptII → CaMV polyA) spans the numbering origin between
+   LB(6,557) and RB(298); the 6,303 bp between RB and LB in increasing
+   coordinates is backbone (pVS1 STA/REP, pBR322 bom/ori, aadA).
+   `benchmark.md` and `results.md` do say "pCAMBIA-1300 backbone", but
+   **`manuscript.md` claims rice G281 used an "exact construct sequence"** — the
+   file does not support that. Sample-specific payload reaches step 5 only via
+   the step-4b SPAdes contigs (`--extra-element-db`). **Needs a decision.**
+2. **The `canonical_v1` RB/LB entries in the tracked element DBs are wrong**
+   (`TGAGCGTCGCAAAGGCGCTCGGTCT` / `GGCCTCGGCCTGAGAGCCAAAACAC`): no
+   `CAGGATATAT` core, present in no construct. In `element_db/gmo_combined_db_v2.fa`,
+   `db/gmo_all_combined_db.fa`, `db/gmo_corn_combined_db.fa`. The border scan
+   does not use them. **Curating them out is still OPEN** — deferred because
+   job 5799803 reads those DBs at runtime.
 
 ---
 
@@ -112,18 +133,26 @@ Do not infer T-DNA orientation from the current labels.
 
 ## Next steps
 
-1. **Merge decision** on `algo-improvements-2026-07` (branch, unpushed).
+1. **Merge decision** on `algo-improvements-2026-07` → PR
+   [#17](https://github.com/wyim-pgl/redgene/pull/17).
 2. **Re-run s05** for rice + all species — the reports on disk predate Rule 7
-   *and* every fix above. This is the plan's Phases 1–3.
-3. Settle the **RB/LB assignment** (see above).
-4. Deferred, highest detection ROI: **PE-discordancy in site discovery**.
+   *and* every fix above. This is the plan's Phases 1–3. Rice re-run launched as
+   SLURM job **5799803** into `results/rice_G281_algo_v2/` (fresh outdir; the
+   2026-04-16 reports are preserved untouched). Phase 1: 8,525 validated sites,
+   **0 clipped reads discarded** — confirming the new read filters are a no-op
+   at default settings on production BAMs. Phase 1.5: 21 transgene-positive.
+3. **Curate the bogus `canonical_v1` RB/LB entries** out of the tracked element
+   DBs (see above). Do this only when no job is reading them.
+4. **Decide what to do about `db/G281_construct.fa`** being the empty
+   pCAMBIA-1300 vector while `manuscript.md` calls it an exact construct.
+5. Deferred, highest detection ROI: **PE-discordancy in site discovery**.
    `find_softclip_junctions` uses soft clips only; discordant-pair primitives
    already exist in `s06b_junction_verify.py` but only to *count* support at
    known junctions, never to *discover*. Needs real-BAM validation.
-5. Deferred: seed k-mer 15 → 21 for large plant genomes (gated on a sweep);
+6. Deferred: seed k-mer 15 → 21 for large plant genomes (gated on a sweep);
    a unified `run_blastn` wrapper over the 12 scattered call sites with
    inconsistent stderr handling.
-6. When one side of a paired cluster now yields a sub-`min_clip` consensus the
+7. When one side of a paired cluster now yields a sub-`min_clip` consensus the
    site is dropped (as before). Demoting it to a single-direction site would
    recover sensitivity — needs a validation run.
 
