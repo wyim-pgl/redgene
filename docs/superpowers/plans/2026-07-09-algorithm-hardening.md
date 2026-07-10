@@ -199,6 +199,40 @@ On the `Chr3:16,380,000-16,500,000` region containing the rice ground truth, old
 and new agree exactly: 25 sites, identical seeds, and
 `Chr3:16,439,674-16,439,709` recovered by both.
 
+### Full rice s05 re-run on this branch (SLURM 5799803, 1 h 00 m, COMPLETED)
+
+Run into a **fresh** `results/rice_G281_algo_v2/` so the 2026-04-16 reports stay
+intact. `--outdir-override` + `--host-bam-override`, `--no-remote-blast`.
+
+| | old (2026-04-16) | new (this branch) |
+|---|---|---|
+| sites reported | 68 | 21 |
+| CANDIDATE | 3 | 3 |
+| FALSE_POSITIVE | 32 | 10 |
+| UNKNOWN | 33 | 8 |
+
+**The CANDIDATE set is identical**: `Chr3_16439674`, `Chr3_29074002`,
+`Chr11_2877409`. The ground truth `Chr3:16,439,674` is CANDIDATE in both, and the
+new run states the golden-case reason verbatim — *"1 element(s) annotated;
+host_fraction=87% (all FP filters passed)"* — i.e. Filter A correctly did not
+fire on the 1,024 bp foreign gap.
+
+Phase 1 logged `0 clipped reads discarded`, confirming on a production BAM what
+the unit tests assert: the new duplicate / QC-fail / MAPQ filters are a no-op at
+default settings (these BAMs are not duplicate-marked).
+
+**Two further defects the re-run exposed**, both fixed:
+
+1. `generate_report` counted **every** line of `border_hits.tsv`, which is
+   written once for all inserts. Every one of the 68 old reports printed the same
+   global count. `insertion_Chr3_16439674_report.txt` said *"T-DNA borders found:
+   10"* while all ten hits belonged to three other inserts.
+2. RedGene has **never** detected a genuine T-DNA border in rice_G281. Under
+   permissive settings (`-word_size 7 -evalue 1`), RB+LB against all 21 newly
+   assembled inserts (57,285 bp) return **zero** HSPs ≥ 20 bp — the best is 13 bp
+   at 92%. The old counts were sub-motif scraps. Consistent with
+   `db/G281_construct.fa` being the empty pCAMBIA-1300 vector.
+
 ### Follow-up surfaced by this work
 
 When one side of a paired cluster now yields a sub-`min_clip` consensus the whole

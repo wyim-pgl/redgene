@@ -135,12 +135,19 @@ Shaw et al. 1984) — worth weighting RB junctions higher in confidence scoring.
 
 1. **Merge decision** on `algo-improvements-2026-07` → PR
    [#17](https://github.com/wyim-pgl/redgene/pull/17).
-2. **Re-run s05** for rice + all species — the reports on disk predate Rule 7
-   *and* every fix above. This is the plan's Phases 1–3. Rice re-run launched as
-   SLURM job **5799803** into `results/rice_G281_algo_v2/` (fresh outdir; the
-   2026-04-16 reports are preserved untouched). Phase 1: 8,525 validated sites,
-   **0 clipped reads discarded** — confirming the new read filters are a no-op
-   at default settings on production BAMs. Phase 1.5: 21 transgene-positive.
+2. **Re-run s05** for the remaining species — the reports on disk predate Rule 7
+   *and* every fix above. This is the plan's Phases 2–3.
+   **Rice is DONE**: SLURM job 5799803, COMPLETED in 1 h, into a fresh
+   `results/rice_G281_algo_v2/` (the 2026-04-16 reports are untouched).
+   68 sites → 21; UNKNOWN 33 → 8; FALSE_POSITIVE 32 → 10; **CANDIDATE 3 → 3, the
+   same three sites**, ground truth `Chr3:16,439,674` CANDIDATE in both.
+   Phase 1 logged `0 clipped reads discarded` — production confirmation that the
+   new read filters are a no-op at default settings.
+   The re-run exposed and fixed two more defects: `generate_report` counted the
+   global `border_hits.tsv` rather than this insert's rows (the ground-truth
+   report claimed 10 borders it did not own), and rice has in fact **never** had
+   a genuine T-DNA border detected — zero HSPs ≥ 20 bp across all 21 inserts even
+   under permissive BLAST.
 3. **Curate the bogus `canonical_v1` RB/LB entries** out of the tracked element
    DBs (see above). Do this only when no job is reading them.
 4. **Decide what to do about `db/G281_construct.fa`** being the empty
