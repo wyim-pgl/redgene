@@ -30,6 +30,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from .primitives import log
+
 
 # ---------------------------------------------------------------------------
 # Thresholds (mirrored from the monolith so behaviour is bit-identical).
@@ -60,22 +62,36 @@ def _check_construct_host_coverage(
     coverage (~50%, the insert IS the construct fragment).
 
     Returns (is_fp, construct_frac, host_frac, combined_frac).
+
+    Failure mode
+    ------------
+    ``is_fp=False`` means "this site is NOT a construct+host false positive", so
+    a crashed blastn that returned ``False`` silently promoted the site toward
+    CANDIDATE.  A failure is now logged with its stderr, and the host evidence
+    already measured by Filter A is passed through untouched instead of being
+    zeroed — the site is reported as *unmeasured by Filter D*, not as *clean*.
     """
     eff_len = insert_len - n_count
     if eff_len <= 0:
         return False, 0.0, 0.0, 0.0
 
-    # BLAST insert vs construct/element_db
-    blast_out = workdir / f"_{insert_fasta.stem}_vs_construct.tsv"
+    # BLAST insert vs construct/element_db.
+    # `threads` is accepted for signature parity with the other filters but is
+    # deliberately NOT forwarded: this is `-subject` mode, and blastn 2.16.0
+    # answers `-num_threads` there with "'num_threads' is currently ignored when
+    # 'subject' is specified" — the flag would only add a warning per site.
     result = subprocess.run(
         ["blastn", "-task", "megablast",
          "-query", str(insert_fasta), "-subject", str(element_db),
          "-outfmt", "6 qstart qend pident",
          "-evalue", "1e-5"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     if result.returncode != 0:
-        return False, 0.0, 0.0, 0.0
+        stderr_tail = (result.stderr or "")[-400:]
+        log(f"  Filter D: construct blastn failed (rc={result.returncode}); "
+            f"construct coverage unmeasured. stderr: {stderr_tail}")
+        return False, 0.0, host_fraction, host_fraction
 
     # Merge overlapping intervals at >= threshold identity
     intervals: list[tuple[int, int]] = []
