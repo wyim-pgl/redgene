@@ -347,10 +347,12 @@ def annotate_insert(
 #: The octopine T-DNA (pTi15955, X00493) contains neither repeat; its four
 #: border repeats are 24-mers with different variable arms.
 #:
-#: NOTE: the `canonical_v1` RB-TDNA / LB-TDNA entries in ``db/*.fa`` and
-#: ``element_db/gmo_combined_db_v2.fa`` (TGAGCGTCGCAAAGGCGCTCGGTCT /
-#: GGCCTCGGCCTGAGAGCCAAAACAC) are wrong: they lack the invariant CAGGATATAT
-#: border core and appear in no construct.  They are not used by this scan.
+#: The element DBs cite AF485783.1 (pBI121) for their own RB/LB records; that
+#: accession's annotated borders are complement(2454..2478) = RB and
+#: complement(8621..8646) = LB, and they equal the two 25-mers below.  Those
+#: records used to hold bases 1-25 and ~14,040-14,065 of AF485783.1 instead —
+#: a coordinate slip — and were corrected in the same change that added this
+#: table (see tests/test_element_db_borders.py).
 TDNA_BORDER_REPEATS: tuple[tuple[str, str], ...] = (
     ("TDNA_RB", "TGACAGGATATATTGGCGGGTAAAC"),
     ("TDNA_LB", "TGGCAGGATATATTGTGGTGTAAAC"),
