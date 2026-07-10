@@ -38,7 +38,7 @@ python scripts/s01_qc.py --r1 reads_R1.fq.gz --r2 reads_R2.fq.gz \
 ### Testing
 
 ```bash
-# Full pytest suite (baseline: 371 PASS + 1 skipped, ~20s)
+# Full pytest suite (baseline: 387 PASS + 1 skipped, ~20s)
 pytest tests/ -q
 
 # Single file / single test
@@ -54,11 +54,15 @@ pytest tests/test_submit_s05_array.py -v
 # Phase 1 site discovery: consensus, clustering, cluster pairing, read filters
 pytest tests/test_site_discovery.py -v
 
+# Phase 1 end-to-end on a synthetic BAM (needs minimap2) — the ONLY guard on
+# which sites find_softclip_junctions emits; verdict snapshots sit downstream
+pytest tests/test_find_softclip_junctions.py -v
+
 # T-DNA border scan (includes a real-blastn check against db/G281_construct.fa)
 pytest tests/test_border_scan.py -v
 ```
 
-Snapshot fixtures live in `tests/fixtures/verdict_snapshots/` (rice_G281, cucumber_line225). Never edit these without a deliberate behavior change — snapshot drift is the primary regression signal for `compute_verdict`.
+Snapshot fixtures live in `tests/fixtures/verdict_snapshots/` (rice_G281, cucumber_line225). Never edit these without a deliberate behavior change — snapshot drift is the primary regression signal for `compute_verdict`. Note the snapshots cover `compute_verdict` only — they cannot detect a change in which sites Phase 1 discovers; `tests/test_find_softclip_junctions.py` is that guard.
 
 ### SLURM batch run
 ```bash
