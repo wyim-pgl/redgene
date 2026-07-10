@@ -1,7 +1,7 @@
 # Resume — RedGene: algorithm hardening on `algo-improvements-2026-07`
 
 **Date:** 2026-07-09
-**Branch:** `algo-improvements-2026-07` (6 commits, **not merged, not pushed**) — base `main` @ `f3cb0c0`
+**Branch:** `algo-improvements-2026-07` (7 commits, **not merged, not pushed**) — base `main` @ `f3cb0c0`
 **Working dir:** `/data/gpfs/assoc/pgl/develop/redgene`
 **Previous resume:** 2026-04-29 (Issue #4 s05 module split CLOSED)
 
@@ -33,6 +33,7 @@ Open GitHub issue: **#7 only** (KCGP nomenclature, blocked on a spec).
 ## Commits
 
 ```
+2521a5e Update resume.md for the algorithm-hardening branch   (this file)
 57245d4 Tests: end-to-end regression for find_softclip_junctions on a synthetic BAM
 67125aa Follow-up from code review: keep the clip when the junction base is ambiguous
 84ce853 Site discovery: N-free seeds, deterministic pairing, read-quality filter
