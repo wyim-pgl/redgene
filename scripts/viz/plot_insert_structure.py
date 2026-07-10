@@ -179,6 +179,25 @@ def parse_annotation(path: Path) -> list[dict]:
     return hits
 
 
+#: Colour + short label per border-repeat query name written by
+#: `scripts/s05/annotation.py::_run_border_blast`.  The legacy `RB_consensus` /
+#: `LB_consensus` names are still recognised so old `border_hits.tsv` files
+#: render, but note those labels were never meaningful — both records held the
+#: same 25-mer.  Nothing in this repo establishes which repeat is the right
+#: border, so the current labels are sequence-derived.
+_BORDER_STYLES: dict[str, tuple[str, str]] = {
+    "TDNA_border_A": ("#E74C3C", "A"),
+    "TDNA_border_B": ("#2ECC71", "B"),
+    "RB_consensus": ("#E74C3C", "RB"),
+    "LB_consensus": ("#2ECC71", "LB"),
+}
+
+
+def _border_style(border_type: str) -> tuple[str, str]:
+    """Return (colour, short label) for a border_hits.tsv query name."""
+    return _BORDER_STYLES.get(border_type, ("#7F8C8D", border_type))
+
+
 def parse_borders(path: Path) -> list[dict]:
     """Parse border_hits.tsv from s09."""
     borders = []
@@ -190,7 +209,7 @@ def parse_borders(path: Path) -> list[dict]:
             if len(cols) < 8:
                 continue
             borders.append({
-                "type": cols[0],  # RB_consensus or LB_consensus
+                "type": cols[0],  # e.g. TDNA_border_A / TDNA_border_B
                 "identity": float(cols[2]),
                 "length": int(cols[3]),
                 "s_start": int(cols[6]),
@@ -407,8 +426,7 @@ def plot_insert(
 
         for b in borders:
             pos = (b["s_start"] + b["s_end"]) / 2
-            color = "#E74C3C" if "RB" in b["type"] else "#2ECC71"
-            label = "RB" if "RB" in b["type"] else "LB"
+            color, label = _border_style(b["type"])
             ax.axvline(pos, color=color, linewidth=2, alpha=0.8)
             ax.text(pos, 0.7, label, ha="center", va="bottom",
                     fontsize=8, fontweight="bold", color=color)
@@ -463,12 +481,11 @@ def plot_insert(
                        hatch="///", label="N-gap (unfilled)")
     )
     if has_borders:
-        legend_patches.append(
-            mpatches.Patch(color="#E74C3C", label="RB border")
-        )
-        legend_patches.append(
-            mpatches.Patch(color="#2ECC71", label="LB border")
-        )
+        for b_type in sorted({b["type"] for b in borders}):
+            color, label = _border_style(b_type)
+            legend_patches.append(
+                mpatches.Patch(color=color, label=f"{label} border repeat")
+            )
 
     ax.legend(handles=legend_patches, loc="center", ncol=min(6, len(legend_patches)),
               fontsize=8, frameon=False)

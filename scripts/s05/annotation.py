@@ -318,23 +318,141 @@ def annotate_insert(
         log("  No BLAST hits found")
 
     # ---- T-DNA border motif search ----
-    border_fa = output_dir / "_borders.fa"
-    with open(border_fa, "w") as fh:
-        fh.write(">RB_consensus\nTGGCAGGATATATTGTGGTGTAAAC\n")
-        fh.write(">LB_consensus\nTGGCAGGATATATTGTGGTGTAAAC\n")
+    _run_border_blast(insert_fasta, output_dir, border_tsv)
 
-    subprocess.run(
-        ["blastn", "-query", str(border_fa), "-subject", str(insert_fasta),
-         "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send",
-         "-evalue", "1", "-word_size", "7",
-         "-out", str(border_tsv)],
-        stderr=subprocess.DEVNULL,
-    )
-
-    if border_tsv.exists() and border_tsv.stat().st_size > 0:
-        log("  T-DNA border motifs found")
-    else:
-        log("  No border motifs found (may need manual inspection)")
-
-    border_fa.unlink(missing_ok=True)
     return annotation_tsv, border_tsv
+
+
+# ---------------------------------------------------------------------------
+# T-DNA border motif scan
+# ---------------------------------------------------------------------------
+
+#: The 25-bp imperfect direct repeats that delimit the T-DNA.  Both of this
+#: project's constructs carry exactly these two, once each — measured by a
+#: record-scoped scan of the first FASTA record:
+#:
+#:     db/G281_construct.fa  >rice_G281    278 -> _B,  6,556 -> _A
+#:     db/Cas9_construct.fa  >tomato_A2_3    0 -> _A, 10,141 -> _B
+#:
+#: Labels are deliberately sequence-derived rather than RB/LB: nothing in this
+#: repository establishes which repeat is the right border.  The `canonical_v1`
+#: RB/LB entries in ``db/*.fa`` (TGAGCGTCGCAAAGGCGCTCGGTCT /
+#: GGCCTCGGCCTGAGAGCCAAAACAC) appear in no construct and contradict the motif
+#: this scan has always used, so they are not trusted here.  Until the RB/LB
+#: assignment is settled against an external reference, a hit says "a T-DNA
+#: border repeat is present at this locus" and nothing more.
+TDNA_BORDER_REPEATS: tuple[tuple[str, str], ...] = (
+    ("TDNA_border_A", "TGGCAGGATATATTGTGGTGTAAAC"),
+    ("TDNA_border_B", "TGACAGGATATATTGGCGGGTAAAC"),
+)
+
+#: Minimum aligned length (bp) for an HSP to count as a border repeat.  The
+#: repeats are 25 bp and differ from each other at 7 positions, so at
+#: ``-word_size 7`` blastn also emits ~9 bp scraps wherever a shared sub-motif
+#: occurs (e.g. rice_G281 positions 4,321 and 7,747).  Those are not borders.
+#: Genuine borders — including the imperfect, 84%-identity copy — align across
+#: the full 25 bp.
+BORDER_MIN_ALIGN_LEN = 20
+
+
+def _write_border_query(path: Path) -> None:
+    """Write the border-repeat query FASTA, one record per distinct repeat."""
+    with open(path, "w") as fh:
+        for label, seq in TDNA_BORDER_REPEATS:
+            fh.write(f">{label}\n{seq}\n")
+
+
+def _dedupe_border_hits(rows: list[list[str]]) -> list[list[str]]:
+    """Collapse BLAST HSPs that describe the same border locus on the insert.
+
+    A 25-bp query at ``-word_size 7`` produces several overlapping HSPs per
+    locus, and the two repeats are similar enough to cross-hit each other's
+    locus.  Left unmerged, ``generate_report`` — which counts raw lines — reports
+    several times as many borders as the insert actually carries.
+
+    Rows are outfmt-6 ``qseqid sseqid pident length qstart qend sstart send``.
+    Hits are grouped by subject and overlapping subject interval (orientation is
+    ignored: a minus-strand hit reports ``sstart > send``), and the highest
+    scoring hit — ``pident x length`` — represents the locus.  Ties resolve on
+    ``(qseqid, span)`` so the surviving label never depends on the order blastn
+    happened to emit its HSPs.
+    """
+    def _score(row: list[str]) -> float:
+        return float(row[2]) * int(row[3])
+
+    def _span(row: list[str]) -> tuple[int, int]:
+        s, e = int(row[6]), int(row[7])
+        return (min(s, e), max(s, e))
+
+    # Best-first, so the first row claiming a locus is the one that represents it.
+    best_first = sorted(rows, key=lambda r: (-_score(r), r[0], _span(r)))
+
+    kept: list[list[str]] = []
+    claimed: dict[str, list[tuple[int, int]]] = {}
+    for row in best_first:
+        subject = row[1]
+        lo, hi = _span(row)
+        spans = claimed.setdefault(subject, [])
+        if any(lo <= s_hi and hi >= s_lo for s_lo, s_hi in spans):
+            continue
+        spans.append((lo, hi))
+        kept.append(row)
+
+    return sorted(kept, key=lambda r: (r[1], _span(r)[0]))
+
+
+def _run_border_blast(insert_fasta: Path, output_dir: Path,
+                      border_tsv: Path) -> Path:
+    """BLAST both T-DNA border repeats against the insert; write distinct loci.
+
+    Writes ``border_tsv`` in outfmt-6 (>= 8 columns, as
+    ``scripts/viz/plot_insert_structure.py`` requires), one row per border
+    locus.  An empty file means no border motif was found.
+    """
+    border_fa = output_dir / "_borders.fa"
+    _write_border_query(border_fa)
+    raw_tsv = output_dir / "_border_hits_raw.tsv"
+
+    try:
+        result = subprocess.run(
+            ["blastn", "-query", str(border_fa), "-subject", str(insert_fasta),
+             "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send",
+             "-evalue", "1", "-word_size", "7",
+             "-out", str(raw_tsv)],
+            stderr=subprocess.PIPE, text=True,
+        )
+        if result.returncode != 0:
+            stderr_tail = (result.stderr or "")[-400:]
+            log(f"  Border scan: blastn failed (rc={result.returncode}); "
+                f"no borders reported. stderr: {stderr_tail}")
+            border_tsv.write_text("")
+            return border_tsv
+
+        rows: list[list[str]] = []
+        if raw_tsv.exists():
+            for line in raw_tsv.read_text().splitlines():
+                cols = line.rstrip("\n").split("\t")
+                if len(cols) < 8:
+                    continue
+                try:
+                    if int(cols[3]) < BORDER_MIN_ALIGN_LEN:
+                        continue
+                except ValueError:
+                    continue
+                rows.append(cols)
+
+        deduped = _dedupe_border_hits(rows)
+        border_tsv.write_text(
+            "".join("\t".join(row) + "\n" for row in deduped)
+        )
+
+        if deduped:
+            loci = ", ".join(f"{r[0]}@{min(int(r[6]), int(r[7]))}" for r in deduped)
+            log(f"  T-DNA border motifs found: {len(deduped)} locus/loci ({loci})")
+        else:
+            log("  No border motifs found (may need manual inspection)")
+    finally:
+        border_fa.unlink(missing_ok=True)
+        raw_tsv.unlink(missing_ok=True)
+
+    return border_tsv
