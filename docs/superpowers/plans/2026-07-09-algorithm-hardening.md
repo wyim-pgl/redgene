@@ -204,12 +204,34 @@ and new agree exactly: 25 sites, identical seeds, and
 Run into a **fresh** `results/rice_G281_algo_v2/` so the 2026-04-16 reports stay
 intact. `--outdir-override` + `--host-bam-override`, `--no-remote-blast`.
 
-| | old (2026-04-16) | new (this branch) |
+**Superseded as the branch's result.** This run finished at 23:17 PDT, four
+minutes before the per-insert border-count fix (`0914323`) and twelve before the
+element-DB border correction (`496c328` / `6ba1f8b`). It is retained as the
+evidence that produced those two fixes. The branch's measured result is the
+2026-07-10 array (SLURM 5803578) over all 11 production samples, into
+`results/hardened_20260710/`.
+
+> **Corrected 2026-07-10.** An earlier revision of this section reported the old
+> side of the table as 68 sites / 3 CANDIDATE / 32 FALSE_POSITIVE / 33 UNKNOWN,
+> read off the 68 `insertion_*_report.txt` files in
+> `results/rice_G281/s05_insert_assembly/`. **s05 never cleans its output
+> directory**, so those 68 files are the union of three separate runs — 13 dated
+> 2026-04-11, 34 dated 2026-04-14, 21 dated 2026-04-16 — of which 47 no longer
+> correspond to any site the pipeline currently finds. `write_stats` opens
+> `s05_stats.txt` with mode `"w"`, so that file alone describes one run, and its
+> 21 site IDs are exactly the 21 reports dated 2026-04-16. Comparing report-file
+> counts therefore measured accumulated debris, not a change in behaviour.
+
+| | old (2026-04-16 run) | new (this branch) |
 |---|---|---|
-| sites reported | 68 | 21 |
+| sites reported | 21 | 21 |
 | CANDIDATE | 3 | 3 |
-| FALSE_POSITIVE | 32 | 10 |
-| UNKNOWN | 33 | 8 |
+| FALSE_POSITIVE | 9 | 10 |
+| UNKNOWN | 9 | 8 |
+
+Both runs discover the **same 21 sites, with identical site IDs**. Exactly one
+verdict moves: `Chr11_28363144` UNKNOWN → FALSE_POSITIVE. Phase 1's site set for
+rice is unchanged end to end, which is what the Chr3-region check predicted.
 
 **The CANDIDATE set is identical**: `Chr3_16439674`, `Chr3_29074002`,
 `Chr11_2877409`. The ground truth `Chr3:16,439,674` is CANDIDATE in both, and the
@@ -221,17 +243,60 @@ Phase 1 logged `0 clipped reads discarded`, confirming on a production BAM what
 the unit tests assert: the new duplicate / QC-fail / MAPQ filters are a no-op at
 default settings (these BAMs are not duplicate-marked).
 
-**Two further defects the re-run exposed**, both fixed:
+**Three further defects the re-run exposed:**
 
-1. `generate_report` counted **every** line of `border_hits.tsv`, which is
-   written once for all inserts. Every one of the 68 old reports printed the same
-   global count. `insertion_Chr3_16439674_report.txt` said *"T-DNA borders found:
-   10"* while all ten hits belonged to three other inserts.
+1. **FIXED.** `generate_report` counted **every** line of `border_hits.tsv`, which
+   is written once for all inserts. Every old report printed the same global
+   count. `insertion_Chr3_16439674_report.txt` said *"T-DNA borders found: 10"*
+   while all ten hits belonged to three other inserts.
 2. RedGene has **never** detected a genuine T-DNA border in rice_G281. Under
    permissive settings (`-word_size 7 -evalue 1`), RB+LB against all 21 newly
    assembled inserts (57,285 bp) return **zero** HSPs ≥ 20 bp — the best is 13 bp
    at 92%. The old counts were sub-motif scraps. Consistent with
    `db/G281_construct.fa` being the empty pCAMBIA-1300 vector.
+3. **OPEN — stale per-site reports accumulate.** s05 writes
+   `insertion_<site>_report.txt` per site and never removes reports from a prior
+   run into the same directory. `results/rice_G281/s05_insert_assembly/` holds 47
+   reports for sites the pipeline no longer finds, indistinguishable by name from
+   the 21 live ones. Only `s05_stats.txt` (truncated per run) is authoritative.
+   This is the same misattribution class as defect 1 — a reader, or a report
+   generator globbing `insertion_*_report.txt`, silently mixes runs. Rice is the
+   only sample on disk affected: every other sample's report count equals its
+   `insertion_sites` stat. Fix deferred so the 2026-07-10 re-run array observes
+   one fixed tree; the array writes into fresh directories, where the bug cannot
+   manifest.
+
+### The full 11-sample re-run (2026-07-10/11) and what it surfaced
+
+SLURM array `5803578` re-ran s05 for every production sample into
+`results/hardened_20260710/`. 10 of 11 finished in-array; `soybean_UGT72E3`
+timed out at 16 h assembling 106 sites sequentially. Result across the 9 samples
+with a clean baseline (excluding the truncated `soybean_AtYUCCA6` April run):
+sites −32, UNKNOWN −33, CANDIDATE +1, FALSE_POSITIVE +0 — the hardening strips
+noise UNKNOWNs (N-free seeds) while preserving the CANDIDATE signal, no
+ground-truth regression. Comparator: `compare_s05_runs.py` (reads `s05_stats.txt`,
+never report globs). Six issues were filed from this run:
+
+- **#18 (FIXED here)** — the per-site fan-out (`submit_s05_array.sh`) corrupted
+  assemblies: `assemble_insert`'s scratch dirs (`_mm2_r{rnd}`, `_pilon_r{rnd}`,
+  `_ssake_r{rnd}`, `_host_term.*`, `_foreign_refine`) were scoped to the shared
+  `step_dir`, so concurrent sites raced on identical paths (`soybean_UGT72E3`
+  array 5811054: 26/106 crashed on `_mm2ext.bam`). Fixed with a per-site
+  `_scratch_{site_id}` root + atomic `_unmapped_R*.fq.gz` cache writes; guarded
+  by `tests/test_s05_fanout_scratch_isolation.py`. UGT72E3 re-run as array 5811471.
+- **#19** — Filter B rejects `corn_ND207`'s true insertion (5 bp off the
+  documented site) because the corn border records carry the event's own maize
+  flank; verdict priority puts Filter B above Filter A so the site is
+  FALSE_POSITIVE by construction. Highest-value detection fix outstanding.
+- **#20** — 3 of 4 bp-resolution `benchmark.md` ground truths not recovered;
+  line 113 (tomato_Cas9_A2_3 "TP 1") contradicts the pipeline.
+- **#21** — `tomato_WT` negative control now yields a transgene-positive site off
+  a 26 bp `P-Act1-rice` tier hit; tomato/cucumber/soybean mask BEDs are empty.
+- **#22** — s05 never cleans its output dir; stale `insertion_*_report.txt`
+  accumulate (rice: 47 orphans across 3 runs) and already produced a wrong doc
+  claim. Also `report.py:320` hides "T-DNA borders found: 0".
+- **#23** — `db/G281_construct.fa` is the empty pCAMBIA-1300 vector while
+  `manuscript.md` claims an exact construct sequence.
 
 ### Follow-up surfaced by this work
 
