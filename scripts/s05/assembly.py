@@ -524,7 +524,11 @@ def refine_with_foreign_reads(
 
     Returns path to refined FASTA.
     """
-    refine_dir = workdir / "_foreign_refine"
+    # Scratch namespaced by the insert (issue #18): `insert_fasta.stem` is
+    # `{site_id}_insert`, so concurrent sites sharing one `workdir` under the
+    # fan-out do not collide on `_foreign_refine`. The refined FASTA still lands
+    # in `workdir` (below) so Phase 4 finds it.
+    refine_dir = workdir / f"_foreign_refine_{insert_fasta.stem}"
     refine_dir.mkdir(parents=True, exist_ok=True)
 
     # Extract foreign reads
@@ -923,6 +927,18 @@ def assemble_insert(
 
     log(f"  Seeds: 5p={len(seed_5p)}bp, 3p={len(seed_3p)}bp")
 
+    # Per-site scratch root (issue #18). Under the fan-out, one process per site
+    # shares a single `workdir` (the step_dir), so any scratch path scoped only
+    # to `workdir` — `workdir/_mm2_r{rnd}`, `_pilon_r{rnd}`, `_ssake_r{rnd}`,
+    # `_host_term.*`, `_foreign_refine` — collides across concurrent sites: one
+    # task's cleanup wipes a file another is writing, or a task maps its reads
+    # against another site's contig. Namespacing by site_id makes every scratch
+    # path disjoint. The final `{site_id}_insert.fasta` stays on `workdir` so
+    # Phase 4 finds it. The `_unmapped_R*.fq.gz` cache is site-independent and
+    # deliberately stays shared on `workdir`.
+    scratch = workdir / f"_scratch_{site.site_id}"
+    scratch.mkdir(parents=True, exist_ok=True)
+
     # Initialize extender
     extender = StrandAwareSeedExtender(
         k=ext_k, min_overlap=20, min_depth=2, min_ratio=0.7,
@@ -968,6 +984,7 @@ def assemble_insert(
         final_fa = workdir / f"{site.site_id}_insert.fasta"
         write_fasta(final_fa, f"{site.site_id}_assembled_insert", merged)
         log(f"  COMPLETE after initial extension: {len(merged):,}bp")
+        shutil.rmtree(scratch, ignore_errors=True)
         return final_fa, 0, "complete"
 
     # Main iterative loop
@@ -1002,7 +1019,7 @@ def assemble_insert(
             f"3p={prev_3p_len:,}→{len(contig_3p):,} (+{kmer_growth})")
 
         # Step B2: minimap2 soft-clip extension (handles repeats k-mer can't)
-        mm2_dir = workdir / f"_mm2_r{rnd}"
+        mm2_dir = scratch / f"_mm2_r{rnd}"
         mm2_dir.mkdir(parents=True, exist_ok=True)
         pool_r1_mm2 = mm2_dir / "pool_R1.fq"
         pool_r2_mm2 = mm2_dir / "pool_R2.fq"
@@ -1040,6 +1057,7 @@ def assemble_insert(
             final_fa = workdir / f"{site.site_id}_insert.fasta"
             write_fasta(final_fa, f"{site.site_id}_assembled_insert", merged)
             log(f"  COMPLETE: contigs merged → {len(merged):,}bp (round {rnd})")
+            shutil.rmtree(scratch, ignore_errors=True)
             return final_fa, rnd, "complete"
 
         # Step D: Pilon gap fill
@@ -1047,7 +1065,7 @@ def assemble_insert(
         pre_pilon_3p = len(contig_3p)
         pilon_growth = 0
         if contig_5p and contig_3p:
-            pilon_dir = workdir / f"_pilon_r{rnd}"
+            pilon_dir = scratch / f"_pilon_r{rnd}"
             pilon_dir.mkdir(parents=True, exist_ok=True)
 
             pool_r1 = pilon_dir / "pool_R1.fq"
@@ -1070,10 +1088,11 @@ def assemble_insert(
                 final_fa = workdir / f"{site.site_id}_insert.fasta"
                 write_fasta(final_fa, f"{site.site_id}_assembled_insert", final_seq)
                 log(f"  COMPLETE: Pilon filled gap → {len(final_seq):,}bp (round {rnd})")
+                shutil.rmtree(scratch, ignore_errors=True)
                 return final_fa, rnd, "complete"
 
         # Step D2: SSAKE overlap-layout-consensus extension
-        ssake_dir = workdir / f"_ssake_r{rnd}"
+        ssake_dir = scratch / f"_ssake_r{rnd}"
         ssake_dir.mkdir(parents=True, exist_ok=True)
         ssake_r1 = ssake_dir / "pool_R1.fq"
         ssake_r2 = ssake_dir / "pool_R2.fq"
@@ -1096,6 +1115,7 @@ def assemble_insert(
                 write_fasta(final_fa, f"{site.site_id}_assembled_insert", merged)
                 log(f"  COMPLETE: SSAKE+merge → {len(merged):,}bp (round {rnd})")
                 shutil.rmtree(ssake_dir, ignore_errors=True)
+                shutil.rmtree(scratch, ignore_errors=True)
                 return final_fa, rnd, "complete"
         shutil.rmtree(ssake_dir, ignore_errors=True)
 
@@ -1111,7 +1131,7 @@ def assemble_insert(
 
         # Check if contig ends reached host genome
         reached_5p, reached_3p = check_host_termination(
-            contig_5p, contig_3p, host_ref, workdir,
+            contig_5p, contig_3p, host_ref, scratch,
         )
         if reached_5p:
             log(f"    5' contig reached host genome!")
@@ -1156,6 +1176,7 @@ def assemble_insert(
         write_fasta(final_fa, f"{site.site_id}_assembled_insert", contig_3p)
         log(f"  Final: {len(contig_3p):,}bp (3p only) after {total_rounds} rounds")
     else:
+        shutil.rmtree(scratch, ignore_errors=True)
         return None, total_rounds, "no_assembly"
 
     # Phase 3b: Foreign read refinement (minimap2 chaining + Pilon)
@@ -1175,4 +1196,5 @@ def assemble_insert(
             max_rounds=10,
         )
 
+    shutil.rmtree(scratch, ignore_errors=True)
     return final_fa, total_rounds, status

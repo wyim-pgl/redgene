@@ -20,6 +20,7 @@ Replaces the per_site.py shim re-exports pending Session 7 shim retirement.
 from __future__ import annotations
 
 import gzip
+import os
 import subprocess
 from pathlib import Path
 
@@ -245,13 +246,22 @@ def extract_unmapped_paired(
         return r1, r2
 
     log(f"  Extracting unmapped reads from host BAM...")
+    # The cache is site-independent and shared on `workdir` across the fan-out
+    # (issue #18). Two concurrent sites that both miss the cache would otherwise
+    # write `r1`/`r2` at the same time and interleave into a corrupt gzip. Write
+    # to PID-unique temp files and atomically rename into place; a late writer
+    # simply replaces an identical file.
+    tmp_r1 = r1.with_suffix(r1.suffix + f".tmp.{os.getpid()}")
+    tmp_r2 = r2.with_suffix(r2.suffix + f".tmp.{os.getpid()}")
     subprocess.run(
         f"samtools view -f 4 -@ {threads} -b {host_bam} "
         f"| samtools sort -n -@ {threads} - "
-        f"| samtools fastq -1 {r1} -2 {r2} -s /dev/null -0 /dev/null - "
+        f"| samtools fastq -1 {tmp_r1} -2 {tmp_r2} -s /dev/null -0 /dev/null - "
         f"2>/dev/null",
         shell=True, check=True,
     )
+    os.replace(tmp_r1, r1)
+    os.replace(tmp_r2, r2)
     n = 0
     with gzip.open(r1, "rt") as fh:
         for _ in fh:

@@ -318,23 +318,153 @@ def annotate_insert(
         log("  No BLAST hits found")
 
     # ---- T-DNA border motif search ----
-    border_fa = output_dir / "_borders.fa"
-    with open(border_fa, "w") as fh:
-        fh.write(">RB_consensus\nTGGCAGGATATATTGTGGTGTAAAC\n")
-        fh.write(">LB_consensus\nTGGCAGGATATATTGTGGTGTAAAC\n")
+    _run_border_blast(insert_fasta, output_dir, border_tsv)
 
-    subprocess.run(
-        ["blastn", "-query", str(border_fa), "-subject", str(insert_fasta),
-         "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send",
-         "-evalue", "1", "-word_size", "7",
-         "-out", str(border_tsv)],
-        stderr=subprocess.DEVNULL,
-    )
-
-    if border_tsv.exists() and border_tsv.stat().st_size > 0:
-        log("  T-DNA border motifs found")
-    else:
-        log("  No border motifs found (may need manual inspection)")
-
-    border_fa.unlink(missing_ok=True)
     return annotation_tsv, border_tsv
+
+
+# ---------------------------------------------------------------------------
+# T-DNA border motif scan
+# ---------------------------------------------------------------------------
+
+#: The two 25-bp imperfect direct repeats that delimit the nopaline
+#: (pTiT37 / pTiC58) T-DNA.  Listed in transfer order: VirD2 nicks at the right
+#: border first, and the T-strand is transferred RB -> LB.
+#:
+#: Assignment is sourced from the primary deposits, not inferred:
+#:   * GenBank J01825 — DEFINITION "Ti plasmid (from A.tumefaciens, nopaline
+#:     strain T37), T-DNA 5' (left) border" — contains the LB 25-mer.
+#:   * GenBank J01826 — DEFINITION "...T-DNA 3' (right) border", COMMENT
+#:     "right border at base 158" — the RB 25-mer sits at bases 158-182.
+#:   (Yadav, Vanderleyden, Bennett, Barnes & Chilton 1982, PNAS 79:6322.)
+#: Independently reproduced by two mainstream binary vectors that cite those
+#: records: pBIN19 (U09365) and pCAMBIA-1300 (AF234296).  AF234296 annotates
+#: `left border repeat from C58 T-DNA` at 6557..6582 and `right border T-DNA
+#: repeat` at 298..323 — and ``db/G281_construct.fa``'s first record is
+#: byte-identical to AF234296, with the RB 25-mer at 279 and the LB 25-mer at
+#: 6,557 exactly.  ``db/Cas9_construct.fa`` carries LB at 1 and RB at 10,142.
+#:
+#: The octopine T-DNA (pTi15955, X00493) contains neither repeat; its four
+#: border repeats are 24-mers with different variable arms.
+#:
+#: The element DBs cite AF485783.1 (pBI121) for their own RB/LB records; that
+#: accession's annotated borders are complement(2454..2478) = RB and
+#: complement(8621..8646) = LB, and they equal the two 25-mers below.  Those
+#: records used to hold bases 1-25 and ~14,040-14,065 of AF485783.1 instead —
+#: a coordinate slip — and were corrected in the same change that added this
+#: table (see tests/test_element_db_borders.py).
+TDNA_BORDER_REPEATS: tuple[tuple[str, str], ...] = (
+    ("TDNA_RB", "TGACAGGATATATTGGCGGGTAAAC"),
+    ("TDNA_LB", "TGGCAGGATATATTGTGGTGTAAAC"),
+)
+
+#: Minimum aligned length (bp) for an HSP to count as a border repeat.  RB and
+#: LB share only the invariant ``CAGGATATAT`` core and a terminal ``TAAAC``, so
+#: at ``-word_size 7`` blastn also emits ~9 bp scraps wherever that core occurs
+#: (e.g. rice_G281 positions 4,321 and 7,747).  Those are not borders.  Genuine
+#: borders — including the cross-hit of one repeat onto the other's locus at
+#: ~84% identity — align across the full 25 bp.
+BORDER_MIN_ALIGN_LEN = 20
+
+
+def _write_border_query(path: Path) -> None:
+    """Write the border-repeat query FASTA, one record per distinct repeat."""
+    with open(path, "w") as fh:
+        for label, seq in TDNA_BORDER_REPEATS:
+            fh.write(f">{label}\n{seq}\n")
+
+
+def _dedupe_border_hits(rows: list[list[str]]) -> list[list[str]]:
+    """Collapse BLAST HSPs that describe the same border locus on the insert.
+
+    A 25-bp query at ``-word_size 7`` produces several overlapping HSPs per
+    locus, and the two repeats are similar enough to cross-hit each other's
+    locus.  Left unmerged, ``generate_report`` — which counts raw lines — reports
+    several times as many borders as the insert actually carries.
+
+    Rows are outfmt-6 ``qseqid sseqid pident length qstart qend sstart send``.
+    Hits are grouped by subject and overlapping subject interval (orientation is
+    ignored: a minus-strand hit reports ``sstart > send``), and the highest
+    scoring hit — ``pident x length`` — represents the locus.  Ties resolve on
+    ``(qseqid, span)`` so the surviving label never depends on the order blastn
+    happened to emit its HSPs.
+    """
+    def _score(row: list[str]) -> float:
+        return float(row[2]) * int(row[3])
+
+    def _span(row: list[str]) -> tuple[int, int]:
+        s, e = int(row[6]), int(row[7])
+        return (min(s, e), max(s, e))
+
+    # Best-first, so the first row claiming a locus is the one that represents it.
+    best_first = sorted(rows, key=lambda r: (-_score(r), r[0], _span(r)))
+
+    kept: list[list[str]] = []
+    claimed: dict[str, list[tuple[int, int]]] = {}
+    for row in best_first:
+        subject = row[1]
+        lo, hi = _span(row)
+        spans = claimed.setdefault(subject, [])
+        if any(lo <= s_hi and hi >= s_lo for s_lo, s_hi in spans):
+            continue
+        spans.append((lo, hi))
+        kept.append(row)
+
+    return sorted(kept, key=lambda r: (r[1], _span(r)[0]))
+
+
+def _run_border_blast(insert_fasta: Path, output_dir: Path,
+                      border_tsv: Path) -> Path:
+    """BLAST both T-DNA border repeats against the insert; write distinct loci.
+
+    Writes ``border_tsv`` in outfmt-6 (>= 8 columns, as
+    ``scripts/viz/plot_insert_structure.py`` requires), one row per border
+    locus.  An empty file means no border motif was found.
+    """
+    border_fa = output_dir / "_borders.fa"
+    _write_border_query(border_fa)
+    raw_tsv = output_dir / "_border_hits_raw.tsv"
+
+    try:
+        result = subprocess.run(
+            ["blastn", "-query", str(border_fa), "-subject", str(insert_fasta),
+             "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send",
+             "-evalue", "1", "-word_size", "7",
+             "-out", str(raw_tsv)],
+            stderr=subprocess.PIPE, text=True,
+        )
+        if result.returncode != 0:
+            stderr_tail = (result.stderr or "")[-400:]
+            log(f"  Border scan: blastn failed (rc={result.returncode}); "
+                f"no borders reported. stderr: {stderr_tail}")
+            border_tsv.write_text("")
+            return border_tsv
+
+        rows: list[list[str]] = []
+        if raw_tsv.exists():
+            for line in raw_tsv.read_text().splitlines():
+                cols = line.rstrip("\n").split("\t")
+                if len(cols) < 8:
+                    continue
+                try:
+                    if int(cols[3]) < BORDER_MIN_ALIGN_LEN:
+                        continue
+                except ValueError:
+                    continue
+                rows.append(cols)
+
+        deduped = _dedupe_border_hits(rows)
+        border_tsv.write_text(
+            "".join("\t".join(row) + "\n" for row in deduped)
+        )
+
+        if deduped:
+            loci = ", ".join(f"{r[0]}@{min(int(r[6]), int(r[7]))}" for r in deduped)
+            log(f"  T-DNA border motifs found: {len(deduped)} locus/loci ({loci})")
+        else:
+            log("  No border motifs found (may need manual inspection)")
+    finally:
+        border_fa.unlink(missing_ok=True)
+        raw_tsv.unlink(missing_ok=True)
+
+    return border_tsv

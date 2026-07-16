@@ -85,7 +85,11 @@ def _run_phase_1_1_5(
         sites = find_softclip_junctions(
             host_bam, host_ref, element_db, step_dir,
             min_clip=args.min_clip,
+            cluster_window=args.cluster_window,
             extra_dbs=extra_dbs,
+            min_mapq=args.min_mapq,
+            min_cluster_depth=args.min_cluster_depth,
+            min_single_depth=args.min_single_depth,
         )
 
         # Fallback to step 6 junctions if no sites found
@@ -477,6 +481,20 @@ def main() -> None:
                         help="Flank size for candidate read extraction (bp)")
     parser.add_argument("--min-clip", type=int, default=20,
                         help="Minimum soft-clip length for junction detection")
+    parser.add_argument("--min-mapq", type=int, default=0,
+                        help="Minimum MAPQ of the anchor read for its soft clip "
+                             "to count as junction evidence (default 0 = off; "
+                             "raise on repeat-rich hosts such as maize)")
+    parser.add_argument("--cluster-window", type=int, default=50,
+                        help="Max width (bp) of a soft-clip position cluster, and "
+                             "the max distance at which a right- and a left-clip "
+                             "cluster are paired into one insertion site")
+    parser.add_argument("--min-cluster-depth", type=int, default=3,
+                        help="Minimum clips per position cluster (lower to gain "
+                             "sensitivity below ~15x coverage)")
+    parser.add_argument("--min-single-depth", type=int, default=5,
+                        help="Minimum clips for an unpaired, single-direction "
+                             "cluster to become a low-confidence site")
     parser.add_argument("--extra-element-db", type=Path, default=None,
                         help="Optional second FASTA for element annotation "
                              "(e.g., per-sample SPAdes construct contigs).")

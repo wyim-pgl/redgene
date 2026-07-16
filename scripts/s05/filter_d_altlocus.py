@@ -30,6 +30,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from .primitives import log
+
 
 # ---------------------------------------------------------------------------
 # Thresholds (mirrored from the monolith so behaviour is bit-identical).
@@ -60,22 +62,44 @@ def _check_construct_host_coverage(
     coverage (~50%, the insert IS the construct fragment).
 
     Returns (is_fp, construct_frac, host_frac, combined_frac).
+
+    Failure mode
+    ------------
+    ``is_fp=False`` means "this site is NOT a construct+host false positive", so
+    a crashed blastn drops the site's strongest FP check while looking exactly
+    like a clean result.  stderr used to go to ``DEVNULL``, so nothing recorded
+    that it had happened.  The failure is now logged with its stderr tail.
+
+    The *verdict* is unchanged by a failure, before and after: ``construct_frac``
+    is 0.0 either way, and ``compute_verdict`` Rule 4 needs
+    ``construct_frac >= fp_construct_frac_min`` to fire, so ``combined_frac``
+    is never read.  A Filter D crash therefore still lets an element-present
+    construct+host FP reach Rule 6 → CANDIDATE, exactly as it did before — the
+    difference is that the run log now says so.  Returning ``host_fraction``
+    rather than 0.0 for the two coverage fields simply keeps the failure return
+    consistent with the "blastn ran, no construct hits" return below.
     """
     eff_len = insert_len - n_count
     if eff_len <= 0:
         return False, 0.0, 0.0, 0.0
 
-    # BLAST insert vs construct/element_db
-    blast_out = workdir / f"_{insert_fasta.stem}_vs_construct.tsv"
+    # BLAST insert vs construct/element_db.
+    # `threads` is accepted for signature parity with the other filters but is
+    # deliberately NOT forwarded: this is `-subject` mode, and blastn 2.16.0
+    # answers `-num_threads` there with "'num_threads' is currently ignored when
+    # 'subject' is specified" — the flag would only add a warning per site.
     result = subprocess.run(
         ["blastn", "-task", "megablast",
          "-query", str(insert_fasta), "-subject", str(element_db),
          "-outfmt", "6 qstart qend pident",
          "-evalue", "1e-5"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     if result.returncode != 0:
-        return False, 0.0, 0.0, 0.0
+        stderr_tail = (result.stderr or "")[-400:]
+        log(f"  Filter D: construct blastn failed (rc={result.returncode}); "
+            f"construct coverage unmeasured. stderr: {stderr_tail}")
+        return False, 0.0, host_fraction, host_fraction
 
     # Merge overlapping intervals at >= threshold identity
     intervals: list[tuple[int, int]] = []

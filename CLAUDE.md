@@ -38,7 +38,7 @@ python scripts/s01_qc.py --r1 reads_R1.fq.gz --r2 reads_R2.fq.gz \
 ### Testing
 
 ```bash
-# Full pytest suite (baseline: 255 PASS + 1 skipped, ~20s)
+# Full pytest suite (baseline: 387 PASS + 1 skipped, ~20s)
 pytest tests/ -q
 
 # Single file / single test
@@ -50,9 +50,19 @@ pytest tests/test_s05_import_dag.py -v
 
 # Line-budget guards added in Session 6 (monolith < 300, fanout::main < 250)
 pytest tests/test_submit_s05_array.py -v
+
+# Phase 1 site discovery: consensus, clustering, cluster pairing, read filters
+pytest tests/test_site_discovery.py -v
+
+# Phase 1 end-to-end on a synthetic BAM (needs minimap2) — the ONLY guard on
+# which sites find_softclip_junctions emits; verdict snapshots sit downstream
+pytest tests/test_find_softclip_junctions.py -v
+
+# T-DNA border scan (includes a real-blastn check against db/G281_construct.fa)
+pytest tests/test_border_scan.py -v
 ```
 
-Snapshot fixtures live in `tests/fixtures/verdict_snapshots/` (rice_G281, cucumber_line225). Never edit these without a deliberate behavior change — snapshot drift is the primary regression signal for `compute_verdict`.
+Snapshot fixtures live in `tests/fixtures/verdict_snapshots/` (rice_G281, cucumber_line225). Never edit these without a deliberate behavior change — snapshot drift is the primary regression signal for `compute_verdict`. Note the snapshots cover `compute_verdict` only — they cannot detect a change in which sites Phase 1 discovers; `tests/test_find_softclip_junctions.py` is that guard.
 
 ### SLURM batch run
 ```bash
@@ -125,16 +135,16 @@ DAG stage ordering enforced by `tests/test_s05_import_dag.py`; later-stage modul
 | Module | Stage | Role |
 |--------|-------|------|
 | `primitives.py` | 0 | `log`, `revcomp`, FASTA/FASTQ I/O, dataclasses (`JunctionCluster`, `InsertionSite`, `LegacyJunction`, `TierResult`), `_parse_src_tag` |
-| `site_discovery.py` | 1 | Phase 1: `find_softclip_junctions` + `_build_consensus` + `_apply_mask_bed` + `MASKED_SOURCE_TAG` + `parse_legacy_junctions` + `_extract_seeds_at_positions` |
+| `site_discovery.py` | 1 | Phase 1: `find_softclip_junctions` + `_read_donates_clip` + `_cluster_positions` + `_pair_clusters` + `_build_consensus` + `_apply_mask_bed` + `MASKED_SOURCE_TAG` + `parse_legacy_junctions` + `_extract_seeds_at_positions` |
 | `classify.py` | 1 | Phase 1.5: `classify_site_tiers` + `_filter_host_endogenous` + `_should_replace` + `_SRC_TIER`/`_TIER2_SRCS`/`_UNKNOWN_SRC_WARNED` state |
 | `read_extraction.py` | 2 | Phase 2: `extract_candidate_reads` + `extract_unmapped_paired` |
 | `assembly.py` | 3 | Phase 3: `StrandAwareSeedExtender` + `recruit_by_kmer` + `pilon_fill` + `assemble_insert` (1178 lines, the core pipeline function) |
-| `annotation.py` | 4 | Phase 4: `_run_local_blast` + `_run_remote_blast` + `_merge_annotations` + `annotate_insert` |
+| `annotation.py` | 4 | Phase 4: `_run_local_blast` + `_run_remote_blast` + `_merge_annotations` + `annotate_insert` + `_run_border_blast` / `TDNA_BORDER_REPEATS` |
 | `filter_a_host.py` | 5 | `_blast_insert_vs_host` (host-fraction + foreign-gap measurement) |
 | `filter_b_flank.py` | 5 | Construct-flanking FP check (BLAST construct vs host, slop-overlap test) |
 | `filter_c_chimeric.py` | 5 | Multi-locus chimeric FP check (strict-identity off-target chrom aggregation) |
 | `filter_d_altlocus.py` | 5 | Alt-locus FP check (construct + host combined coverage) |
-| `verdict.py` | 6 | Pure `compute_verdict` + `FilterEvidence` + `VerdictRules` + `_apply_canonical_override` |
+| `verdict.py` | 6 | Pure `compute_verdict` + `select_canonical_elements` + `FilterEvidence` + `VerdictRules` + `_apply_canonical_override` |
 | `config_loader.py` | 7 | `load_verdict_rules` (YAML → `VerdictRules`) |
 | `report.py` | 8 | Phase 5: `generate_report` + `write_stats` |
 | `fanout_orchestrator.py` | 9 | `main()` + `_run_phase_1_1_5` + `_run_phase_2_3` + `_run_phase_4` (CLI dispatch) |
@@ -196,12 +206,21 @@ Changes to this ordering require a snapshot regeneration pass.
 - **Identity threshold for element_db**: Default `--min-identity 0.90` silently filters genuine junctions when using element_db (minimap2 alignment identity ~0.84). `run_pipeline.py` auto-detects element_db/combined_db and uses 0.70.
 - **Maize-specific false positives**: When host IS maize, endogenous genes (Ubi1, zSSIIb, wx012) match construct elements. Border sequences contain ~100bp native flanking → 2.25M extracted reads vs 6K for rice.
 - **BWA threading**: Earlier versions used `-t 2` due to futex deadlock on Pronghorn GPFS. Now uses `-t 16` successfully.
+- **T-DNA border repeats (nopaline pTiT37/pTiC58), settled against primary deposits.** `TDNA_RB` = `TGACAGGATATATTGGCGGGTAAAC` (GenBank J01826, "T-DNA 3' (right) border", COMMENT "right border at base 158"); `TDNA_LB` = `TGGCAGGATATATTGTGGTGTAAAC` (GenBank J01825, "T-DNA 5' (left) border"). Yadav et al. 1982 PNAS 79:6322. Reproduced by pBIN19 (U09365) and pCAMBIA-1300 (AF234296). Integration is **precise at RB, imprecise at LB** — weight RB junctions higher. The octopine T-DNA (X00493) contains neither repeat.
+- **Rebuild the BLAST/BWA/bowtie2/faidx index whenever you edit a FASTA in `db/` or `element_db/`.** `blastn -db` and `bwa mem` read the *index*, not the FASTA, so an edited FASTA with a stale index silently searches the old sequence. Several indices were found stale in July 2026: `element_db/gmo_combined_db_v2.fa.*` indexed only 106 of 180 records (built 2026-04-16, two days before the FASTA), and `db/G281_construct.fa.fai` still named its first record `vector|pCAMBIA-1300|T-DNA_backbone|AF234296.1|binary_vector|v1` from before it was renamed `rice_G281`. `tests/test_element_db_borders.py::test_manifest_md5_matches_the_database` guards the manifest half of this.
+- **The `RB-TDNA` / `LB-TDNA` element-DB records were mis-sliced from AF485783.1 — fixed 2026-07-09.** They shipped as `TGAGCGTCGCAAAGGCGCTCGGTCT` (bases 1–25 of the record) and `GGCCTCGGCCTGAGAGCCAAAACAC` (~14,040–14,065). AF485783.1 is pBI121; its annotated borders are on the complement strand — `complement(2454..2478)` = RB, `complement(8621..8646)` = LB — and equal the canonical repeats above. Corrected in `element_db/gmo_combined_db_v2.fa` (manifest md5 regenerated + BLAST index rebuilt), `db/gmo_all_combined_db.fa`, `db/gmo_corn_combined_db.fa`, and the gitignored sources so `make` cannot reintroduce them. Guarded by `tests/test_element_db_borders.py`. The same 25-mer legitimately occurs inside full-length UniVec vector records — leave those alone.
+- **`db/G281_construct.fa`'s first record is byte-identical to pCAMBIA-1300 (AF234296), the *empty* binary vector** (8,958 bp, md5 matches). It does NOT contain the G281 transgene payload (p1300-S450RNAi-hFL-G6's lactoferrin RNAi cassette). `benchmark.md` and `results.md` say "pCAMBIA-1300 backbone", but `manuscript.md` claims rice G281 used an "exact construct sequence" — that claim is not supported by the file. Sample-specific payload reaches step 5 only via the step-4b SPAdes contigs (`--extra-element-db`).
+- **`min_clip` counts consensus bases, not `N`.** `_build_consensus` returns the longest unambiguous run (ties resolve toward the junction). A seed padded with `N` used to clear `min_clip` and then silently fail k-mer extension (`add_seqs` skips `N`-containing reads; `_extend_right` requires an exact overlap).
+- **Junction discovery now rejects `is_duplicate` / `is_qcfail` reads even at `--min-mapq 0`.** This is a no-op on today's BAMs — `bwa mem | samtools sort` never marks duplicates and sets no QC-fail flag. If a `samtools markdup` step is ever added upstream, those reads will start being dropped from clip clusters. That is intended (a duplicate inflates cluster depth without adding independent evidence), but it is a silent change in cluster depth, so re-baseline `--min-cluster-depth` if you add markdup.
+- **Canonical triplet promotion is identity-gated.** Rule 1 outranks Filters B/C/D, so an element only joins `matched_canonical` when its best BLAST hit clears `canonical_triplet_min_identity` (default 0.90). Annotation itself runs at a 0.70 floor.
 
 ## SLURM Settings
 
 - Partition: `cpu-s1-pgl-0`, Account: `cpu-s1-pgl-0`
 - Resources: 16 CPUs, 64G RAM, 24h (for full pipeline with step 4 host mapping)
+- Allocate 4 GB RAM per thread.
 - See `run_clean.sh` for sbatch configuration
+- **`unset SBATCH_PARTITION SBATCH_ACCOUNT SBATCH_TIMELIMIT` at the top of every batch script.** The login shell exports them, and SLURM precedence is CLI > env > script — so `SBATCH_TIMELIMIT=13-23:00:00` silently overrides your `#SBATCH --time=16:00:00` (observed on job 5799803). Verify with `sacct -j <id> --format=Timelimit,ReqCPUS,ReqMem`. Full write-up: lab wiki `guide/pronghorn.md`.
 
 ## Environment
 

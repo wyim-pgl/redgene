@@ -31,6 +31,7 @@ from .verdict import (
     FilterEvidence,
     VerdictRules,
     compute_verdict,
+    select_canonical_elements,
 )
 from .filter_a_host import (
     INSERT_HOST_MIN_PIDENT,
@@ -84,9 +85,15 @@ def generate_report(
     # elements: (q_start, q_end, element_name, s_strand, source)
     elements: list[tuple[int, int, str, str, str]] = []
     orientation_by_elem: dict[str, set[str]] = defaultdict(set)
+    # Best BLAST identity (pident, 0-100) seen for each element. Feeds the
+    # canonical-triplet identity gate below.  A legacy annotation TSV without an
+    # `identity` column cannot be gated — do not silently veto every element.
+    identity_by_elem: dict[str, float] = {}
+    has_identity_col = True
     if annotation_tsv.exists():
         with open(annotation_tsv) as fh:
             reader = csv.DictReader(fh, delimiter="\t")
+            has_identity_col = "identity" in (reader.fieldnames or [])
             for row in reader:
                 try:
                     q_start = int(row["q_start"])
@@ -103,6 +110,13 @@ def generate_report(
                     orientation_by_elem[elem].add(strand)
                 except (ValueError, KeyError):
                     continue
+                try:
+                    identity = float(row.get("identity") or 0.0)
+                except (TypeError, ValueError):
+                    identity = 0.0
+                identity_by_elem[elem] = max(
+                    identity_by_elem.get(elem, 0.0), identity,
+                )
     elements.sort(key=lambda x: x[0])
 
     # Deduplicate overlapping elements (keep longest per region)
@@ -201,6 +215,26 @@ def generate_report(
     # Build a FilterEvidence bundle from all gathered evidence and call the
     # pure function.  This replaces the old inline if/else verdict chain plus
     # the _apply_canonical_override post-hoc call.
+    _verdict_rules = rules if rules is not None else VerdictRules()
+
+    # Rule 1 outranks every FP filter, so only elements whose best BLAST hit
+    # clears `canonical_triplet_min_identity` may complete a canonical triplet.
+    if has_identity_col:
+        matched_canonical = select_canonical_elements(
+            {elem: identity_by_elem.get(elem, 0.0) for elem in unique_elems},
+            _verdict_rules.canonical_triplet_min_identity,
+        )
+        for elem in sorted(unique_elems - matched_canonical):
+            log(f"  canonical gate: {elem} best identity "
+                f"{identity_by_elem.get(elem, 0.0):.1f}% below "
+                f"{_verdict_rules.canonical_triplet_min_identity:.0%} — "
+                f"not eligible for triplet promotion")
+    else:
+        if unique_elems:
+            log("  canonical gate: annotation TSV has no 'identity' column — "
+                "triplet promotion left ungated")
+        matched_canonical = set(unique_elems)
+
     _ev = FilterEvidence(
         elements=list(unique_elems),
         host_bp=host_bp,
@@ -213,11 +247,10 @@ def generate_report(
         is_chimeric=is_chimeric,
         site_chr=site.host_chr,
         site_pos=site.pos_5p,
-        matched_canonical=unique_elems,   # canonical triplet check uses all elements
+        matched_canonical=matched_canonical,
         sources_by_element=sources_by_element,
         host_endogenous_elements=endo_elems,
     )
-    _verdict_rules = rules if rules is not None else VerdictRules()
     verdict, verdict_reason = compute_verdict(_ev, _verdict_rules)
 
     # For report diagnostics: restore the human-readable flanking string if
@@ -246,11 +279,19 @@ def generate_report(
         if elem_counts.most_common(1)[0][1] >= 2:
             structure = f"multi-copy (≥{elem_counts.most_common(1)[0][1]} copies)"
 
-    # Read border hits
+    # Read border hits.
+    # `border_hits.tsv` is written once per s05 run, for ALL assembled inserts —
+    # its subject column (2) names the insert each hit belongs to. Counting every
+    # line made each site's report claim the borders found on every other site
+    # (rice_G281 Chr3:16,439,674 reported "T-DNA borders found: 10" while all ten
+    # hits belonged to three other inserts).
     n_borders = 0
     if border_tsv.exists():
         with open(border_tsv) as fh:
-            n_borders = sum(1 for line in fh if line.strip())
+            for line in fh:
+                cols = line.rstrip("\n").split("\t")
+                if len(cols) >= 2 and cols[1] == insert_name:
+                    n_borders += 1
 
     # Determine deletion size
     deletion_size = abs(site.pos_3p - site.pos_5p) if site.pos_3p > 0 else 0

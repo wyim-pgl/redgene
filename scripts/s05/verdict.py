@@ -168,6 +168,28 @@ def _find_matching_triplet(
     return None
 
 
+def select_canonical_elements(
+    identity_by_element: dict[str, float],
+    min_identity: float,
+) -> set[str]:
+    """Return the elements whose best BLAST hit clears ``min_identity``.
+
+    Rule 1 (canonical triplet) outranks every FP filter, so the elements that
+    feed it must be confidently present.  Annotation runs at a permissive
+    identity floor (0.70 for element_db, see ``run_pipeline.py``), which means a
+    weak homology hit could otherwise complete a triplet and force CANDIDATE.
+
+    ``min_identity`` is accepted on either scale — ``0.90`` and ``90.0`` both
+    mean 90% — because ``config.yaml`` states it as a fraction while BLAST
+    ``pident`` is a percentage.
+    """
+    threshold = min_identity * 100.0 if min_identity <= 1.0 else min_identity
+    return {
+        elem for elem, identity in identity_by_element.items()
+        if identity >= threshold
+    }
+
+
 def _flanking_overlaps_site(
     flanking_hit: Optional[tuple[str, int, int]],
     site_chr: str,
