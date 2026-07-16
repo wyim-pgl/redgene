@@ -107,8 +107,7 @@ if [ "$N" -eq 0 ]; then
         --job-name="s05_${SAMPLE}_phase4" \
         --output="${OUTDIR}/slurm_logs/s05_phase4_${SAMPLE}_%j.out" \
         --wrap="set -euo pipefail; \
-eval \"\$(micromamba shell hook --shell bash)\"; \
-micromamba activate redgene; \
+export PATH=\"/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/bin:\$PATH\"; \
 python scripts/s05_insert_assembly.py --phase 4 --threads 4 $COMMON_ARGS")
     echo "[T8] Phase 4 job (no array): $PHASE4_JOBID"
     exit 0
@@ -148,8 +147,7 @@ cat > "$ARRAY_SCRIPT" <<EOF
 #SBATCH --output=${OUTDIR}/slurm_logs/s05_array_${SAMPLE}_%A_%a.out
 #SBATCH --error=${OUTDIR}/slurm_logs/s05_array_${SAMPLE}_%A_%a.err
 set -euo pipefail
-eval "\$(micromamba shell hook --shell bash)"
-micromamba activate redgene
+export PATH="/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/bin:\$PATH"
 
 SITES=(${SITES_QUOTED})
 SITE="\${SITES[\$SLURM_ARRAY_TASK_ID]}"
@@ -178,8 +176,7 @@ PHASE4_JOBID=$(sbatch --parsable \
     --wrap="set -euo pipefail; \
 echo '=== [T8] Phase 2+3 per-site summary (sacct) ==='; \
 sacct -j ${ARRAY_JOBID} --format=JobID,JobName%30,Elapsed,MaxRSS,State,ExitCode --parsable2 || true; \
-eval \"\$(micromamba shell hook --shell bash)\"; \
-micromamba activate redgene; \
+export PATH=\"/data/gpfs/assoc/pgl/bin/conda/conda_envs/redgene/bin:\$PATH\"; \
 python scripts/s05_insert_assembly.py --phase 4 --threads 4 $COMMON_ARGS")
 echo "[T8] Phase 4 job (afterok:${ARRAY_JOBID}): $PHASE4_JOBID"
 
